@@ -17,13 +17,14 @@ import {isLocal, SITREC_APP} from "../configUtils";
 import {ECEFToLLAVD_radii, LLAToECEFVD} from "../LLA-ECEF-ENU";
 import * as Astronomy from "astronomy-engine";
 import {CVideoImageData} from "../CVideoImageData";
+import {applyAffine, invertAffine} from "../CVideoData";
 import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
-import {applyTransform, invertTransform} from "./StarMatch";
+import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
@@ -2461,6 +2462,9 @@ async function runStarTrackerAtResolution(opts) {
     // and attach its results over the new one.
     const generation = Globals.loadGeneration;
     const videoData = view.videoData;
+    // The analysis must read the frames as recorded. Stabilize on Stars came from the solve that
+    // this run replaces, so it goes off; it can be turned on again for the new solve.
+    if (videoData.stabilizationAffine) videoData.clearStabilization();
     // The snapshot below trusts `calibration`; a same-sitch video swap must not let it carry
     // another video's plate scale into this analysis.
     dropCalibrationForOtherVideo(videoData);
@@ -3544,7 +3548,16 @@ function addStarAt(ox, oy) {
     const rsx = r.videoW ? view.videoWidth / r.videoW : 1;
     const rsy = r.videoH ? view.videoHeight / r.videoH : 1;
     const [dx, dy] = view.canvasToVideoCoords(ox, oy);
-    const [vx, vy] = snapToPointSource(view, r, dx / rsx, dy / rsy);
+    // The snap reads the picture on screen, so it works where the click is. On a stabilized
+    // picture the result is then taken back to the frame as recorded, where the tracks live.
+    let [vx, vy] = snapToPointSource(view, r, dx / rsx, dy / rsy);
+    const stab = displayedStabilization(view);
+    const unstab = stab && invertAffine(stab);
+    if (unstab) {
+        const [ux, uy] = applyAffine(unstab, vx * rsx, vy * rsy);
+        vx = ux / rsx;
+        vy = uy / rsy;
+    }
     const [rx, ry] = applyTransform(inv, vx, vy);
     const index = r.solved.tracks.length;
     const track = {obs: [{f: i, x: vx, y: vy, rx, ry}], manual: true};
@@ -4252,7 +4265,14 @@ export function drawStarTrackerOverlay() {
     // display mapping; when nothing changed the factor is one.
     const rsx = result.videoW ? view.videoWidth / result.videoW : 1;
     const rsy = result.videoH ? view.videoHeight / result.videoH : 1;
-    const toCanvas = (vx, vy) => view.videoToCanvasCoords(vx * rsx, vy * rsy);
+    // A stabilized picture is moved, and perhaps rotated, before it is drawn; the marks move
+    // with it. The hit list is filled from these positions, so clicks follow too.
+    const stab = displayedStabilization(view);
+    const toCanvas = (vx, vy) => {
+        let x = vx * rsx, y = vy * rsy;
+        if (stab) [x, y] = applyAffine(stab, x, y);
+        return view.videoToCanvasCoords(x, y);
+    };
 
     // WHERE A CIRCLE GOES, and why there are two answers.
     //
@@ -4556,6 +4576,69 @@ export function drawStarTrackerOverlay() {
     overlayCtx.setLineDash([]);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Stabilize on stars
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What stabilization does to the picture the video view shows now, as a 2D map in decoded
+ * pixels (CVideoData.stabilizationMatrix), or null. Any stabilization, not only this one: the
+ * marks must follow the picture whatever moved it. The frame is the one the view asks the
+ * decoder for (an In-locked view counts from the In frame), in the video's own frame numbers.
+ */
+function displayedStabilization(view) {
+    const vd = view?.videoData;
+    if (!vd?.stabilizationMatrix) return null;
+    const f = Math.floor(par.frame);
+    const source = view.streamFrame ? view.streamFrame(f) : f;
+    return vd.stabilizationMatrix(Math.floor(source / (vd.videoSpeed || 1)), view.videoWidth, view.videoHeight);
+}
+
+/**
+ * Maps that hold the stars still: each star lands where it is on the In frame, and the edges of
+ * the picture move instead (stabilizingMaps). They come from the solve's frame-to-frame chain - a
+ * shift and a rotation, as the solve holds the scale fixed - so this works on any run that
+ * tracked the field, with or without names. They do not undo lens distortion. Keyed by the
+ * video's own frame numbers, which getImage() stabilizes by.
+ */
+function starStabilizationMaps(r, view) {
+    const speed = view.videoData.videoSpeed || 1;
+    const maps = new Map();
+    stabilizingMaps(r.solved.transforms).forEach((m, i) => {
+        if (!m) return;
+        const g = r.frame0 + i;
+        maps.set(Math.floor((view.streamFrame ? view.streamFrame(g) : g) / speed), m);
+    });
+    return maps;
+}
+
+function starStabilizationOn() {
+    const vd = videoView()?.videoData;
+    return !!(vd?.stabilizationEnabled && vd.stabilizationAffine);
+}
+
+function setStarStabilization(on) {
+    const view = videoView(), vd = view?.videoData;
+    if (!on) {
+        if (vd?.stabilizationAffine) vd.clearStabilization();
+        setRenderOne(true);
+        return;
+    }
+    const r = result;
+    const transforms = r?.solved?.transforms;
+    if (!r || !vd || r.videoData !== vd || r.still || !(transforms?.length > 1)) {
+        params.status = "Stabilize on Stars needs a Find Candidate Stars run on this video";
+        setRenderOne(true);
+        return;
+    }
+    vd.setStabilizationTransforms(starStabilizationMaps(r, view), r.videoW, r.videoH);
+    vd.setStabilizationEnabled(true);
+    const last = r.frame0 + transforms.length - 1;
+    params.status = `stabilized on the stars, frames ${r.frame0}-${last}: `
+        + `the stars stay where they are on frame ${r.frame0}`;
+    setRenderOne(true);
+}
+
 /**
  * Discard the solve and clear the overlay. Called on sitch teardown and by the Clear button.
  *
@@ -4566,6 +4649,8 @@ export function drawStarTrackerOverlay() {
  * time a fresh one is needed.
  */
 export function resetStarTracker() {
+    // Stabilize on Stars was made from this solve.
+    if (result?.videoData?.stabilizationAffine) result.videoData.clearStabilization();
     // The camera options rest on the solve being discarded; remove them FIRST so the switches
     // fall back to a valid choice rather than a dangling one.
     detachStarTrackCamera();
@@ -4685,6 +4770,23 @@ export function setupStarTrackerMenu() {
             + "With Sync Camera to Star Field on, a successful identification also points the look camera. "
             + "The first identification downloads a 2.5 MB star catalog.");
     addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
+    // The separate steps of Star Tracker Analysis, and the chart export, in the main folder so they
+    // are next to the button that runs them all. Detect Star Size stays in Tweaks with the sliders
+    // it sets.
+    folder.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
+        .name("Find Candidate Stars")
+        .tooltip("Detect blobs on every frame from the In frame to the Out frame, link them into tracks, "
+            + "and sort the tracks into stars, moving objects, light clusters and rejects. "
+            + "It does not identify the stars.");
+    folder.add({identify: () => { identifyStars(); }}, "identify")
+        .name("Identify Stars (catalog)")
+        .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
+            + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
+            + "With Sync Camera to Star Field on, a success also points the look camera.");
+    folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
+        .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
+            + "map and sized by its measured brightness. Identified stars get their names.\n"
+            + "Chart: object tracks adds the paths of moving objects.");
     // In the main folder, not down in Tweaks. Star Tracker Analysis syncs the camera itself on
     // success, so this is the button for the case where it did NOT - a run that had to be tuned
     // by hand, or one whose sync was undone by moving the camera afterwards. That is a
@@ -4697,6 +4799,18 @@ export function setupStarTrackerMenu() {
             + "back to the sources they were on before - it does not merely stop updating "
             + "them - so you can compare the solved pointing against your own and switch "
             + "between them.");
+    // The box reads the video, not a stored flag: Point Track or Motion Analysis can replace this
+    // stabilization, and a new analysis turns it off, and the box must show that.
+    const stabilizeRow = {
+        get stabilizeOnStars() { return starStabilizationOn(); },
+        set stabilizeOnStars(on) { setStarStabilization(on); },
+    };
+    folder.add(stabilizeRow, "stabilizeOnStars").name("Stabilize on Stars").listen()
+        .tooltip("Hold the stars still in the video. Each frame is moved and rotated so that the stars "
+            + "stay where they are on the In frame, and the edges of the picture move instead. Uses the "
+            + "frame-to-frame fit from Find Candidate Stars, so the stars do not need names.\n"
+            + "It replaces any other stabilization. A new analysis turns it off, because the analysis "
+            + "must read the frames as recorded.");
     folder.add(params, "fadeAtCompletion").name("Fade at completion")
         .tooltip("When an identification SUCCEEDS, fade out the working marks one layer at a time, one "
             + "second each: the quad lines, then the star circles, then the catalog-number labels. "
@@ -4828,7 +4942,7 @@ export function setupStarTrackerMenu() {
             + "Make Star Chart (PNG), with an arrowhead at the end of each path. Off: the chart shows stars only.");
 
     const tweaks = folder.addFolder("Star Tracker Tweaks").close()
-        .tooltip("Detection and classification settings, and the separate steps that Star Tracker Analysis runs.");
+        .tooltip("Detection and classification settings, and Detect Star Size, the first step of Star Tracker Analysis.");
 
     tweaks.add(params, "autoSigma").name("Auto detect threshold")
         .tooltip("Set Detect threshold from the footage when Star Tracker Analysis or Detect Star Size runs, "
@@ -4881,21 +4995,6 @@ export function setupStarTrackerMenu() {
             + "multiples of the measured position noise. It stops a tiny but certain drift from "
             + "counting as motion.");
 
-    tweaks.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
-        .name("Find Candidate Stars")
-        .tooltip("Detect blobs on every frame from the In frame to the Out frame, link them into tracks, "
-            + "and sort the tracks into stars, moving objects, light clusters and rejects. "
-            + "It does not identify the stars.");
-    tweaks.add({identify: () => { identifyStars(); }}, "identify")
-        .name("Identify Stars (catalog)")
-        .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
-            + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
-            + "With Sync Camera to Star Field on, a success also points the look camera.");
-    // Sync Camera to Star Field lives in the MAIN folder, under Star Tracker Analysis.
-    tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
-        .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
-            + "map and sized by its measured brightness. Identified stars get their names.\n"
-            + "Chart: object tracks adds the paths of moving objects.");
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear")
         .tooltip("Discard the analysis, its overlay and the Camera > Lens values, and remove the Star "

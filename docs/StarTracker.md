@@ -18,11 +18,11 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 
 That is the whole common path. When it succeeds, the **Status** line gives the identification, for example `identified 72/231 stars - field 42.3 deg at RA 11.52h Dec 52.1 deg, rms 1.2 px`. That is the stars matched out of the stars offered, the field of view, the sky position of the field's centre, and the fit error. The menu row can cut the line short. The copy at the top left of the video shows all of it. [Where the answer is](#where-the-answer-is) says how to use these numbers.
 
-The identification replaces the analysis summary. To see that summary, press **Find Candidate Stars** in [Star Tracker Tweaks](#star-tracker-tweaks). The Status line then reads, for example, `231 stars, 5 moving, sigma 0.30 px`. That run replaces the identification, so press **Identify Stars (catalog)** afterwards to get it back.
+The identification replaces the analysis summary. To see that summary, press **Find Candidate Stars**. The Status line then reads, for example, `231 stars, 5 moving, sigma 0.30 px`. That run replaces the identification, so press **Identify Stars (catalog)** afterwards to get it back.
 
 The sigma figure is the clip's position noise, and it is the one to sanity-check: a few tenths of a pixel means the stars are being measured crisply. Sitrec will not report below 0.15 px whatever the fit says, so a value pinned there is a floor rather than a measurement. Values of several pixels can come from soft focus, compression or camera shake — the analysis still runs, but a point must then move further before Sitrec calls it moving.
 
-**Star Tracker Analysis** runs three steps, each of which also has its own button in [Star Tracker Tweaks](#star-tracker-tweaks) if you want to run it alone: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
+**Star Tracker Analysis** runs three steps: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. Each step also has its own button, to run it alone. **Find Candidate Stars** and **Identify Stars (catalog)** are below **Star Tracker Analysis**, and **Detect Star Size (current frame)** is in [Star Tracker Tweaks](#star-tracker-tweaks). When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
 
 ## Where the answer is
 
@@ -113,7 +113,7 @@ Green means only that the point did not move measurably. A planet is green, and 
 The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A clip with only a few bright points — planets and one or two bright stars in twilight — does not have enough. If you can see which point is which, name them yourself. Three names are enough to point the camera.
 
 1. Set the sitch's date, time and camera position first. A planet's place among the stars changes with the date, and the Moon's place also changes with where you are.
-2. Press **Find Candidate Stars** in [Star Tracker Tweaks](#star-tracker-tweaks), or **Star Tracker Analysis**, so that the points have green circles.
+2. Press **Find Candidate Stars** or **Star Tracker Analysis**, so that the points have green circles.
 3. **Right-click a green circle.** The **Name this star** menu opens:
    - **Name** lists the planets, and the named stars brighter than magnitude 3.5, that are above the horizon at the **In** frame. Pick one.
    - **Other name** takes any star's proper name, or its Hipparcos number as `HIP 49669`. Type it and press **Enter**. The start of a name is enough when only one star name starts that way: `Regul` gives Regulus.
@@ -133,6 +133,33 @@ What the fit assumes, and how to check it:
 - **Names on more circles** give the fit more numbers to check itself with. More names do not change the lens model.
 - **A new analysis starts again.** **Find Candidate Stars** and **Star Tracker Analysis** discard the names. A fit to your names replaces a catalog identification, and **Identify Stars (catalog)** replaces the fit. Your names stay on the circles in both cases.
 
+## Stabilizing on the stars
+
+**Stabilize on Stars** holds the stars still in the video. Sitrec moves and rotates each frame so that each star stays where it is on the **In** frame, and the edges of the picture move instead. It uses the frame-to-frame motion that the analysis measures ([Stage 2](#stage-2--undo-the-cameras-motion)), so the stars do not need names, and a clip with only a few stars is enough.
+
+1. Press **Find Candidate Stars** or **Star Tracker Analysis**.
+2. Tick **Stabilize on Stars** in the Star Tracker folder. The **Status** line reads, for example, `stabilized on the stars, frames 42-238: the stars stay where they are on frame 42`.
+3. To save the stabilized video, leave the box ticked and press **Render Source Video** in **Video → Video Render & Export**.
+
+**Stabilize Video** in [Motion Analysis](MotionAnalysis.md#stabilize-video) and **Stabilize** in [Point Track](PointTrack.md#c-stabilization-and-stabilized-rendering) move the frame only. Stabilize on Stars also removes the camera's roll. On the dawn clip of Regulus, Jupiter and Mars, the camera turned 1.1° between the In and Out frames. Measured on the 1280-pixel-wide picture at the Out frame:
+
+| | Moved from its place on the In frame |
+|---|---|
+| The three points, in the video as recorded | 17 to 20 px |
+| The three points, stabilized | under 0.8 px |
+| A tree at the bottom of the frame, about 400 px from the points, as recorded | 16 px |
+| The same tree, stabilized | about 2 px |
+| The same tree, with the frame moved to hold the points but not rotated (calculated) | 8 px |
+
+What to know:
+
+- **The marks follow the picture.** The circles and names are drawn on the stabilized picture. You can name a circle, click it on or off, and shift-click to add one with the box ticked.
+- **Frames outside the In/Out range** keep the correction of the nearest frame in the range.
+- **It does not undo lens distortion.** Each frame's correction is one rotation and one shift. On a wide lens the frame-to-frame motion is not the same everywhere in the picture (see [Why fitting the lens matters](#why-fitting-the-lens-matters)), so stars far from the centre can still move.
+- **One stabilization at a time.** Ticking the box replaces stabilization from Motion Analysis or Point Track, and their buttons replace this one. Selecting, clearing or deleting a point track leaves it on.
+- **A new analysis turns it off**, because the analysis must read the frames as recorded. Tick the box again after the run. **Clear** also turns it off.
+- **It is not saved with the sitch.** Like the analysis, it lasts until the sitch is loaded again.
+
 ## GUI reference
 
 The Star Tracker folder lives under **Video**.
@@ -145,7 +172,11 @@ The Star Tracker folder lives under **Video**.
 |---|---|
 | **Star Tracker Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Analysis Resolution** / **Analysis pixels** | The resolution the frames are analysed at, shared with the other video analysis tools. See [Analysis resolution](PointTrack.md#analysis-resolution) in Point Track |
+| **Find Candidate Stars** | Run the analysis only: find the stars, track them from the **In** frame to the **Out** frame, and sort the tracks. It does not identify the stars |
+| **Identify Stars (catalog)** | Run the catalog match against the last analysis. Stars you clicked off are left out |
+| **Make Star Chart (PNG)** | Download a chart of the solved field. **Chart: object tracks** in [Star Tracker Display](#star-tracker-display) adds the paths of moving objects |
 | **Sync Camera to Star Field** | On by default. Whenever an identification succeeds, point Sitrec's camera the way the identification says the real one was pointing: *Star Track* is selected as both the heading and the FOV source (only the heading on a fisheye or timelapse run, where the Fisheye render carries the field of view). Untick it to put both back to the sources they were on before, so you can compare the solved pointing with your own |
+| **Stabilize on Stars** | Off by default. Move and rotate each frame so that the stars stay where they are on the **In** frame. It needs a **Find Candidate Stars** run, and a new analysis turns it off. See [Stabilizing on the stars](#stabilizing-on-the-stars) |
 | **Fade at completion** | On by default. After a successful identification, fade out the quad lines, then the star circles, then most HIP-number labels, and turn off their switches in [Star Tracker Display](#star-tracker-display). See [Reading the results](#reading-the-results). Tick a switch again to bring its layer back. A failed run never fades |
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
@@ -156,7 +187,7 @@ The Star Tracker folder lives under **Video**.
 | **From timelapse** | The loaded file is one still image: a stack of star trails from a fixed camera, taken between the **In** and **Out** frames. Star Tracker Analysis then finds the trails instead of points, and the lens and the camera's pointing are fitted from both ends of every trail. On a real video this box has no effect. Off by default. See [Timelapse star trails](#timelapse-star-trails) |
 | **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. The angle is the horizontal field of view, and **custom** means a lens curve fitted from the stars. **Camera → Lens** holds the full fit, with the horizontal, vertical and diagonal fields of view and a **Copy lens JSON** button. Sitrec's camera FOV is the vertical value. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars. After a fit to [names you gave](#naming-stars-by-hand) it reads `manual: pinhole, vertical FOV 61.02 deg, from 3 named stars` |
 | **Star Tracker Display** | A sub-menu with the switches for what the Star Tracker draws on the video. See [Star Tracker Display](#star-tracker-display) |
-| **Star Tracker Tweaks** | A sub-menu with the detection and classification settings, and the separate steps that **Star Tracker Analysis** runs. See [Star Tracker Tweaks](#star-tracker-tweaks) |
+| **Star Tracker Tweaks** | A sub-menu with the detection and classification settings, and **Detect Star Size**. See [Star Tracker Tweaks](#star-tracker-tweaks) |
 | **Clear** | Discard the analysis: the overlay, the solve, the fitted lens reported in the Camera menu, and the camera options that Sync added. Your Tweaks settings are left alone |
 
 ### Star Tracker Display
@@ -188,9 +219,6 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 | **Min detections per track** | 3–40 | How many frames a point must appear in before it is judged at all. Below this it is `short` |
 | **Moving: significance** | 2–20 | How *confident* the drift must be — how many times larger than its own uncertainty. Raise it if slow-drifting stars are being called movers |
 | **Moving: min drift (sigma)** | 2–40 | How *far* it must actually move, in multiples of this clip's position noise. Raise it to ignore small real motions and only catch obvious ones |
-| **Find Candidate Stars** | — | Run the analysis only |
-| **Identify Stars (catalog)** | — | Run the catalog match against the last analysis |
-| **Make Star Chart (PNG)** | — | Export a chart of the solved field |
 
 ## Optimize For Star Tracking
 
@@ -518,7 +546,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 - **The lens fit declines on clips whose motion does not exercise the lens.** Rolling about the line of sight, or too short a baseline between the frames it compares, leaves the lens shape unconstrained. This is reported in the **Lens** field, not hidden.
 - **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails and you can see which points are which, name three of them: see [Naming stars by hand](#naming-stars-by-hand). Otherwise set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
 - **Hand-held footage works, but a zoom reads as motion.** The frame-to-frame solve holds scale fixed. In a synthetic test of that solve, a 5% zoom across 40 frames called 79 of 84 stars *moving*. Analyse a stretch with no zoom.
-- **The Star Tracker reads the stabilized picture.** With **Video → Motion Analysis → Stabilize Video** or **Video → Point Track → Stabilize** on, the detector reads the shifted frames, so the solve follows the shifted picture and not the camera. Press **Disable Stabilization** before you run the analysis.
+- **The Star Tracker reads the stabilized picture.** With **Video → Motion Analysis → Stabilize Video** or **Video → Point Track → Stabilize** on, the detector reads the shifted frames, so the solve follows the shifted picture and not the camera. Press **Disable Stabilization** before you run the analysis. [Stabilize on Stars](#stabilizing-on-the-stars) does not need this: a new analysis turns it off.
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star. The **Enough** button is not offered, since there is nothing to stop short of. On a still, the Fisheye render, **Fit lens from stars** and **Fixed camera** have no effect, and identification uses the flat chart. **From timelapse** is the exception: it takes the Fisheye render as its starting lens.
 - **The frame range is the In/Out range**, not the whole video. If the analysis covers less than you expected, check your In and Out markers.
 - **Identification runs on the flat 2D map when a lens has been *fitted*.** The two features are deliberately decoupled for now: the matcher is calibrated end to end against what the flat chart produces, and feeding it the extra edge stars the lens fit recovers costs it its match consensus. So a fitted lens improves what is *called a star*, but does not currently widen what gets *named*. A *known* fisheye lens is the exception — its identification runs on a chart of the sphere (see [Allsky and fisheye footage](#allsky-and-fisheye-footage)), but only the central 70° of the field takes part in the blind match; the rim stars are named afterwards, through the calibrated lens.

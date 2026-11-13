@@ -212,6 +212,9 @@ that also fails, the frame takes its motion from the nearest good frames.
 A clip of plain sky has little for this to follow. Point Track can also stabilize a video, but on
 a tracked object instead of the background. See
 [Stabilization and stabilized rendering](PointTrack.md#c-stabilization-and-stabilized-rendering).
+On a night sky, **Stabilize on Stars** in the Star Tracker holds the stars still, and it removes
+the camera's roll as well as the shift. See
+[Stabilizing on the stars](StarTracker.md#stabilizing-on-the-stars).
 
 Turn stabilization off before Point Track runs: the tracker reads the shifted picture (see
 [Point Tracking](PointTrack.md#the-standard-procedure)).

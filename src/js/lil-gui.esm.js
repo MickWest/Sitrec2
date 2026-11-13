@@ -529,6 +529,9 @@ class BooleanController extends Controller {
         this.$widget.appendChild( this.$input );
 
         this.$input.addEventListener( 'change', () => {
+            // The click has already changed the box. Record that, so that updateDisplay() puts
+            // the box back when the value does not change (a setter that refuses).
+            this._lastDisplayedChecked = this.$input.checked;
             this.setValue( this.$input.checked );
             this._callOnFinishChange();
         } );

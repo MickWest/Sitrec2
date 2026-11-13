@@ -48,6 +48,8 @@ the selected track and its graph, after confirmation.
 The selected track also supplies **Camera + Point Track** and point-track stabilization.
 Switching tracks while stabilized switches the stabilization target; selecting an empty
 track turns stabilization off. Displaying a track does not select it for editing.
+**Stabilize on Stars** in the [Star Tracker](StarTracker.md#stabilizing-on-the-stars) is not
+point-track stabilization: selecting, clearing or deleting a track leaves it on.
 
 ### The standard procedure
 
@@ -55,7 +57,8 @@ On the three reference clips in [What to expect](#what-to-expect), this procedur
 
 1. Open **Video → Point Track** and press **Enable Point Track**. A yellow cursor appears over
    the video. If stabilization is on, Sitrec hides the cursor, and the tracker reads the shifted
-   picture. Press **Disable Stabilization**, in Point Track or in Motion Analysis.
+   picture. Press **Disable Stabilization**, in Point Track or in Motion Analysis, or untick
+   **Stabilize on Stars** in **Video → Star Tracker**.
 2. If you only want part of the clip, set the end of the range with the **Out** marker on the
    timeline (**Time → Out Frame [O]**, or the **O** key at that frame). Tracking stops at the
    Out frame.
@@ -312,7 +315,7 @@ without a shift.
 
 | What you see | Likely cause | What to do |
 |---|---|---|
-| No yellow cursor appears | Stabilization is on, so Sitrec hides the cursor | Press **Disable Stabilization**, in Point Track or in Motion Analysis |
+| No yellow cursor appears | Stabilization is on, so Sitrec hides the cursor | Press **Disable Stabilization**, in Point Track or in Motion Analysis, or untick **Stabilize on Stars** in **Video → Star Tracker** |
 | **Analyse Object** says *Try Template Match: too large or too still for Motion* for a small object, or *object not clear here* | The object does not stand out to Motion (Background) at this frame, or the cursor is not on it. The button shows *object not clear here* only when the selected method is already the one it would recommend | Move the cursor exactly onto the object and analyse again, or analyse at a frame where it is clearer |
 | The track follows something else nearby | A look-alike (rock, wave, light) is almost as strong as the object | Follow [If the track goes wrong partway through](#if-the-track-goes-wrong-partway-through), and press **Analyse Object** on the object. Lower **Search Radius** |
 | The track jumps to on-screen text or a reticle | White or grey overlay is not recognized as overlay | Paint a [mask](Masking.md) over it and keep **Use Mask** on |
