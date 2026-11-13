@@ -74,6 +74,7 @@ Before the fade, the video view is annotated like this:
 | **Bright green circle** | A star among the hundred brightest in the field — **or** one the catalog gave a real name to, which always draws at full strength however faint it measured |
 | **Faint thin green circle** | A star fainter than that with no proper name — measured exactly the same way, drawn quietly so a rich field does not bury the footage it is annotating |
 | **Star name** (`Megrez`, `HIP 53726`) | The catalog identification. A proper name where the star has one — drawn more prominently — otherwise its Hipparcos number |
+| **Yellow name** (`Jupiter`) | A name you gave the circle yourself. See [Naming stars by hand](#naming-stars-by-hand) |
 | **Red circle** | Something moving against the stars, labelled with how far it drifted |
 | **Orange ring** | Lights moving together as one object. A ring can also mark a *single* light too fragmented to hold as one track — a flashing beacon, say — which is then labelled `faint moving object` |
 
@@ -85,7 +86,7 @@ A red detection looks like this:
 
 The Star Tracker does not put a moving object into the 3D views. To follow one and get a line of sight, use [Point Tracking](PointTrack.md).
 
-**Clicking a green circle toggles that star off** — it dims but stays visible, so you can click it back on. This is for the case where you can see something has been mis-measured, or know a "star" is really a planet, and would rather it did not vote. Toggling is read when identification runs, so **re-run *Identify Stars (catalog)*** for it to take effect. Only stars toggle; red and orange markers do not. The circle is what you click, so turning **Show star markers** off also turns the toggling off — names alone are not clickable.
+**Clicking a green circle toggles that star off** — it dims but stays visible, so you can click it back on. This is for the case where you can see something has been mis-measured, or know a "star" is really a planet, and would rather it did not vote. Toggling is read when identification runs, so **re-run *Identify Stars (catalog)*** for it to take effect. A fit to [names you gave](#naming-stars-by-hand) is the exception: it is redone at once. Only stars toggle; red and orange markers do not. The circle is what you click, so turning **Show star markers** off also turns the toggling off — names alone are not clickable.
 
 ### The five verdicts
 
@@ -106,6 +107,31 @@ Every track ends up in one of five classes. Only two are drawn by default:
 `short` is often the largest group. That is expected, not a failure.
 
 Green means only that the point did not move measurably. A planet is green, and so is anything that drifts less than the **Moving** thresholds. A name means that the point's position matched a catalog star.
+
+## Naming stars by hand
+
+The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A clip with only a few bright points — planets and one or two bright stars in twilight — does not have enough. If you can see which point is which, name them yourself. Three names are enough to point the camera.
+
+1. Set the sitch's date, time and camera position first. A planet's place among the stars changes with the date, and the Moon's place also changes with where you are.
+2. Press **Find Candidate Stars** in [Star Tracker Tweaks](#star-tracker-tweaks), or **Star Tracker Analysis**, so that the points have green circles.
+3. **Right-click a green circle.** The **Name this star** menu opens:
+   - **Name** lists the planets, and the named stars brighter than magnitude 3.5, that are above the horizon at the **In** frame. Pick one.
+   - **Other name** takes any star's proper name, or its Hipparcos number as `HIP 49669`. Type it and press **Enter**. The start of a name is enough when only one star name starts that way: `Regul` gives Regulus.
+   - **Remove name** is there when the circle already has a name.
+4. Name two more circles. When three circles that are switched on have names, Sitrec fits the camera to them at once. With **Sync Camera to Star Field** ticked, Sitrec's camera is then pointed and zoomed to match, as after a catalog identification.
+
+The names are drawn in yellow, so you can tell them from the catalog's names. One name belongs to one circle: if you give a name to a second circle, it moves there. To leave a named circle out of the fit, click it (it dims). Click it again to put it back. The fit is redone after each change, and **Undo** reverses each one. If fewer than three named circles are left on, the fit is removed, and the camera's heading and FOV go back to the sources they had before the sync.
+
+**If a point has no green circle**, shift-click it. A new circle goes at that point, on the frame you see, and you can then name it. A click on a small point is easily a few pixels off, so Sitrec moves the new circle onto the centre of the brightest point within about 12 pixels of the click. Use this for a point the tracker called *moving* or rejected, or one it did not find. Shift-click on a point that already has a green circle toggles that circle, as a plain click does.
+
+The **Status** line then reads, for example, `fitted to 3 named stars - vertical FOV 61.02 deg, rms 0.2 px, worst 0.2 px`, and the **Lens** field reads `manual: pinhole, vertical FOV 61.02 deg, from 3 named stars`.
+
+What the fit assumes, and how to check it:
+
+- **A simple lens.** The fit takes the frame centre as the optical axis and assumes no lens distortion (a *pinhole* lens). Three named points give six numbers. The pointing, the roll and the field of view use four of them, so the fit has two numbers left over to check itself.
+- **The residual is the check.** The rms and worst figures say how far, in analysed pixels, the fitted camera puts each named object from its circle. On a dawn clip of Regulus, Jupiter and Mars, the right names fit to 0.2 px. The same names with Jupiter and Mars swapped fit to 91 px. When the worst residual is more than 1% of the frame height, the Status line adds `a name may be wrong`. On a lens with strong distortion, correct names far apart can also show a large residual.
+- **Names on more circles** give the fit more numbers to check itself with. More names do not change the lens model.
+- **A new analysis starts again.** **Find Candidate Stars** and **Star Tracker Analysis** discard the names. A fit to your names replaces a catalog identification, and **Identify Stars (catalog)** replaces the fit. Your names stay on the circles in both cases.
 
 ## GUI reference
 
@@ -128,7 +154,7 @@ The Star Tracker folder lives under **Video**.
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. It needs a lens: the Fisheye render, or a successful **Fit lens from stars**. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
 | **From timelapse** | The loaded file is one still image: a stack of star trails from a fixed camera, taken between the **In** and **Out** frames. Star Tracker Analysis then finds the trails instead of points, and the lens and the camera's pointing are fitted from both ends of every trail. On a real video this box has no effect. Off by default. See [Timelapse star trails](#timelapse-star-trails) |
-| **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. The angle is the horizontal field of view, and **custom** means a lens curve fitted from the stars. **Camera → Lens** holds the full fit, with the horizontal, vertical and diagonal fields of view and a **Copy lens JSON** button. Sitrec's camera FOV is the vertical value. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars |
+| **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. The angle is the horizontal field of view, and **custom** means a lens curve fitted from the stars. **Camera → Lens** holds the full fit, with the horizontal, vertical and diagonal fields of view and a **Copy lens JSON** button. Sitrec's camera FOV is the vertical value. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars. After a fit to [names you gave](#naming-stars-by-hand) it reads `manual: pinhole, vertical FOV 61.02 deg, from 3 named stars` |
 | **Star Tracker Display** | A sub-menu with the switches for what the Star Tracker draws on the video. See [Star Tracker Display](#star-tracker-display) |
 | **Star Tracker Tweaks** | A sub-menu with the detection and classification settings, and the separate steps that **Star Tracker Analysis** runs. See [Star Tracker Tweaks](#star-tracker-tweaks) |
 | **Clear** | Discard the analysis: the overlay, the solve, the fitted lens reported in the Camera menu, and the camera options that Sync added. Your Tweaks settings are left alone |
@@ -139,7 +165,7 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 
 | Control | What it does |
 |---|---|
-| **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video |
+| **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video. The circles are also what you click: a click toggles a star, a right-click names it, and a shift-click off a circle adds one. See [Naming stars by hand](#naming-stars-by-hand) |
 | **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself |
 | **Show HIP star numbers** | Also label the stars that have no proper name, by Hipparcos number. Most matches are these; untick it to leave only the named stars. Needs **Show star names** |
 | **Show quad lines** | Draw the four-star shapes the solve matched against the catalog, line weight scaling with how much of the field each one explains. On by default; they are the visible evidence for the identification, so turn them off once you trust it. See [Identifying the stars](#identifying-the-stars) |
@@ -490,7 +516,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 ## Limitations and when it refuses
 
 - **The lens fit declines on clips whose motion does not exercise the lens.** Rolling about the line of sight, or too short a baseline between the frames it compares, leaves the lens shape unconstrained. This is reported in the **Lens** field, not hidden.
-- **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails, set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
+- **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails and you can see which points are which, name three of them: see [Naming stars by hand](#naming-stars-by-hand). Otherwise set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
 - **Hand-held footage works, but a zoom reads as motion.** The frame-to-frame solve holds scale fixed. In a synthetic test of that solve, a 5% zoom across 40 frames called 79 of 84 stars *moving*. Analyse a stretch with no zoom.
 - **The Star Tracker reads the stabilized picture.** With **Video → Motion Analysis → Stabilize Video** or **Video → Point Track → Stabilize** on, the detector reads the shifted frames, so the solve follows the shifted picture and not the camera. Press **Disable Stabilization** before you run the analysis.
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star. The **Enough** button is not offered, since there is nothing to stop short of. On a still, the Fisheye render, **Fit lens from stars** and **Fixed camera** have no effect, and identification uses the flat chart. **From timelapse** is the exception: it takes the Fisheye render as its starting lens.
@@ -512,7 +538,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 | Almost everything is called *moving* | The lens was not fitted and the clip is wide or cropped, so the flat model is biased at the frame edges. Check the **Lens** field |
 | Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first, or press **Optimize Adjustments for Frame** on a frame with sky and then run **Star Tracker Analysis** |
 | A visible star is not circled | Check that **Show star markers** is on, in **Star Tracker Display**: the completion fade turns it off. Then turn on **Show rejected**: if the point appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it is a `short` track (lower **Min detections per track**, or use a longer In/Out range), a detection under the mask (turn on **Show Mask** to check), or a point the detector never accepted (lower **Detect threshold (sigma)** or **Min blob area**) |
-| Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range. Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
+| Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range, or [name three points by hand](#naming-stars-by-hand). Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
 | Fisheye footage: many real stars called *moving*, or the sphere solve fails | Turn on **Fixed camera** for a mounted camera. Check the Fisheye render is roughly matched to the footage first — the solve takes that lens as given |
 | The run is taking forever | Press **Enough (solve what we have)**, or shorten the In/Out range |
 

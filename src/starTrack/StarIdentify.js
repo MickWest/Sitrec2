@@ -490,7 +490,7 @@ function diagMax(key, v) {
 // ---------------------------------------------------------------------------------------------
 
 /** Least-squares similarity q = A*p + B with FREE scale, as complex numbers. */
-function fitSimilarityFree(P, Q) {
+export function fitSimilarityFree(P, Q) {
     const n = P.length;
     let pbx = 0, pby = 0, qbx = 0, qby = 0;
     for (let i = 0; i < n; i++) {
