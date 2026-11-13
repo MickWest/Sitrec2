@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.195.0 (2026-11-13)
+
+### New Features
+- **Volumetric clouds** (Lighting → *Clouds*, in a custom sitch): add up to four layers of 3D clouds of eight types, from stratus and cumulus to cumulonimbus and cirrus, which the Sun or the Moon lights and the wind moves; choose a ready-made sky in *Preset* or use *Add Layer*, set the altitude, thickness, coverage and wind of each layer in its own folder, choose the views with the *M* and *L* boxes (the look view only at the start), set *Quality*, and use *Measure* to see how much time the clouds add to a frame (Help → Documentation → The World → *Clouds (Volumetric Layers)*).
+- **More than one point track in a video** (Video → *Point Track*): *Add Point Track* adds a track, *Edit Track* selects the track that the Point Track controls, the stabilization and *Camera + Point Track* use, *Track List* shows or hides each track, and the other displayed tracks show on the video in their own colors with their names; a saved sitch keeps all its tracks, and a sitch saved with one track opens as *Track 1*.
+- **Frequency Analysis of all the point tracks** (Video → Point Track → *Frequency Analysis*): with the new *Single Graph* on (the default, in *Frequency Analysis Settings*), one graph shows the spectrum of each track in its track color, with the largest peak of each track in a list; with it off, each track has its own graph window, all the windows use the same vertical scale, and *Arrange Frequency Graphs* puts them side by side below the video; the settings now apply to all the tracks, *Object radius (px)* is now *Frequency Radius (px)*, and *Frequency Radius* in a *Track List* entry gives that track its own radius when it is not 0.
+- **Rings around small objects** (main view): a yellow ring, 100 pixels across, marks an object that shows smaller than 75 pixels, while the edit window of that object is open, or around all such objects while you hold Option (Mac) or Alt and no edit window of an object is open; the ring starts to show at 75 pixels and is solid at 50 pixels and less.
+
+### Improvements
+- **UTC button** (Time menu; also *Time & playback* in Satellite Controls): the new *UTC* button, between the time zone list and *From camera*, shows and edits the time in UTC with one click, and the time of the sitch does not change.
+- **Start Distance** (Traverse; it was *Tgt Start Dist*): the slider now goes from 1 m in front of the camera to the point where the frame 0 line of sight is 100 m below the ground, and its range updates when the line of sight or the terrain changes; if the line of sight does not reach the ground, a fixed range is used, a typed larger distance extends the range, and a saved distance does not change.
+- The edit windows (right-click an object or a track in a 3D view, and the *Edit:* windows) have the font, the row spacing and the slider height of the other menus again, and keep the colors and the buttons that version 2.194.0 gave them.
+- A right-click on a faded object that shows its move handles, or on one of the handles, now opens the edit window of that object, also while you hold Option or Alt.
+
+### Bug Fixes
+- Fixed the move handles of an object (the green disc and the red arrows), which were missing after you opened another sitch or a saved sitch without reloading the page, if the handles had shown in the sitch before.
+
 ## Version 2.194.2 (2026-11-12)
 
 ### New Features
