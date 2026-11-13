@@ -225,7 +225,7 @@ test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"]
         expect(widget.cursorDistancePx(view,hidden.group.position)).toBeLessThan(widget.cursorDistancePx(view,visible.group.position));
         const pick=widget.findObjectUnderCursor();
         expect(pick.node).toBe(visible);
-        widget.node=pick.node;widget.fade=1;widget.savedMaterials=null;widget.savedIgnorePick=undefined;
+        widget.node=pick.node;widget.fade=1;widget.savedMaterials=null;
         widget.applyFade();
         expect(visible.group.children[0].material.opacity).toBe(.25);
         expect(hidden.group.children[0].material.opacity).toBe(1);

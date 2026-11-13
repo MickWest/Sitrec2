@@ -20,9 +20,8 @@ import {objectFocusTrack, sameFocusTrack, syncCameraFocusUI} from "./CameraFocus
 // The widget itself is the same PointEditorWidget the spline editor puts on its control
 // points: a green horizontal disc and red up/down arrows. It stays hidden until the
 // cursor comes near the object, then crossfades in while the object fades to 25% so the
-// widget inside it is visible and grabbable. While faded the object is also skipped by
-// the right-click picker — it is the thing being edited, so a click belongs to the
-// ground behind it.
+// widget inside it is visible and grabbable. Both the faded object and its handles
+// remain right-click targets for opening the object's edit menu.
 //
 // Two ways in:
 //
@@ -114,7 +113,6 @@ class CObjectMoveWidget {
         this.lockDragStart = null;  // altitude lock at the start of an up/down drag that moves it
 
         this.savedMaterials = null; // Map material -> {opacity, transparent, depthWrite}
-        this.savedIgnorePick = undefined;
 
         this.altHeld = false;       // Option/Alt: pick up whatever is under the cursor
         this.altMode = false;       // ...and something movable actually is
@@ -159,6 +157,36 @@ class CObjectMoveWidget {
         if (held === this.altHeld) return;
         this.altHeld = held;
         setRenderOne(true);
+    }
+
+    // The event listeners live for the page, but handles, picks and drag state belong
+    // to one sitch. Run before nodes/scene disposal: disposeScene recursively empties
+    // helper groups, so re-adding the old group would bring back no handles.
+    resetForSitch() {
+        this.dragPrepared = false; // leaving a sitch must not record an unfinished drag
+        this.setNode(null);
+        this.widget?.detach();
+        this.widget?.getHelper().removeFromParent();
+        this.widget?.dispose();
+        this.widget = null;
+        if (this.dropLine) {
+            this.dropLine.removeFromParent();
+            this.dropLine.geometry.dispose();
+            this.dropLine.sourceGeometry.dispose();
+            this.dropLine.material.dispose();
+            this.dropLine = null;
+        }
+        this.suppressCamera(false);
+        this.updateEditFocus();
+        this.target = null;
+        this.savedMaterials = null;
+        this.altHeld = this.altMode = this.hover = this.dragging = false;
+        this.fade = this.lastFadeTime = 0;
+        this.lastMainLoopCount = -1;
+        this.pointerX = this.pointerY = -1;
+        this._objects = null;
+        this._objectsVersion = undefined;
+        this.undoStateBefore = this.insertedFrame = this.lockDragStart = null;
     }
 
     // ---------------------------------------------------------------- per-frame driver
@@ -460,7 +488,6 @@ class CObjectMoveWidget {
             }
         }
 
-        this.setPickIgnored(amount > 0);
         this.setWidgetOpacity(amount);
     }
 
@@ -480,24 +507,6 @@ class CObjectMoveWidget {
             }
         });
         return saved;
-    }
-
-    /**
-     * Take the object out of the right-click picker while it is faded. The picker walks
-     * up parents looking for this flag (CNodeView3DMouse.shouldIgnoreContextMenu), so
-     * setting it on the group covers the whole object.
-     */
-    setPickIgnored(ignored) {
-        const userData = this.node.group.userData;
-        if (ignored) {
-            if (this.savedIgnorePick === undefined) {
-                this.savedIgnorePick = userData.ignoreContextMenu ?? false;
-            }
-            userData.ignoreContextMenu = true;
-        } else if (this.savedIgnorePick !== undefined) {
-            userData.ignoreContextMenu = this.savedIgnorePick;
-            this.savedIgnorePick = undefined;
-        }
     }
 
     setWidgetOpacity(amount) {
@@ -528,9 +537,11 @@ class CObjectMoveWidget {
             this.widget.addEventListener("dragging-changed", (event) => this.onDraggingChanged(event));
         }
 
-        // Re-added rather than added once: a sitch load rebuilds the scene, and this
-        // widget outlives it.
+        // resetForSitch releases these handles before the old scene is destroyed.
         const helper = this.widget.getHelper();
+        // The normal view picker walks ancestors for nodeId. Keep it on the helper
+        // so right-clicking any handle opens the menu for the current object.
+        helper.userData.nodeId = this.node.id;
         if (helper.parent !== GlobalScene) {
             GlobalScene.add(helper);
         }
@@ -584,8 +595,7 @@ class CObjectMoveWidget {
             this.dropLine.renderOrder = 998;   // under the widget handles (999)
         }
 
-        // Re-added rather than added once, for the same reason as the widget helper: a
-        // sitch load rebuilds the scene while this object outlives it.
+        // The singleton survives a sitch load; resetForSitch releases its old line.
         if (this.dropLine.parent !== GlobalScene) GlobalScene.add(this.dropLine);
 
         // The line is drawn in the object's own local space so the two ends stay in

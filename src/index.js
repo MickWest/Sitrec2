@@ -112,6 +112,7 @@ import {checkLogin} from "./login";
 import {CFileManager, waitForParsingToComplete} from "./CFileManager";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {disposeDebugArrows, disposeDebugSpheres, disposeScene} from "./threeExt";
+import {ObjectMoveWidget} from "./CObjectMoveWidget";
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {removeLatLonGrid, setupLatLonGrid} from "./LatLonGrid";
 import {removeTimeZoneBorders} from "./TimeZoneBorders";
@@ -3563,6 +3564,10 @@ function disposeEverything() {
     removeLatLonGrid();
     removeTimeZoneBorders();
 
+
+    // Release the move helper and its pointer registration while the old nodes and
+    // cameras still exist. The next sitch gets new handles on its first hover.
+    ObjectMoveWidget.resetForSitch();
 
     // dispose the track manager managed nodes
     TrackManager.disposeAll();
