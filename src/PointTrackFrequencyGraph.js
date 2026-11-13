@@ -4,6 +4,8 @@ import {t} from './i18n';
 import {findPointTrack, pointTracks} from './PointTrackRegistry';
 
 const VIEW_ID = 'pointTrackFrequencyGraph';
+// The one window of Single Graph, with a line for each track.
+const SINGLE_VIEW_ID = `${VIEW_ID}_all`;
 // minPeakHz is the peak-search floor in Hz (0 = off), also when flashes per
 // minute are shown. 0.5 Hz (30 a minute) is below the slowest aircraft
 // anti-collision beacon (40 a minute). A floor above a flash rate does not just
@@ -21,33 +23,46 @@ export const clampPeakFloor = value => {
 const sanitizeOption = (key, value) => key === 'radius' ? clampApertureRadius(value)
     : key === 'minPeakHz' ? clampPeakFloor(value) : !!value;
 let sharedSettings = {...FREQUENCY_DEFAULTS};
+// Single Graph: every track's spectrum in one window, each in the color of its
+// track line. Off: a window for each track.
+let singleGraph = true;
 const graphIds = new Set();
 let showAll = false;
 export const clampFrequencyRadiusOverride = value => Number(value) > 0 ? clampApertureRadius(value) : 0;
 const wanted = new Map();
 const activeId = () => findPointTrack()?.trackId ?? 'track1';
 const viewId = id => id === 'track1' ? VIEW_ID : `${VIEW_ID}_${id}`;
-function settingsFor(id = activeId()) {
-    return {...sharedSettings, radius: clampFrequencyRadiusOverride(findPointTrack(id)?.frequencyRadius) || sharedSettings.radius};
+// A track's own window, and the single window, whether they show or not.
+const separateView = id => NodeMan.get(viewId(id), false);
+const singleView = () => NodeMan.get(SINGLE_VIEW_ID, false);
+const radiusFor = id => clampFrequencyRadiusOverride(findPointTrack(id)?.frequencyRadius) || sharedSettings.radius;
+const trackIds = () => new Set([...graphIds, ...pointTracks.map(track => track.trackId)]);
+// Every graph window, shown or not.
+function allViews() {
+    const views = [singleView(), ...[...trackIds(), activeId()].map(separateView)];
+    return [...new Set(views.filter(Boolean))];
 }
-function frequencyViews() {
-    const ids = new Set([...graphIds, ...pointTracks.map(track => track.trackId), activeId()]);
-    return [...new Set([...ids].map(id => currentView(id)).filter(Boolean))];
+// The window that draws a track's spectrum in the current mode, if one does.
+export function getPointTrackFrequencyView(id = activeId()) {
+    if (!singleGraph) return separateView(id);
+    const view = singleView();
+    return view?.trackIds.includes(id) ? view : null;
 }
-function applyViewSettings(view, id) {
-    const options = settingsFor(id);
-    const radiusChanged = view.options?.radius !== options.radius;
-    const changed = Object.keys(options).some(key => view.options?.[key] !== options[key]);
+const currentView = getPointTrackFrequencyView;
+function applyViewSettings(view) {
+    const options = {...sharedSettings};
+    // The common radius reaches the tracks through setTrackRadius, which
+    // measures again only the tracks whose radius changed.
+    const changed = Object.keys(options).some(key => key !== 'radius' && view.options?.[key] !== options[key]);
     view.options = options;
-    if (radiusChanged) view.refreshAnalysis();
-    else if (changed) view.updateSpectrum();
+    for (const id of view.trackIds) view.setTrackRadius(id, radiusFor(id));
+    if (changed) view.updateSpectrum();
 }
 export function setPointTrackFrequencyRadius(id, value) {
     const track = findPointTrack(id);
     if (!track) return;
     track.frequencyRadius = clampFrequencyRadiusOverride(value);
-    const view = currentView(id);
-    if (view) applyViewSettings(view, id);
+    currentView(id)?.setTrackRadius(id, radiusFor(id));
     setRenderOne();
 }
 export function showNewPointTrackFrequencyGraph(id) {
@@ -57,7 +72,7 @@ export function showNewPointTrackFrequencyGraph(id) {
 // those ranges instead of the already shared maxY prevents scale feedback.
 export function sharedPointTrackFrequencyMaxY(view) {
     let maximum = view.requiredMaxY();
-    for (const other of frequencyViews()) {
+    for (const other of allViews()) {
         if (other !== view && other.visible) maximum = Math.max(maximum, other.requiredMaxY());
     }
     return maximum;
@@ -84,38 +99,60 @@ async function renderWidening() {
     const {renderWideningVideo} = await import('./pointFrequency/WideningVideo');
     await renderWideningVideo({...widening});
 }
-export const getPointTrackFrequencyView = (id = activeId()) => NodeMan.get(viewId(id), false);
-const currentView = getPointTrackFrequencyView;
 
 export const pointFrequencyTargetColor = (dark = true) => dark ? '#54e2a8' : '#087a51';
 
 export function getPointTrackFrequencyAperture(id) {
     const view = currentView(id);
-    return view?.visible ? {radius: view.options.radius, color: pointFrequencyTargetColor(view.dark)} : null;
+    return view?.visible ? {radius: radiusFor(id), color: pointFrequencyTargetColor(view.dark)} : null;
 }
 
+// Show or hide a track's spectrum: its own window, or its line on the single
+// graph. The single graph shows the tracks that are on; when it was off, it
+// comes back with only this track, so it agrees with the Track List.
 export async function showPointTrackFrequencyGraph(show, savedState = null, id = activeId()) {
     show = !!show;
     wanted.set(id, show);
     if (show) graphIds.add(id);
-    let view = currentView(id);
+    const single = singleGraph;
+    let view = single ? singleView() : separateView(id);
     if (!view) {
         if (!show) return;
         const generation = Globals.loadGeneration;
         const {createPointTrackFrequencyGraphView} = await import('./pointFrequency/CNodePointTrackFrequencyGraphView');
         if (Globals.loadGeneration !== generation || !wanted.get(id)) return;
-        view = currentView(id) ?? createPointTrackFrequencyGraphView(viewId(id), settingsFor(id), id);
+        // Single Graph changed during the import: show the track in the mode that is set now.
+        if (singleGraph !== single) return showPointTrackFrequencyGraph(true, savedState, id);
+        view = (single ? singleView() : separateView(id))
+            ?? createPointTrackFrequencyGraphView(single ? SINGLE_VIEW_ID : viewId(id), sharedSettings, single ? null : id);
     }
-    if (savedState) view.modDeserialize({...savedState, frequencyOptions: settingsFor(id)});
-    applyViewSettings(view, id);
+    if (savedState) view.modDeserialize({...savedState, frequencyOptions: sharedSettings});
+    if (single) {
+        const others = view.visible ? view.trackIds.filter(other => other !== id) : [];
+        view.setTracks(show ? [...others, id] : others);
+        show = view.trackIds.length > 0;
+    }
+    applyViewSettings(view);
     view.show(show);
     if (show && savedState?.fullscreenSuppressed && ViewMan.fullscreenView) ViewMan.fullscreenSuppressed.add(view);
     wanted.delete(id);
     setRenderOne();
 }
 
+function setSingleGraph(value) {
+    value = !!value;
+    if (value === singleGraph) return;
+    const single = singleView();
+    const shown = singleGraph ? (single?.visible ? [...single.trackIds] : [])
+        : [...trackIds()].filter(id => separateView(id)?.visible);
+    for (const view of allViews()) view.show(false);
+    singleGraph = value;
+    for (const id of shown) showPointTrackFrequencyGraph(true, null, id);
+    setRenderOne();
+}
+
 export function arrangePointTrackFrequencyGraphs() {
-    const views = pointTracks.map(track => currentView(track.trackId)).filter(view => view?.visible);
+    const views = [...new Set(pointTracks.map(track => currentView(track.trackId)).filter(view => view?.visible))];
     const columns = Math.min(3, views.length), rows = Math.ceil(views.length / columns);
     views.forEach((view, i) => {
         Object.assign(view, {left: i % columns / columns, top: .5 + Math.floor(i / columns) * .48 / rows,
@@ -127,15 +164,17 @@ export function arrangePointTrackFrequencyGraphs() {
 
 export function addPointTrackFrequencyMenu(folder) {
     const proxy = {
-        get show() { return frequencyViews().some(view => view.visible) || [...wanted.values()].some(Boolean); },
+        get show() { return allViews().some(view => view.visible) || [...wanted.values()].some(Boolean); },
         set show(value) {
             showAll = !!value;
-            const ids = new Set([...graphIds, ...pointTracks.map(track => track.trackId)]);
+            const ids = trackIds();
             if (!ids.size) ids.add(activeId());
             for (const id of ids) showPointTrackFrequencyGraph(showAll, null, id);
         },
-        refresh() { for (const view of frequencyViews()) view.refreshAnalysis(); },
-        exportCSV() { currentView()?.exportCSV(); },
+        get singleGraph() { return singleGraph; },
+        set singleGraph(value) { setSingleGraph(value); },
+        refresh() { for (const view of allViews()) view.refreshAnalysis(); },
+        exportCSV() { currentView()?.exportCSV(activeId()); },
         arrange: arrangePointTrackFrequencyGraphs,
     };
     folder.add(proxy, 'show').name(t('pointFrequency.menu')).tooltip(t('pointFrequency.tooltip')).listen().perm();
@@ -148,10 +187,11 @@ export function addPointTrackFrequencyMenu(folder) {
         set(value) {
             value = sanitizeOption(key, value);
             sharedSettings[key] = value;
-            for (const view of frequencyViews()) applyViewSettings(view, view.trackId ?? activeId());
+            for (const view of allViews()) applyViewSettings(view);
             setRenderOne();
         },
     });
+    controls.add(proxy, 'singleGraph').name(t('pointFrequency.singleGraph')).tooltip(t('pointFrequency.singleGraphTooltip')).listen().perm();
     controls.add(proxy, 'radius', MIN_APERTURE_RADIUS, 100, 1).name(t('pointFrequency.radius')).tooltip(t('pointFrequency.radiusTooltip')).listen().perm();
     controls.add(proxy, 'percent').name(t('pointFrequency.percent')).tooltip(t('pointFrequency.percentTooltip')).listen().perm();
     controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).tooltip(t('pointFrequency.showBackgroundTooltip')).listen().perm();
@@ -177,19 +217,25 @@ export function addPointTrackFrequencyMenu(folder) {
     controls.add(proxy, 'renderWidening').name(t('pointFrequency.widening.render')).tooltip(t('pointFrequency.widening.renderTooltip')).perm();
 }
 
+function windowState(view) {
+    const state = view?.modSerialize() ?? {visible: false};
+    // Settings are common; effective radii are derived from each track's override.
+    delete state.frequencyOptions;
+    state.fullscreenSuppressed = !!view && !!ViewMan.fullscreenView && ViewMan.fullscreenSuppressed.has(view);
+    delete state.rootTestRemove;
+    return state;
+}
+
+// In Single Graph, `single` is the one window and each track's `visible` says
+// whether its line is on it. Otherwise each track's entry is its own window.
 export function serializePointTrackFrequencyGraph() {
     const tracks = {};
-    const ids = new Set([...graphIds, ...pointTracks.map(track => track.trackId)]);
-    for (const id of ids) {
-        const view = currentView(id);
-        const state = view?.modSerialize() ?? {visible: false};
-        // Settings are common; effective radii are derived from each track's override.
-        delete state.frequencyOptions;
-        state.fullscreenSuppressed = !!ViewMan.fullscreenView && ViewMan.fullscreenSuppressed.has(view);
-        delete state.rootTestRemove;
-        tracks[id] = state;
+    for (const id of trackIds()) {
+        tracks[id] = singleGraph ? {visible: !!currentView(id)?.visible} : windowState(separateView(id));
     }
-    return {version: 3, settings: {...sharedSettings}, showAll, tracks, widening: {...widening}};
+    const state = {version: 4, settings: {...sharedSettings}, showAll, singleGraph, tracks, widening: {...widening}};
+    if (singleGraph) state.single = windowState(singleView());
+    return state;
 }
 
 export async function deserializePointTrackFrequencyGraph(state) {
@@ -204,6 +250,7 @@ export async function deserializePointTrackFrequencyGraph(state) {
         sharedSettings[key] = sanitizeOption(key, options[key] ?? FREQUENCY_DEFAULTS[key]);
     }
     showAll = state.showAll ?? Object.values(tracks).every(saved => saved.visible);
+    singleGraph = state.singleGraph ?? true;
     for (const [id, saved] of Object.entries(tracks)) {
         const track = findPointTrack(id);
         if (!track) continue;
@@ -212,18 +259,39 @@ export async function deserializePointTrackFrequencyGraph(state) {
             const radius = clampApertureRadius(saved.frequencyOptions.radius);
             if (radius !== sharedSettings.radius) track.frequencyRadius = radius;
         }
-        if (!saved.visible && saved.left === undefined) continue;
-        await showPointTrackFrequencyGraph(true, saved, id);
-        if (!saved.visible) await showPointTrackFrequencyGraph(false, null, id);
+    }
+    const restorable = Object.entries(tracks).filter(([id]) => findPointTrack(id));
+    if (singleGraph) {
+        // A save made with a window for each track gives the single window the
+        // first window's place.
+        const single = state.single ?? restorable.map(([, saved]) => saved).find(saved => saved.left !== undefined) ?? null;
+        const ids = restorable.filter(([, saved]) => saved.visible).map(([id]) => id);
+        const first = ids[0] ?? restorable[0]?.[0];
+        if (first && (ids.length || single?.left !== undefined)) {
+            await showPointTrackFrequencyGraph(true, single, first);
+            for (const id of ids.slice(1)) await showPointTrackFrequencyGraph(true, null, id);
+            if (!ids.length) await showPointTrackFrequencyGraph(false, null, first);
+        }
+    } else {
+        for (const [id, saved] of restorable) {
+            if (!saved.visible && saved.left === undefined) continue;
+            await showPointTrackFrequencyGraph(true, saved, id);
+            if (!saved.visible) await showPointTrackFrequencyGraph(false, null, id);
+        }
     }
     // A shared setting also applies to windows that existed before restoration.
-    for (const view of frequencyViews()) applyViewSettings(view, view.trackId ?? activeId());
+    for (const view of allViews()) applyViewSettings(view);
 }
 
 export function removePointTrackFrequencyGraph(id) {
     wanted.delete(id);
     graphIds.delete(id);
-    const view = currentView(id);
+    const single = singleView();
+    if (single?.trackIds.includes(id)) {
+        single.setTracks(single.trackIds.filter(other => other !== id));
+        if (!single.trackIds.length) single.show(false);
+    }
+    const view = separateView(id);
     if (view) NodeMan.disposeRemove(view.id);
 }
 
@@ -231,6 +299,7 @@ export function resetPointTrackFrequencyGraph() {
     wanted.clear();
     graphIds.clear();
     sharedSettings = {...FREQUENCY_DEFAULTS};
+    singleGraph = true;
     showAll = false;
     widening = {...WIDENING_DEFAULTS};
 }

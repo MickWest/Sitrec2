@@ -3263,7 +3263,7 @@ function addPointTrackListMenu(folder) {
     folder.add(proxy, 'addTrack').name('Add Point Track').perm();
     folder.add(proxy, 'deleteTrack').name('Delete Selected Track').perm();
     trackListFolder = folder.addFolder('Track List').close().perm()
-        .tooltip('Show or hide each track and its frequency graph independently.');
+        .tooltip('Show or hide each track, and its frequency graph or its line on the single graph, independently.');
     refreshPointTrackList();
 }
 

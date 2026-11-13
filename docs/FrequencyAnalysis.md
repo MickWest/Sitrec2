@@ -20,10 +20,15 @@ Open the tool with **Video → Point Track → Frequency Analysis**. This guide 
 - [Video compression and the DCT](#video-compression-and-the-dct)
 
 To compare several objects, add their tracks in **Video → Point Track**. Under **Track List**,
-turn on **Frequency Analysis** for each one. Each window measures its own named track and
-remains attached to it when you switch **Edit Track**. The main **Frequency Analysis**
-checkbox shows or hides all graphs. **Frequency Analysis Settings** applies to all tracks,
-and **Refresh** measures all graphs again. To give one track a different aperture, set
+turn on **Frequency Analysis** for each one. With **Single Graph** on (the default, in
+**Frequency Analysis Settings**), one window draws every track's spectrum, each line in its
+track color. A list at the top of the plot gives each track's line color, its largest peak,
+and its radius and position smoothing. The light grey local background line is that of the
+first track in the Track List. With **Single Graph** off, each track has its
+own window, which shows its track name and remains attached to it when you switch
+**Edit Track**. The main **Frequency Analysis** checkbox shows or hides all graphs.
+**Frequency Analysis Settings** applies to all tracks, and **Refresh** measures all graphs
+again. To give one track a different aperture, set
 **Track List → [track name] → Frequency Radius** to a nonzero value. **0** uses the common
 radius; a nonzero radius is at least 2 pixels. Choose **Edit Track** to select the CSV to
 export. Track visibility and individual graph visibility remain independent.
@@ -140,6 +145,20 @@ the main frequency.
   scaled to the same measuring area and amplitude units for comparison.
 - **Header:** In/Out frames, sample count, duration, source frame rate, independent bin spacing
   and the largest eligible peak. The printed peak is not a significance test.
+- **Single Graph:** each track's object curve is in its track color: the color of its line
+  and name on the video. The track that you edit shows in the cursor colors on the video, but
+  its curve keeps its track color. Only the first track in the Track List has a background
+  curve, in light grey. A list at the top of the plot gives, for each track, a short line in
+  its color, its largest eligible peak, its radius and its position smoothing. A track that
+  has no spectrum shows its message there. With **Amplitude as percent** on, each curve is a
+  percent of its own track's mean flux. If the mean flux of one track is zero, every curve on
+  the single graph is in DN·pixels, because the graph has one vertical axis.
+
+![Single Graph on a generated test clip with three point tracks. On the video, Track 2 is blue and Track 3 is orange; Track 1 is the track being edited, so it shows the yellow cursor. Below, one Frequency Analysis graph has a green peak at 1.49 Hz, a blue peak at 2.49 Hz and an orange peak at 4.01 Hz. The list at the top of the plot gives each track's peak, and a light grey line marks the local background of Track 1.](docimages/pointtrack-frequency-single-graph.jpg)
+
+This screenshot uses a generated test clip in which three objects brighten and dim at 1.5, 2.5
+and 4 Hz. It is not real footage. The light grey background curve stays near zero, because the
+generated sky does not flicker.
 - **Dashed vertical line:** the lowest frequency allowed by the peak search floor.
 - **Warnings:** lines at the top of the plot. The red box is about
   [frames with no tracked point](#frames-with-no-tracked-point). The amber lines are about

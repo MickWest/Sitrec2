@@ -51,7 +51,7 @@ function setup() {
         result: {complete: false, done: 0, frames: 1, version: 0}}));
 }
 // Each call is a poll of the view; the 250 ms limit between polls is not under test.
-const poll = () => { view._pollAt = 0; view.ensureAnalysis(); };
+const poll = () => { view.analysis.pollAt = 0; view.ensureAnalysis(); };
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -62,13 +62,13 @@ afterEach(() => clearTimeout(view?._pollTimer));
 
 test('a gap does not stop the analysis: its frames are measured on the track line', () => {
     poll();
-    expect(view.message).toBe('');
+    expect(view.analysis.message).toBe('');
     expect(startTonalAnalysis).toHaveBeenCalledTimes(1);
     const {targets, first, last} = startTonalAnalysis.mock.calls[0][1];
     expect([first, last]).toEqual([522, 957]);
     for (const frame of GAPS) expect(targets[frame]).toEqual({u: .5, v: .5, rx: .1, ry: .1});
     // What the warning on the graph is made from.
-    expect(view._inputs.plan.untracked).toMatchObject({count: 7, total: 436, runs: 2, longest: 5, trial: 0});
+    expect(view.analysis.inputs.plan.untracked).toMatchObject({count: 7, total: 436, runs: 2, longest: 5, trial: 0});
     // The setting that asked for this is gone: there is nothing to turn on.
     expect(FREQUENCY_DEFAULTS).not.toHaveProperty('interpolate');
 });
@@ -76,29 +76,29 @@ test('a gap does not stop the analysis: its frames are measured on the track lin
 test('a region with no gap has no warning, and a gap that comes into the region gets one', () => {
     abFrameRange.mockReturnValue({frame0: 522, frame1: 926});
     poll();
-    expect(view._inputs.plan.untracked).toBeNull();
+    expect(view.analysis.inputs.plan.untracked).toBeNull();
     abFrameRange.mockReturnValue({frame0: 522, frame1: 940});
     poll();
-    expect(view.message).toBe('');
-    expect(view._inputs.plan.untracked).toMatchObject({count: 5, total: 419, runs: 1});
+    expect(view.analysis.message).toBe('');
+    expect(view.analysis.inputs.plan.untracked).toMatchObject({count: 5, total: 419, runs: 1});
 });
 
 test('frames with no position still stop the analysis, with the reason', () => {
     // Out is after the end of the track.
     abFrameRange.mockReturnValue({frame0: 522, frame1: 960});
     poll();
-    expect(view.message).toBe('pointFrequency.unpositioned {"count":3,"total":439}');
+    expect(view.analysis.message).toBe('pointFrequency.unpositioned {"count":3,"total":439}');
     expect(startTonalAnalysis).not.toHaveBeenCalled();
     // The object was not found on a frame of a gap: nothing joins the points on each side.
     abFrameRange.mockReturnValue({frame0: 522, frame1: 957});
     positions.unmeasuredFrames = new Set([929]);
     poll();
-    expect(view.message).toBe('pointFrequency.unpositioned {"count":5,"total":436}');
+    expect(view.analysis.message).toBe('pointFrequency.unpositioned {"count":5,"total":436}');
 });
 
 test('the warning box closes with its ×, and comes back only when In or Out changes', () => {
     poll();
-    expect(view.untrackedWarningShows(view._inputs.range)).toBe(true);
+    expect(view.untrackedWarningShows(view.analysis.inputs.range)).toBe(true);
     // The canvas is at (100, 50) on the page; the × is the square that the last draw left.
     view.canvas = {getBoundingClientRect: () => ({left: 100, top: 50}), style: {}};
     view._warningClose = {x: 800, y: 69, size: 18};
@@ -110,7 +110,7 @@ test('the warning box closes with its ×, and comes back only when In or Out cha
     // A press beside the ×, or with another button, is the graph window's own.
     press(780, 75); press(805, 75, 2);
     expect(view.basePresses).toBe(2);
-    expect(view.untrackedWarningShows(view._inputs.range)).toBe(true);
+    expect(view.untrackedWarningShows(view.analysis.inputs.range)).toBe(true);
     // A press on the × closes the box and goes no further.
     expect(press(805, 75).stopPropagation).toHaveBeenCalled();
     expect(view.basePresses).toBe(2);
@@ -118,25 +118,25 @@ test('the warning box closes with its ×, and comes back only when In or Out cha
     // A change of the track or a new measurement does not bring it back.
     positions.delete(700);
     poll();
-    expect(view._inputs.plan.untracked.count).toBe(8);
-    expect(view.untrackedWarningShows(view._inputs.range)).toBe(false);
+    expect(view.analysis.inputs.plan.untracked.count).toBe(8);
+    expect(view.untrackedWarningShows(view.analysis.inputs.range)).toBe(false);
     // A change of In or Out does, and it then stays, also back at the old frames.
     abFrameRange.mockReturnValue({frame0: 522, frame1: 950});
     poll();
-    expect(view.untrackedWarningShows(view._inputs.range)).toBe(true);
+    expect(view.untrackedWarningShows(view.analysis.inputs.range)).toBe(true);
     expect(view.untrackedWarningShows({frame0: 522, frame1: 957})).toBe(true);
 });
 
 test('the CSV marks the frames that were measured at an interpolated position', async () => {
     poll();
-    const indices = view._inputs.plan.indices;
-    Object.assign(view.job.result, {complete: true, flux: [], area: [], background: [], clippedFraction: [], mode: 'luma', bits: 8, masked: false});
+    const indices = view.analysis.inputs.plan.indices;
+    Object.assign(view.analysis.job.result, {complete: true, flux: [], area: [], background: [], clippedFraction: [], mode: 'luma', bits: 8, masked: false});
     for (const index of indices) {
-        view.job.result.flux[index] = 100 + Math.sin(index); view.job.result.area[index] = 50;
-        view.job.result.background[index] = 20; view.job.result.clippedFraction[index] = 0;
+        view.analysis.job.result.flux[index] = 100 + Math.sin(index); view.analysis.job.result.area[index] = 50;
+        view.analysis.job.result.background[index] = 20; view.analysis.job.result.clippedFraction[index] = 0;
     }
     view.updateSpectrum();
-    expect(view.spectrum.count).toBe(436);
+    expect(view.analysis.spectrum.count).toBe(436);
     await view.exportCSV();
     const rows = (await saveAs.mock.calls.at(-1)[0].text()).split('\n');
     const settings = rows.findIndex(row => row.startsWith('scene_in,'));

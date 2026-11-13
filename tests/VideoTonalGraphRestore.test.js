@@ -34,7 +34,9 @@ const saved = {visible: true, left: 0.55, top: 0.20, width: 0.45, height: 0.53, 
 let graph;
 
 function makeGraph(id) {
-    graph = {id, in: {}, visible: true, ...saved, refreshAnalysis() {}, updateSpectrum() {},
+    // A frequency window made outside the module already draws the first track.
+    graph = {id, in: {}, visible: true, ...saved, trackIds: ['track1'], refreshAnalysis() {}, updateSpectrum() {},
+        setTracks(ids) { this.trackIds = [...ids]; }, setTrackRadius() {},
         modDeserialize(state) {
             for (const key of Object.keys(saved)) if (state[key] !== undefined) this[key] = state[key];
         },
@@ -66,9 +68,10 @@ beforeEach(() => {
 });
 afterEach(() => { pointTracks.length = 0; });
 
+// The frequency graph saves in Single Graph by default: the one window is `single`.
 const savedGraph = () => {
     const state = serializeVideoTonalGraph();
-    return id === 'pointTrackFrequencyGraph' ? state?.tracks.track1 : state;
+    return id === 'pointTrackFrequencyGraph' ? state?.single : state;
 };
 
 test("a legacy saved graph restores visibly on top of the fullscreen video", async () => {
