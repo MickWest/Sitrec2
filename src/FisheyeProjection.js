@@ -534,6 +534,19 @@ export function isFisheyeCamera(camera) {
     return camNode.camera === live;
 }
 
+// The fisheye lens as setAtmosphereProjection (AtmosphereProjection.js) takes
+// it, or null when this camera renders with the pinhole projection. Shared by
+// the view's sky/haze rays and the volumetric clouds, so both invert the same lens.
+export function atmosphereFisheyeLens(camera) {
+    if (!isFisheyeCamera(camera)) return null;
+    fisheyeStarLens([1, 1]); // Refresh the shared lens parameters.
+    return {
+        type: FISHEYE_TYPE_INDEX[fisheye.lensType], rho: fisheyeUniforms.uFishRhoEdge.value,
+        scale: fisheye.circlePct / 100, centerX: fisheye.centerX / 100,
+        centerY: fisheye.centerY / 100, roll: fisheye.roll * Math.PI / 180,
+    };
+}
+
 // Per-render uniform update, called from the scene hooks. Aspect and depth
 // range come from the camera AS RENDERED (Match Video Aspect adjusts
 // camera.aspect before the render reaches here).
