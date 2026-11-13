@@ -95,7 +95,8 @@ so playback runs at the speed of the analysis until those frames are done.
 2. Press **Stabilize Video**. Sitrec analyzes the range if necessary, then shifts every frame to
    cancel the background motion. The button changes to **Disable Stabilization**.
 3. Press **Disable Stabilization** to see the original video. Press **Stabilize Video** again to
-   switch the same stabilization back on without analyzing again. This keeps the old shifts even
+   switch the same stabilization back on without analyzing again. This also works after Point Track
+   or **Stabilize on Stars** has replaced it. It keeps the old shifts even
    if you have changed In/Out or the Tracking Parameters. To use new settings, reload the sitch.
    Then, with Analyze Motion on, set the In/Out range and the Tracking Parameters again, and press
    **Stabilize Video**. A reload keeps only what the sitch saved.
@@ -212,6 +213,9 @@ that also fails, the frame takes its motion from the nearest good frames.
 A clip of plain sky has little for this to follow. Point Track can also stabilize a video, but on
 a tracked object instead of the background. See
 [Stabilization and stabilized rendering](PointTrack.md#c-stabilization-and-stabilized-rendering).
+On a night sky, **Stabilize on Stars** in the Star Tracker holds the stars still, and it removes
+the camera's roll as well as the shift. See
+[Stabilizing on the stars](StarTracker.md#stabilizing-on-the-stars).
 
 Turn stabilization off before Point Track runs: the tracker reads the shifted picture (see
 [Point Tracking](PointTrack.md#the-standard-procedure)).
@@ -424,8 +428,8 @@ cross, positive clockwise.
 | Control or key | What it does |
 |---|---|
 | **Enable / Disable Horizon Extractor** | Shows or hides the cross |
-| **Delete Keyframe at Current Frame** | Deletes the keyframe here. `Shift`+click on the cross center does the same |
-| **Clear All Keyframes** | Deletes every keyframe |
+| **Delete Keyframe at Current Frame** | Deletes the keyframe here. Right-click on the cross center, then **Delete Keyframe**, does the same |
+| **Clear All Keyframes** | Deletes every keyframe. It asks first, because you cannot undo it |
 | **Show Hint** | Shows the on-screen help again |
 | `J` / `K` | Go to the previous / next keyframe |
 

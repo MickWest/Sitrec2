@@ -373,3 +373,70 @@ describe('CVideoPatchedData mapping algorithm', () => {
         expect(Object.prototype.hasOwnProperty.call(wrapper, "echoFramesNeeded")).toBe(false);
     });
 });
+
+// Point Track, Motion Analysis and Stabilize on Stars set their stabilization on the video that
+// the view shows. With VFR Fix or a dropped-frame wrap, that is the wrapper, and the source has
+// none: the wrapper must draw it, or the overlays move and the picture does not.
+describe('CVideoPatchedData stabilization', () => {
+    let draws, createSpy;
+    beforeEach(() => {
+        draws = [];
+        const realCreate = document.createElement.bind(document);
+        createSpy = jest.spyOn(document, 'createElement').mockImplementation(tag => {
+            if (tag !== 'canvas') return realCreate(tag);
+            return {width: 0, height: 0, getContext: () => ({
+                fillRect() {}, setTransform() {},
+                drawImage(img, x, y) { draws.push({img, x, y}); },
+            })};
+        });
+    });
+    afterEach(() => createSpy.mockRestore());
+
+    function stabilizedWrapper() {
+        const pts = makePTS(30, 30, [{at: 9, count: 2}]);   // V10 and V11 hold source 9
+        const source = fakeSource(pts);
+        source.stabilizationEnabled = false;
+        source.getImage = S => ({sourceFrame: S, width: 1920, height: 1080});
+        source.getCachedImage = S => ({sourceFrame: S, width: 1920, height: 1080, cached: true});
+        source.getCachedStabilizedImage = S => ({sourceFrame: S, fromSource: true});
+        source.getStabilizationKey = () => "source-key";
+        const wrapper = new CVideoPatchedData(source, {fps: 30});
+        wrapper.setStabilizationData(new Map([[0, {x: 0, y: 0}], [5, {x: 30, y: -40}]]), {x: 0, y: 0}, true);
+        wrapper.setStabilizationEnabled(true);
+        return {source, wrapper};
+    }
+
+    test('the wrapper moves the source picture by its own offsets', () => {
+        const {wrapper} = stabilizedWrapper();
+        const image = wrapper.getImage(5);
+        expect(image.sourceFrame).toBeUndefined();          // a new canvas, not the source frame
+        expect(draws).toHaveLength(1);
+        expect(draws[0].img.sourceFrame).toBe(5);
+        expect([draws[0].x, draws[0].y]).toEqual([30, -40]);
+        expect(wrapper.getStabilizationKey()).toMatch(/^offset:/);
+    });
+
+    test('echo reads the same stabilized picture, from the decoded source frame', () => {
+        const {wrapper} = stabilizedWrapper();
+        wrapper.getCachedStabilizedImage(5);
+        expect(draws).toHaveLength(1);
+        expect(draws[0].img.cached).toBe(true);
+        expect([draws[0].x, draws[0].y]).toEqual([30, -40]);
+    });
+
+    test('a source with its own stabilization is not moved twice', () => {
+        const {source, wrapper} = stabilizedWrapper();
+        source.stabilizationEnabled = true;
+        expect(wrapper.getImage(5)).toEqual({sourceFrame: 5, width: 1920, height: 1080});
+        expect(wrapper.getCachedStabilizedImage(5)).toEqual({sourceFrame: 5, fromSource: true});
+        expect(wrapper.getStabilizationKey()).toBe("source-key");
+        expect(draws).toHaveLength(0);
+    });
+
+    test('off, the wrapper passes the source picture through', () => {
+        const {wrapper} = stabilizedWrapper();
+        wrapper.setStabilizationEnabled(false);
+        expect(wrapper.getImage(5)).toEqual({sourceFrame: 5, width: 1920, height: 1080});
+        expect(draws).toHaveLength(0);
+    });
+});

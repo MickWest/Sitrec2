@@ -2,7 +2,7 @@ import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, unreg
 import {acquirePlaybackControl, par} from "./par";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
-import {interpolatePosition} from "./CVideoData";
+import {applyAffine, interpolatePosition, viewStabilizationMatrix} from "./CVideoData";
 import {EventManager} from "./CEventManager";
 import {isKeyHeld, KeyMan} from "./KeyBoardHandler";
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
@@ -2583,18 +2583,16 @@ export class ObjectTracker {
         return canvasRadius;
     }
 
-    // How far stabilization moves the picture at a frame, in original video
-    // pixels. A track point drawn on that frame's picture moves by the same amount.
-    stabilizationShift(frame) {
+    // Where a point on the picture of a frame, in original video pixels, is
+    // drawn once stabilization has moved (and perhaps rotated) that picture.
+    stabilizedPoint(frame, point) {
         const video = this.videoView.videoData;
-        if (!video?.stabilizationEnabled || !video.stabilizationData || !video.stabilizationReferencePoint) return {x: 0, y: 0};
-        const point = interpolatePosition(video.stabilizationData, Math.floor(frame));
-        if (!point) return {x: 0, y: 0};
-        const width = video.originalVideoWidth || video.videoWidth;
-        const height = video.originalVideoHeight || video.videoHeight;
-        return video.stabilizationDirectOffset
-            ? {x: point.x * width / video.videoWidth, y: point.y * height / video.videoHeight}
-            : pointTrackingShift(video, point, video.stabilizationReferencePoint, width, height);
+        const width = video?.originalVideoWidth || video?.videoWidth;
+        const height = video?.originalVideoHeight || video?.videoHeight;
+        const m = viewStabilizationMatrix(this.videoView, frame, width, height);
+        if (!m) return point;
+        const [x, y] = applyAffine(m, point.x, point.y);
+        return {x, y};
     }
 
     drawFrequencyAperture(ctx, frame) {
@@ -2610,8 +2608,7 @@ export class ObjectTracker {
         const position = this.getInterpolatedPosition(f);
         if (!position) return;
 
-        const shift = this.stabilizationShift(f);
-        const x = position.x + shift.x, y = position.y + shift.y;
+        const {x, y} = this.stabilizedPoint(f, position);
         const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(x, y);
         const [edgeX, edgeY] = this.videoView.videoToCanvasCoordsOriginal(x + aperture.radius, y);
         ctx.save();
@@ -2673,8 +2670,10 @@ export class ObjectTracker {
         const positions = this.getOutputPositions();
         const tracked = Array.from(positions.keys()).filter(f => f >= frame0 && f <= frame1).sort((a, b) => a - b);
         if (!tracked.length) return;
-        const shift = this.stabilizationShift(frame);
-        const toCanvas = point => this.videoView.videoToCanvasCoordsOriginal(point.x + shift.x, point.y + shift.y);
+        const toCanvas = point => {
+            const p = this.stabilizedPoint(frame, point);
+            return this.videoView.videoToCanvasCoordsOriginal(p.x, p.y);
+        };
         // A sparse track has no point exactly at In or Out, so those two come from
         // interpolation. Past the ends of the track that would be an extrapolation.
         const firstTracked = minOf(positions.keys()), lastTracked = maxOf(positions.keys());
@@ -2887,8 +2886,10 @@ export class ObjectTracker {
     renderDisplayTrack(ctx, frame) {
         const positions = this.getOutputPositions();
         // All tracks share the same video stabilization transform at this frame.
-        const shift = this.stabilizationShift(frame);
-        const canvasPoint = p => this.videoView.videoToCanvasCoordsOriginal(p.x + shift.x, p.y + shift.y);
+        const canvasPoint = p => {
+            const s = this.stabilizedPoint(frame, p);
+            return this.videoView.videoToCanvasCoordsOriginal(s.x, s.y);
+        };
         const vertices = sortedTrackFrames(positions).map(f => {
             const p = positions.get(f), [x, y] = canvasPoint(p);
             return {frame: f, x, y, estimated: p.estimated};
@@ -2921,12 +2922,12 @@ export class ObjectTracker {
         this.updateSliderStatus();
         
         const videoData = this.videoView?.videoData;
-        if (videoData) {
+        if (videoData && !videoData.stabilizationAffine) {
             videoData.setStabilizationEnabled(false);
             videoData.stabilizationData = null;
             videoData.stabilizationReferencePoint = null;
         }
-        
+
         setRenderOne(true);
     }
 
@@ -2978,7 +2979,8 @@ export class ObjectTracker {
 
     refreshSmoothedOutput() {
         const vd = this.videoView?.videoData;
-        if (this.editable && vd?.stabilizationEnabled && !vd.stabilizationDirectOffset && this.trackedPositions.size) {
+        if (this.editable && vd?.stabilizationEnabled && !vd.stabilizationDirectOffset && !vd.stabilizationAffine
+            && this.trackedPositions.size) {
             const points = this.getOutputPositions();
             const first = minOf(points.keys());
             vd.setStabilizationData(points, points.get(first));
@@ -3155,7 +3157,8 @@ export function selectPointTrack(id) {
     NodeMan.get('autoTrackLOS', false)?.recalculateCascade();
     if (tracker.enabled) tracker.updateSliderStatus();
     const videoData = tracker.videoView.videoData;
-    if (videoData?.stabilizationEnabled) {
+    // Stabilization by per-frame maps (Star Tracker > Stabilize on Stars) is not this track's.
+    if (videoData?.stabilizationEnabled && !videoData.stabilizationAffine) {
         if (tracker.trackedPositions.size) applyTrackStabilization(videoData, videoData.stabilizeCenters, videoData.stabilizationDirectOffset);
         else {
             videoData.setStabilizationEnabled(false);
@@ -3205,7 +3208,8 @@ export function removePointTrack(id) {
         const replacement = pointTracks[Math.min(index, pointTracks.length - 1)];
         if (replacement) selectPointTrack(replacement.trackId);
         else {
-            tracker.videoView.videoData?.setStabilizationEnabled(false);
+            const videoData = tracker.videoView.videoData;
+            if (!videoData?.stabilizationAffine) videoData?.setStabilizationEnabled(false);
             NodeMan.get('autoTrackLOS', false)?.recalculateCascade();
             stabilizeToggleMenuItem?.name(t('tracking.stabilizeToggle.enableLabel'));
         }
@@ -3461,10 +3465,22 @@ function clearTrack() {
     }
 }
 
-function clearFromHere() {
-    if (objectTracker) {
-        objectTracker.clearFromHere();
+// Asks first only when the range holds points placed by hand, as Clear User Points does: auto
+// points can be tracked again, the points a person placed cannot.
+async function clearFromHere() {
+    const tracker = objectTracker;
+    if (!tracker) return;
+    const from = Math.floor(par.frame);
+    const to = Sit.bFrame ?? (Sit.frames - 1);
+    const placed = [...tracker.manualKeyframes].filter((f) => f >= from && f <= to).length;
+    if (placed > 0) {
+        const ok = await showConfirm(
+            `Delete the tracked points from frame ${from} to ${to}, including the ${placed} `
+            + `point${placed === 1 ? "" : "s"} you placed by hand? You cannot undo it.`,
+            {title: "Clear from Here", yesLabel: "Delete", noLabel: "Keep"});
+        if (!ok || objectTracker !== tracker) return;
     }
+    tracker.clearFromHere();
 }
 
 // Go to Next Untracked. The video says which frames the playhead is now at, or
@@ -4448,5 +4464,8 @@ registerFrameRemap("pointTracking", (remap, {from, to}) => {
     }
     if (from?.stabilizationEnabled && to && to !== from) {
         applyTrackStabilization(to, from.stabilizeCenters ?? true, from.stabilizationDirectOffset ?? false);
+        // A VFR Fix wrapper draws its own stabilization over its source's picture, so the
+        // stabilization must not stay on as well on the video it moved from.
+        if (to.stabilizationEnabled) from.setStabilizationEnabled(false);
     }
 });

@@ -4,7 +4,7 @@ import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysi
 import {getTesseract, loadTesseract} from "./tesseractLoader";
 import {isLocal} from "./configUtils";
 import {t} from "./i18n";
-import {showPrompt} from "./showError";
+import {showConfirm, showPrompt} from "./showError";
 
 let textExtractor = null;
 let textExtractionFolder = null;
@@ -712,7 +712,16 @@ export function addTextExtractionMenu() {
         enableExtraction: toggleEnableExtraction,
         addRegion: () => textExtractor?.startAddRegion(),
         removeRegion: () => textExtractor?.removeSelectedRegion(),
-        clearRegions: () => textExtractor?.clearAllRegions(),
+        // The regions are drawn by hand and cannot be undone, so it asks first.
+        clearRegions: async () => {
+            const te = textExtractor;
+            const n = te?.regions?.length ?? 0;
+            if (!n) return;
+            const ok = await showConfirm(
+                `Delete all ${n} text region${n === 1 ? "" : "s"}? You cannot undo it.`,
+                {title: "Clear Regions", yesLabel: "Delete", noLabel: "Keep"});
+            if (ok && textExtractor === te) te.clearAllRegions();
+        },
         startExtract: () => textExtractor?.startExtraction(),
     };
 

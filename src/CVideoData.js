@@ -69,6 +69,37 @@ export function interpolatePosition(positionsMap, frame) {
     return null;
 }
 
+// A 2D affine map {a, b, c, d, e, f}: x' = a*x + c*y + e, y' = b*x + d*y + f. The order of the
+// six numbers is the order canvas setTransform() takes them.
+export function applyAffine(m, x, y) {
+    return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
+}
+
+export function invertAffine(m) {
+    const det = m.a * m.d - m.b * m.c;
+    if (!det) return null;
+    return {a: m.d / det, b: -m.b / det, c: -m.c / det, d: m.a / det,
+        e: (m.c * m.f - m.d * m.e) / det, f: (m.b * m.e - m.a * m.f) / det};
+}
+
+// The stabilization on the picture that a video view shows at sitch frame `frame`, in the
+// pixels of a width x height picture. The view gives getImage() its stream frame (Lock to In
+// Frame), and getImage() divides that by the video speed, so the map is that frame's. An
+// overlay drawn on the picture must use this, or it moves with another frame's map.
+export function viewStabilizationMatrix(view, frame, width, height) {
+    const video = view?.videoData;
+    if (!video?.stabilizationMatrix) return null;
+    return video.stabilizationMatrix(viewVideoFrame(view, frame), width, height);
+}
+
+// The video's own frame number for sitch frame `frame` in a video view: the frame that
+// getImage() decodes and stabilizes.
+export function viewVideoFrame(view, frame) {
+    const f = Math.floor(frame);
+    const stream = view?.streamFrame ? view.streamFrame(f) : f;
+    return Math.floor(stream / (view?.videoData?.videoSpeed || 1));
+}
+
 export class CVideoData {
     constructor(v) {
         this.id = v.id;
@@ -115,6 +146,9 @@ export class CVideoData {
         this.stabilizationReferencePoint = null; // {x, y} - the fixed point
         this.stabilizationDirectOffset = false;  // true = use offsets directly (motion analysis)
         this.stabilizeCenters = true;  // true = center tracked point in view, false = keep at initial position
+        // Set by setStabilizationTransforms(): stabilizationData then holds a 2D map per frame,
+        // in pixels of a picture this size ({width, height}), which can rotate as well as shift.
+        this.stabilizationAffine = null;
         this.stabilizedImageCache = [];  // Cache for stabilized frames
 
         this.flushEntireCache();
@@ -150,6 +184,7 @@ export class CVideoData {
         // Disable stabilization as offsets are no longer valid after rotation
         this.setStabilizationEnabled(false);
         this.stabilizationData = null;
+        this.stabilizationAffine = null;
     }
 
     // Container/stream facts about this media, for display in the EXIF/Metadata panel.
@@ -222,8 +257,68 @@ export class CVideoData {
         this.stabilizationData.unmeasuredFrames = trackingData.unmeasuredFrames;
         this.stabilizationReferencePoint = referencePoint;
         this.stabilizationDirectOffset = directOffset;
+        this.stabilizationAffine = null;
         this.stabilizedImageCache = [];
         this._stabilizationRevision = (this._stabilizationRevision ?? 0) + 1;
+    }
+
+    // Stabilization that can rotate as well as shift. `transforms` maps a frame to the 2D map
+    // (applyAffine) from that frame's picture to the stabilized picture, in pixels of a picture
+    // width x height. A frame with no map uses the map of the nearest frame before it, or the
+    // first map: past the ends of the data the picture keeps the nearest correction, and does
+    // not jump back.
+    setStabilizationTransforms(transforms, width, height) {
+        this.setStabilizationData(transforms, {x: 0, y: 0});
+        this.stabilizationAffine = {width, height};
+        this._affineFrames = [...this.stabilizationData.keys()].sort((p, q) => p - q);
+    }
+
+    clearStabilization() {
+        this.setStabilizationEnabled(false);
+        this.stabilizationData = null;
+        this.stabilizationReferencePoint = null;
+        this.stabilizationAffine = null;
+    }
+
+    affineMapAt(frame) {
+        const own = this.stabilizationData.get(frame);
+        if (own) return own;
+        const frames = this._affineFrames;
+        if (!frames?.length) return null;
+        if (frame < frames[0]) return this.stabilizationData.get(frames[0]);
+        let lo = 0, hi = frames.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (frames[mid] <= frame) lo = mid; else hi = mid - 1;
+        }
+        return this.stabilizationData.get(frames[lo]);
+    }
+
+    // What stabilization does to the picture of `frame`, as a 2D map (applyAffine) in the pixels
+    // of a picture width x height, or null when it does nothing. getStabilizedImage() draws
+    // with it, and an overlay maps its points with it, so the two cannot disagree.
+    stabilizationMatrix(frame, width, height) {
+        if (!this.stabilizationEnabled || !this.stabilizationData || !this.stabilizationReferencePoint) return null;
+        const f = Math.floor(frame);
+        if (this.stabilizationAffine) {
+            const m = this.affineMapAt(f);
+            if (!m) return null;
+            // The same map, for pixels scaled by (sx, sy) from the ones it was made in.
+            const sx = width / this.stabilizationAffine.width, sy = height / this.stabilizationAffine.height;
+            return {a: m.a, b: m.b * sy / sx, c: m.c * sx / sy, d: m.d, e: m.e * sx, f: m.f * sy};
+        }
+        const p = interpolatePosition(this.stabilizationData, f);
+        if (!p) return null;
+        // Tracked positions are in original-video pixels. Direct offsets (motion analysis) are
+        // in decoded pixels.
+        const baseW = (this.stabilizationDirectOffset ? this.videoWidth : this.originalVideoWidth) || width;
+        const baseH = (this.stabilizationDirectOffset ? this.videoHeight : this.originalVideoHeight) || height;
+        const sx = width / baseW, sy = height / baseH;
+        const r = this.stabilizationReferencePoint;
+        const [e, f2] = this.stabilizationDirectOffset ? [p.x * sx, p.y * sy]
+            : this.stabilizeCenters ? [width / 2 - p.x * sx, height / 2 - p.y * sy]
+            : [r.x * sx - p.x * sx, r.y * sy - p.y * sy];
+        return {a: 1, b: 0, c: 0, d: 1, e, f: f2};
     }
 
     // Changes whenever the shift getImage() applies could change. A filter cache
@@ -232,7 +327,8 @@ export class CVideoData {
     // callers write stabilizationEnabled and stabilizeCenters directly.
     getStabilizationKey() {
         if (!this.stabilizationEnabled || !this.stabilizationData || !this.stabilizationReferencePoint) return "off";
-        const mode = this.stabilizationDirectOffset ? "offset" : this.stabilizeCenters ? "center" : "point";
+        const mode = this.stabilizationAffine ? "affine" : this.stabilizationDirectOffset ? "offset"
+            : this.stabilizeCenters ? "center" : "point";
         return `${mode}:${this._stabilizationRevision ?? 0}`;
     }
 
@@ -268,61 +364,34 @@ export class CVideoData {
             return this.stabilizedImageCache[f];
         }
 
-        // Use source frame's stabilization offset when using substitute image
-        let trackPos = interpolatePosition(this.stabilizationData, sf);
-        if (!trackPos) {
+        // Use source frame's stabilization when using substitute image. The map is made for the
+        // size of the image being drawn, which is the decoded size after the videoMaxSize preset,
+        // not the original video size.
+        const width = originalImage.width || originalImage.videoWidth;
+        const height = originalImage.height || originalImage.videoHeight;
+        const m = this.stabilizationMatrix(sf, width, height);
+        if (!m) {
             return originalImage;
         }
-        let refPoint = this.stabilizationReferencePoint;
 
-        // Stabilization positions live in original-video coordinates
-        // (referenced to originalVideoWidth/Height). The image we're shifting
-        // is at the actual decoded resolution after the videoMaxSize quality
-        // preset, so scale positions to image coords before computing shifts.
-        // Direct-offset mode (motion analysis) bypasses this — the offsets are
-        // already deltas in the displayed image space.
-        if (!this.stabilizationDirectOffset
-            && this.originalVideoWidth && this.originalVideoHeight) {
-            const w = originalImage.width || originalImage.videoWidth || this.originalVideoWidth;
-            const h = originalImage.height || originalImage.videoHeight || this.originalVideoHeight;
-            const sx = w / this.originalVideoWidth;
-            const sy = h / this.originalVideoHeight;
-            trackPos = {x: trackPos.x * sx, y: trackPos.y * sy};
-            if (refPoint) {
-                refPoint = {x: refPoint.x * sx, y: refPoint.y * sy};
-            }
-        }
-
-        // Calculate shift based on mode
-        let shiftX, shiftY;
-        if (this.stabilizationDirectOffset) {
-            // Direct offset mode (motion analysis): offsets are cumulative motion to cancel
-            shiftX = trackPos.x;
-            shiftY = trackPos.y;
-        } else if (this.stabilizeCenters) {
-            // Center mode: shift to keep tracked point at center of view
-            const w = originalImage.width || originalImage.videoWidth;
-            const h = originalImage.height || originalImage.videoHeight;
-            shiftX = w / 2 - trackPos.x;
-            shiftY = h / 2 - trackPos.y;
-        } else {
-            // Point tracking mode: shift to keep tracked point at reference position
-            shiftX = refPoint.x - trackPos.x;
-            shiftY = refPoint.y - trackPos.y;
-        }
-
-        // Create shifted image
         const canvas = document.createElement('canvas');
-        canvas.width = originalImage.width || originalImage.videoWidth;
-        canvas.height = originalImage.height || originalImage.videoHeight;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext('2d');
 
         // Fill with black background
         ctx.fillStyle = 'black';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Draw shifted image
-        ctx.drawImage(originalImage, shiftX, shiftY);
+        // Draw the moved image. A shift is drawn as it always was; only a map that also rotates
+        // or scales (setStabilizationTransforms) needs the full transform.
+        if (m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1) {
+            ctx.drawImage(originalImage, m.e, m.f);
+        } else {
+            ctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+            ctx.drawImage(originalImage, 0, 0);
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
 
         // Only cache if this is the exact frame, not a substitute
         if (isExactFrame) {

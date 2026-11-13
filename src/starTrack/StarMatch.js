@@ -135,6 +135,23 @@ export function composeTransform(S, C) {
     return {A: [ax, ay], B: [bx, by]};
 }
 
+/**
+ * Maps that hold a star field still. For each frame transform T_i (reference chart to frame i
+ * pixels): the inverse of T_i, then T_0, so a point in frame i goes to where the same star is in
+ * frame 0. Each map is a 2D affine {a, b, c, d, e, f} (x' = a*x + c*y + e, y' = b*x + d*y + f,
+ * as CVideoData.applyAffine takes it); null where T_i is missing or cannot be inverted.
+ */
+export function stabilizingMaps(transforms) {
+    const T0 = transforms[0] ?? IDENTITY;
+    return transforms.map((T) => {
+        const inv = T && invertTransform(T);
+        if (!inv) return null;
+        const S = composeTransform(T0, inv);
+        const [p, q] = S.A;
+        return {a: p, b: q, c: -q, d: p, e: S.B[0], f: S.B[1]};
+    });
+}
+
 /** Human-readable parameters: rotation in radians, uniform scale, and the translation. */
 export function transformParams(T) {
     return {

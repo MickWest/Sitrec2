@@ -212,9 +212,9 @@ a {
 ////////////////////////////////////////////////////////////////////////
 // lil-gui
 
-// a button in lil-gui is used as a menu item
-// so we style it to be more like a Mac/Windows menu item
-// left centered text, inset a few pixels
+// a button in lil-gui is a row of a menu, so its text is on the left,
+// inset a few pixels, as in a Mac/Windows menu item. The button look
+// (fill and border) is in the rule for .function buttons below.
 .lil-gui .name {
     text-align: left;
     padding-left: 5px;
@@ -233,6 +233,29 @@ a {
     background: var(--sitrec-bg-panel);
     // Constrain children (the .name div) so text-overflow:ellipsis can engage.
     overflow: hidden;
+}
+
+/* A menu row that runs an action looks like a button: the widget fill, a border and
+   rounded corners, so it is not read as a label. lil-gui sets box-sizing: border-box on
+   every element, so the border is inside the row height and the menu spacing does not
+   change. The text stays on the left, as in a menu item.
+   Two classes and an element, so the modern panels (ModernControlStyle.js, three classes
+   and an element) keep their own button style whatever order the style sheets load in. */
+.lil-gui .function button {
+    background: var(--widget-color);
+    border: 1px solid var(--sitrec-border);
+    border-radius: var(--sitrec-radius);
+}
+.lil-gui .function button > .name {
+    background: transparent;
+}
+@media (hover: hover) {
+    .lil-gui .function button:hover {
+        background: var(--hover-color);
+    }
+}
+.lil-gui .function button:active {
+    background: var(--focus-color);
 }
 
 // Folder titles (e.g. track-name folders nested in File/Export/Resources)

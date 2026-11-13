@@ -1,5 +1,7 @@
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
+import {commandModifier} from "../GestureActions";
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from '../VideoAnalysisResolution';
 // Star Tracker: the app-facing layer over the pure Star Track pipeline.
 //
@@ -13,15 +15,20 @@ import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRen
 import {getECEFToEQJMatrix, getStarDirectionECEF} from "../CelestialMath";
 import {CNodeController} from "../nodes/CNodeController";
 import {CNodeArray} from "../nodes/CNodeArray";
-import {SITREC_APP} from "../configUtils";
+import {isLocal, SITREC_APP} from "../configUtils";
+import {ECEFToLLAVD_radii, LLAToECEFVD} from "../LLA-ECEF-ENU";
+import * as Astronomy from "astronomy-engine";
 import {CVideoImageData} from "../CVideoImageData";
+import {applyAffine, invertAffine, viewStabilizationMatrix, viewVideoFrame} from "../CVideoData";
+import {registerFrameRemap} from "../VFRTimeline";
 import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
-import {applyTransform, invertTransform} from "./StarMatch";
+import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
+import {identifyBrightTriplesOffThread} from "./StarTriplesOffThread";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
@@ -39,6 +46,8 @@ import {LENS_PRESETS, lensFOV, lensFromVFOV, lensMaxRho, lensTheta, lensToRay, r
 import {applyFisheyeState, clampFisheyeFov, fisheye, fisheyeStarLens} from "../FisheyeProjection";
 import {fitLensToCatalog, matchCatalogToPixels, matchDirsToPixels, rankLensTypes} from "./StarLensFromCatalog";
 import {extractStarTrails} from "./StarTrails";
+import {MANUAL_FIT_MIN_POINTS, PLANET_LABELS, brightNamedStars, fitManualPlate, resolveSkyLabel}
+    from "./StarManualFit";
 import {applyRefractionToDirection, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {
     STAR_IDENTIFY_DEFAULTS,
@@ -159,6 +168,14 @@ const params = {
     minObservations: STAR_SOLVE_DEFAULTS.minObservations,
     driftSignificance: STAR_SOLVE_DEFAULTS.driftSignificance,
     driftMinSigmas: STAR_SOLVE_DEFAULTS.driftMinSigmas,
+    // Identify Bright Triples uses the planets and the stars brighter than this (StarTriples.js).
+    // Magnitude 3 over the whole sky is about 180 objects and 255,000 triples in a 101 deg field:
+    // about two seconds, in a worker.
+    tripleMagLimit: 3.0,
+    // On: only those above the horizon at the sitch's place and time. Off by default, so a wrong
+    // place or time does not throw out the right objects; the planets are then where they are on
+    // the date.
+    tripleAboveHorizon: false,
     // Lens. On a wide-angle clip the 2D similarity sky model is biased at the frame edges - a
     // measured ~10-12 px on the reference clip, enough to report edge stars as movers. When this
     // is on, the lens is fitted from the star field and the classification is redone on the
@@ -1972,6 +1989,26 @@ function detachStarTrackCamera() {
 }
 
 /**
+ * Give the camera back when the solve it was baked from is withdrawn, without discarding the
+ * analysis: the heading and FOV return to the sources they had before the sync (while Star Track
+ * is still an option to move away from), the Star Track options leave the dropdowns, and the
+ * baked track is emptied so a save cannot keep a pose that nothing supports any more. A later
+ * solve syncs again through applySolveToCamera.
+ */
+function releaseStarTrackCamera() {
+    restoreCameraChoices();
+    detachStarTrackCamera();
+    const ctrl = NodeMan.get("starTrackCameraController", false);
+    if (ctrl) {
+        ctrl.poseTrack = null;
+        ctrl.vfovDeg = null;
+        ctrl.vfovTrack = null;
+        ctrl.fixedPose = null;
+    }
+    setRenderOne();
+}
+
+/**
  * Blind-identify the solved star map against the star catalog: no location, no time, no
  * pointing assumed - the field is found purely from the geometry of the stars themselves
  * (quad hashing; see StarIdentify). On success each confirmed star gains a name, and the
@@ -2007,12 +2044,54 @@ function pointSourceStats(track) {
     return out;
 }
 
+/**
+ * After a new identification - blind or manual - put it on the camera.
+ */
+function applySolveToCamera(r) {
+    // With the sync flag set, a successful identify TAKES the camera - that is what the
+    // flag means, and it is why the flag replaced a button. syncCameraToStarTrack does
+    // the bake, the attach and the option selection, and writes its own status; the
+    // caller's "identified N/M stars" line lands after it and wins the readout, which is
+    // the right way round.
+    if (params.syncCameraToStars) {
+        syncCameraToStarTrack();
+        return;
+    }
+    // A previously-synced camera keeps driving from its BAKE, so a re-identification
+    // (say, after toggling stars off) must RE-BAKE it whole. Refreshing only the live
+    // FOV array - the old behaviour - left the heading and the serialized vfovDeg/
+    // vfovTrack on the previous solve: zoom and heading came from two different
+    // solves, and a save then froze the stale pair for every reload. When the new
+    // solve cannot bake (a windowed identify with partial coverage), the old bake is
+    // left intact rather than half-updated; pressing Sync explains why.
+    const ctrl = NodeMan.get("starTrackCameraController", false);
+    if (!ctrl?.poseTrack) return;
+    if (ctrl.bakeFrom(r)) {
+        attachStarTrackCamera(ctrl, false);
+        setRenderOne();
+    }
+}
+
+/**
+ * The analysis of the video on screen. When there is none yet (or only one of another video),
+ * run Find Candidate Stars first, as its button does, so the identify buttons work on a fresh
+ * sitch. False when that run fails or is aborted: its own status then stays on screen.
+ */
+async function ensureCandidateStars() {
+    if (result && result.videoData === videoView()?.videoData) return true;
+    const analyzed = await runStarTracker();
+    setRenderOne();
+    return !!analyzed && !!result;
+}
+
 export async function identifyStars(opts = {}) {
     // opts.scoring marks a run whose ONLY purpose is to produce a number for a search. It still
     // identifies - that is the number - but it must not steer the user's camera while doing it.
     const scoring = !!opts.scoring;
+    // A scoring run always follows an analysis of its own; it must not start one.
+    if (!scoring && !await ensureCandidateStars()) return;
     if (!result) {
-        params.status = "run Analyze first";
+        params.status = "run Find Candidate Stars first";
         return;
     }
     const myResult = result;
@@ -2170,28 +2249,7 @@ export async function identifyStars(opts = {}) {
             // camera the user synced from a whole clip onto it would swing their view for every
             // candidate a search tries, and leave it pointing at the last one.
             if (scoring) return;
-            // With the sync flag set, a successful identify TAKES the camera - that is what the
-            // flag means, and it is why the flag replaced a button. syncCameraToStarTrack does
-            // the bake, the attach and the option selection, and writes its own status; the
-            // caller's "identified N/M stars" line lands after it and wins the readout, which is
-            // the right way round.
-            if (params.syncCameraToStars) {
-                syncCameraToStarTrack();
-                return;
-            }
-            // A previously-synced camera keeps driving from its BAKE, so a re-identification
-            // (say, after toggling stars off) must RE-BAKE it whole. Refreshing only the live
-            // FOV array - the old behaviour - left the heading and the serialized vfovDeg/
-            // vfovTrack on the previous solve: zoom and heading came from two different
-            // solves, and a save then froze the stale pair for every reload. When the new
-            // solve cannot bake (a windowed identify with partial coverage), the old bake is
-            // left intact rather than half-updated; pressing Sync explains why.
-            const ctrl = NodeMan.get("starTrackCameraController", false);
-            if (!ctrl?.poseTrack) return;
-            if (ctrl.bakeFrom(myResult)) {
-                attachStarTrackCamera(ctrl, false);
-                setRenderOne();
-            }
+            applySolveToCamera(myResult);
         };
 
         // A clip whose chart robustly extends well beyond the video frame is a PAN, and a
@@ -2347,6 +2405,9 @@ export async function identifyStars(opts = {}) {
         }
         if (!solved || !solved.ok) {
             params.status = `identify failed: ${solved ? solved.reason : "no result"}`;
+            // Too few stars for quads is what triples are for. Not on a scoring run, which
+            // must not steer the camera.
+            if (!scoring) await identifyByBrightTriples({auto: true, quadFailure: params.status});
             return;
         }
 
@@ -2430,6 +2491,9 @@ async function runStarTrackerAtResolution(opts) {
     // and attach its results over the new one.
     const generation = Globals.loadGeneration;
     const videoData = view.videoData;
+    // The analysis must read the frames as recorded. Stabilize on Stars came from the solve that
+    // this run replaces, so it goes off; it can be turned on again for the new solve.
+    if (videoData.stabilizationAffine) videoData.clearStabilization();
     // The snapshot below trusts `calibration`; a same-sitch video swap must not let it carry
     // another video's plate scale into this analysis.
     dropCalibrationForOtherVideo(videoData);
@@ -3295,9 +3359,532 @@ function toggleStarsEnabled(indices) {
         else result.disabledStars.delete(ix);
     }
     const after = [...result.disabledStars];
-    const restore = state => { editedResult.disabledStars = new Set(state); setRenderOne(); };
+    const restore = state => {
+        editedResult.disabledStars = new Set(state);
+        // A circle turned off leaves the manual fit, and one turned back on rejoins it.
+        if (editedResult === result && editedResult.manualLabels?.size) applyManualLabels();
+        setRenderOne();
+    };
     UndoManager.add({description: "Toggle star selection", undo: () => restore(before), redo: () => restore(after)});
+    restore(after);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Manual identification: name the circles by hand
+// ---------------------------------------------------------------------------------------------
+//
+// A clip with only a few bright dots - planets and one or two stars in twilight - has too few
+// stars for the blind identification. The user can see which dot is which, so a right-click on a
+// circle names it, and a Ctrl/Cmd-click adds a circle where the tracker found none. When three
+// enabled circles have names, the plate model is fitted to them (StarManualFit) and the camera
+// is synced exactly as after a blind identification.
+
+const D2R = Math.PI / 180;
+
+// Named stars brighter than this, and above the horizon, are offered in the label menu. Any
+// other star can be typed by name or HIP number.
+const LABEL_MENU_MAG_LIMIT = 3.5;
+
+/** The classified entry for a track index. */
+function classifiedByIndex(r, index) {
+    return r.solved.classified.find((c) => c.index === index) ?? null;
+}
+
+/** The observer for planet positions: the look camera, or the sitch origin before it is placed. */
+function observerECEF() {
+    const pos = NodeMan.get("lookCamera", false)?.camera?.position;
+    if (pos && pos.lengthSq() > 1e12) return pos.clone();
+    return LLAToECEFVD(new Vector3(Sit.lat, Sit.lon, 0));
+}
+
+/**
+ * A planet's RA/Dec in the frame the star catalog uses: J2000 axes, seen from the observer
+ * (the Moon's parallax is about a degree), and WITHOUT aberration - the camera sync adds
+ * aberration to whatever the plate model says (getStarDirectionECEF), as it does for the stars.
+ */
+function planetRaDecJ2000(body, date, observerPos) {
+    const lla = ECEFToLLAVD_radii(observerPos);
+    const observer = new Astronomy.Observer(lla.x, lla.y, lla.z);
+    const eq = Astronomy.Equator(body, date, observer, false, false);
+    return {raDeg: eq.ra * 15, decDeg: eq.dec};
+}
+
+/**
+ * Name a circle, or remove its name (entry null). One name belongs to one circle, so naming a
+ * second circle "Jupiter" moves the name. Naming a circle that was clicked off turns it back on.
+ */
+function setStarLabel(index, entry) {
+    const r = result;
+    if (!r) return;
+    const snapshot = () => ({labels: new Map(r.manualLabels ?? []), disabled: new Set(r.disabledStars ?? [])});
+    const before = snapshot();
+    const labels = new Map(before.labels), disabled = new Set(before.disabled);
+    if (entry) {
+        for (const [ix, e] of labels) if (e.label === entry.label) labels.delete(ix);
+        labels.set(index, entry);
+        disabled.delete(index);
+    } else {
+        labels.delete(index);
+    }
+    const after = {labels, disabled};
+    const restore = (state) => {
+        if (result !== r) return;
+        r.manualLabels = new Map(state.labels);
+        r.disabledStars = new Set(state.disabled);
+        applyManualLabels();
+    };
+    UndoManager.add({description: entry ? "Name star" : "Remove star name",
+        undo: () => restore(before), redo: () => restore(after)});
+    restore(after);
+}
+
+/**
+ * Fit the camera to the named circles, or say how many more names it needs.
+ *
+ * The circles' reference-chart positions are the image, and the frame centre is taken as the
+ * optical axis - a pinhole camera with no lens distortion, which is all three points can
+ * constrain. The fit replaces any earlier identification, and syncs the camera under the same
+ * rule a blind identification does.
+ */
+function applyManualLabels() {
+    const r = result;
+    if (!r) return;
+    const labels = r.manualLabels ?? new Map();
+    const date = GlobalDateTimeNode.frameToDate(r.frame0);
+    const observerPos = observerECEF();
+    const points = [];
+    for (const [index, e] of labels) {
+        if (r.disabledStars?.has(index)) continue;
+        const c = classifiedByIndex(r, index);
+        if (!c?.position) continue;
+        const sky = e.planet ? planetRaDecJ2000(e.planet, date, observerPos) : e;
+        points.push({x: c.position[0], y: c.position[1], raDeg: sky.raDeg, decDeg: sky.decDeg,
+            hip: e.hip ?? null, mag: e.mag, index, label: e.label});
+    }
+    const dropManualSolve = () => {
+        if (!r.identify?.manual) return;
+        r.identify = null;
+        if (r.lensStatusBeforeManual !== undefined) params.lensStatus = r.lensStatusBeforeManual;
+        // The camera was baked from the fit being withdrawn, and must not go on following it.
+        releaseStarTrackCamera();
+    };
+    if (points.length < MANUAL_FIT_MIN_POINTS) {
+        dropManualSolve();
+        const need = MANUAL_FIT_MIN_POINTS - points.length;
+        params.status = `${points.length} star${points.length === 1 ? "" : "s"} named - name `
+            + `${need} more to fit the camera`;
+        setRenderOne();
+        return;
+    }
+    const solved = fitManualPlate(points, [r.videoW / 2, r.videoH / 2], r.videoW);
+    if (!solved.ok) {
+        dropManualSolve();
+        params.status = `manual fit failed: ${solved.reason}`;
+        setRenderOne();
+        return;
+    }
+    r.identify = {
+        solved,
+        manual: true,
+        chart: null,
+        identified: new Map(points.map((p, k) => [p.index, {label: p.label, hip: p.hip,
+            mag: p.mag, raDeg: p.raDeg, decDeg: p.decDeg, dPx: solved.matches[k].dPx, named: true}])),
+    };
+    // A catalog lens fit belongs to a blind identification of a fisheye run; the manual fit is
+    // a pinhole model, so the pose must come from it alone.
+    r.lensFit = null;
+    // The analysis's own lens line comes back if the names drop below three again.
+    if (r.lensStatusBeforeManual === undefined) r.lensStatusBeforeManual = params.lensStatus;
+    const vfov = starTrackVfovDeg(solved, r.videoH);
+    params.lensStatus = `manual: pinhole, vertical FOV ${vfov.toFixed(2)} deg, `
+        + `from ${points.length} named stars`;
+    applySolveToCamera(r);
+    // Measured on the clip this was made for: the right names fit to 0.2 px, and the same names
+    // with two swapped fit to 91 px. The warning threshold sits between, at 1% of the frame
+    // height. It is not a lens model: on a strongly distorted lens, correctly named dots far
+    // apart could exceed it, so it says "may".
+    const suspect = solved.maxPx > 0.01 * r.videoH;
+    params.status = `fitted to ${points.length} named stars - vertical FOV ${vfov.toFixed(2)} deg, `
+        + `rms ${solved.rmsPx.toFixed(1)} px, worst ${solved.maxPx.toFixed(1)} px`
+        + (suspect ? " - a name may be wrong" : "")
+        + (solved.mirrored ? " - the video is a mirror image" : "");
     setRenderOne();
+}
+
+/**
+ * Name a few bright dots from their triangles (StarTriples.js), for a clip with too few stars for
+ * the quad solver. The catalog is made for the In frame's time and place: the planets and the
+ * stars brighter than tripleMagLimit that are above the horizon. A triple may be no wider than
+ * the camera's widest angle, its diagonal field of view. The names it finds fit the camera as
+ * names given by hand do (applyManualLabels), as one undo step.
+ *
+ * opts.auto: run because the quad solve failed. Names that the user gave are then left alone,
+ * and the triples are not tried. opts.quadFailure: that failure, kept at the start of the status.
+ */
+export async function identifyByBrightTriples(opts = {}) {
+    if (!await ensureCandidateStars()) return false;
+    const r = result;
+    if (!r) {
+        params.status = "run Find Candidate Stars first";
+        setRenderOne();
+        return false;
+    }
+    const lead = opts.quadFailure ? `${opts.quadFailure} - ` : "";
+    const userNamed = [...(r.manualLabels?.values() ?? [])].some((e) => e.source !== "triples");
+    if (opts.auto && userNamed) {
+        params.status = `${lead}Bright Triples not tried: circles have names you gave`;
+        setRenderOne();
+        return false;
+    }
+    let data;
+    try {
+        data = await ensureIdentifyData();
+    } catch (e) {
+        params.status = `star catalog failed to load: ${e?.message ?? e}`;
+        return false;
+    }
+    if (result !== r) return false;
+    const {catalog, names} = data;
+    const date = GlobalDateTimeNode.frameToDate(r.frame0);
+    const observerPos = observerECEF();
+    const up = observerPos.clone().normalize();
+    // The same horizon test as the label menu, unless the place or the time is not certain.
+    const above = params.tripleAboveHorizon
+        ? (raDeg, decDeg) => getStarDirectionECEF(raDeg * D2R, decDeg * D2R, date).dot(up) > -0.02
+        : () => true;
+    const limit = params.tripleMagLimit;
+    const objects = [];
+    for (const body of PLANET_LABELS) {
+        if (body === "Moon") continue;              // a disk, not a point of light
+        const mag = Astronomy.Illumination(body, date).mag;
+        if (!(mag <= limit)) continue;
+        const {raDeg, decDeg} = planetRaDecJ2000(body, date, observerPos);
+        if (above(raDeg, decDeg)) objects.push({label: body, planet: body, raDeg, decDeg, mag});
+    }
+    for (let i = 0; i < catalog.n; i++) {
+        if (!(catalog.mag[i] <= limit)) continue;
+        const raDeg = catalog.ra[i] / D2R, decDeg = catalog.dec[i] / D2R;
+        if (!above(raDeg, decDeg)) continue;
+        const hip = catalog.hip[i];
+        objects.push({label: names.get(hip)?.name ?? `HIP ${hip}`, hip, raDeg, decDeg, mag: catalog.mag[i]});
+    }
+    // Also a track that the classifier set aside as incoherent, but that was seen in nearly every
+    // frame and scatters only a little. On a sparse field seen through a wide lens, the flat model
+    // leaves a steady star slightly off: Mars on the Jupiter clip was seen in all 197 frames and
+    // scattered 0.66 px, against a limit of 0.6 px.
+    const nFrames = r.solved.transforms.length;
+    const nearlySteady = (c) => (c.klass2D ?? c.klass) === "incoherent" && c.n >= 0.9 * nFrames
+        && Number.isFinite(c.scatter) && c.scatter <= 0.001 * r.videoH;
+    const stars = r.solved.classified
+        .filter((c) => ((c.klass2D ?? c.klass) === "star" || nearlySteady(c)) && c.position
+            && !r.disabledStars?.has(c.index) && (Number.isFinite(c.magnitude) || c.manual))
+        .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
+    const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
+    const maxFovDeg = 2 * Math.atan(Math.tan(vfov * D2R / 2) * Math.hypot(1, r.videoW / r.videoH)) / D2R;
+    setStatus(`${lead}Bright Triples: ${stars.length} candidate stars, ${objects.length} objects `
+        + `brighter than mag ${limit}${params.tripleAboveHorizon ? " above the horizon" : " in the whole sky"}`);
+    await yieldToBrowser();
+    if (result !== r) return false;
+
+    // In a worker, behind the Star Tracker's progress window, which can stop it. Building the
+    // catalog triples is about a sixth of the time, matching the rest.
+    let aborted = false;
+    initProgress({title: "Bright Triples", filename: `${objects.length} objects, ${stars.length} candidate stars`,
+        showAbort: true, onAbort: () => { aborted = true; }});
+    const t0 = performance.now();
+    let res;
+    try {
+        res = await identifyBrightTriplesOffThread(
+            {stars, objects, width: r.videoW, height: r.videoH, maxFovDeg},
+            {
+                onProgress: (stage, f) => updateProgress(stage === "catalog"
+                    ? {percent: 15 * f, status: "Making the triangles of bright objects"}
+                    : {percent: 15 + 85 * f, status: "Matching the triangles of candidate stars"}),
+                shouldAbort: () => aborted || result !== r,
+            });
+    } catch (e) {
+        params.status = `${lead}Bright Triples failed: ${e?.message ?? e}`;
+        setRenderOne();
+        return false;
+    } finally {
+        hideProgress();
+    }
+    const ms = performance.now() - t0;
+    if (!res) {
+        if (result === r) params.status = `${lead}Bright Triples stopped`;
+        setRenderOne();
+        return false;
+    }
+    const describe = (c) => `${c.matches.map((m) => m.object.label).join(", ")}: ${c.nMatched} matched, `
+        + `${c.nMissing} missing, rms ${c.rmsPx.toFixed(2)} px, field ${c.fovDeg.toFixed(1)} deg`;
+    // The inputs too, so a run that names the wrong objects can be checked from the console.
+    r.tripleReport = {...res, maxFovDeg, magLimit: limit, aboveHorizon: params.tripleAboveHorizon, ms, date, observer: ECEFToLLAVD_radii(observerPos),
+        objects: objects.map(({label, raDeg, decDeg, mag}) => ({label, raDeg, decDeg, mag})), stars};
+    console.log(`[Bright Triples] ${ms.toFixed(0)} ms, camera diagonal ${maxFovDeg.toFixed(1)} deg, `
+        + JSON.stringify(res.counts) + (res.nFitting !== undefined ? `, ${res.nFitting} fit` : ""));
+    res.candidates.forEach((c, k) => console.log(`[Bright Triples] ${k + 1}. ${describe(c)}`));
+    if (!res.ok) {
+        params.status = `${lead}Bright Triples failed: ${res.reason}`;
+        setRenderOne();
+        return false;
+    }
+
+    const labels = new Map();
+    for (const {star, object} of res.best.matches) {
+        labels.set(star.index, object.planet
+            ? {label: object.label, planet: object.planet, named: true, source: "triples"}
+            : {label: object.label, hip: object.hip, raDeg: object.raDeg, decDeg: object.decDeg,
+                mag: object.mag, named: true, source: "triples"});
+    }
+    // A named track that is not a star circle becomes one: names and clicks are drawn on star
+    // circles only. Undo puts its class back.
+    const promoted = res.best.matches.map((m) => classifiedByIndex(r, m.star.index))
+        .filter((c) => c && (c.klass2D ?? c.klass) !== "star")
+        .map((c) => ({c, klass: c.klass, klass2D: c.klass2D}));
+    const setPromoted = (on) => {
+        for (const p of promoted) {
+            p.c.klass = on ? "star" : p.klass;
+            if (p.klass2D !== undefined) p.c.klass2D = on ? "star" : p.klass2D;
+        }
+    };
+    const before = {labels: new Map(r.manualLabels ?? []), disabled: new Set(r.disabledStars ?? []), promoted: false};
+    const after = {labels, disabled: before.disabled, promoted: true};
+    const restore = (state) => {
+        if (result !== r) return;
+        r.manualLabels = new Map(state.labels);
+        r.disabledStars = new Set(state.disabled);
+        setPromoted(state.promoted);
+        applyManualLabels();
+    };
+    UndoManager.add({description: "Identify Bright Triples", undo: () => restore(before), redo: () => restore(after)});
+    restore(after);
+    const others = res.nFitting - 1;
+    const next = res.candidates[1];
+    params.status = `${lead}Bright Triples: ${res.best.matches.map((m) => m.object.label).join(", ")} - `
+        + params.status
+        + (promoted.length ? ` - ${promoted.map((p) => labels.get(p.c.index)?.label).join(", ")} made `
+            + `${promoted.length === 1 ? "a star circle" : "star circles"}` : "")
+        + (others > 0 ? ` - ${others} other triple${others === 1 ? "" : "s"} also fit` : "")
+        + (next ? `; next: ${describe(next)}` : "");
+    setRenderOne();
+    return true;
+}
+
+/**
+ * The centre of the point of light nearest a click, in analysed-frame pixels, or the click
+ * itself when nothing there stands out from the background. A click on a small dot in a scaled
+ * video view is easily several video pixels off, which is a large error for a fit to three dots.
+ */
+function snapToPointSource(view, r, vx, vy) {
+    const vd = view.videoData;
+    const f = view.lockToInFrame ? Math.max(0, Math.round(par.frame) - (Sit.aFrame ?? 0)) : Math.round(par.frame);
+    const img = vd?.getImage?.(f);
+    if (!img?.width) return [vx, vy];
+    const px = view.getFramePixels(img, f, !!params.applyAdjustments);
+    if (!px) return [vx, vy];
+    const sx = px.W / r.videoW, sy = px.H / r.videoH;
+    const cx = Math.round(vx * sx), cy = Math.round(vy * sy);
+    const R = Math.max(4, Math.round(12 * sx));
+    const lum = (x, y) => {
+        const k = (y * px.W + x) * 4;
+        return 0.299 * px.data[k] + 0.587 * px.data[k + 1] + 0.114 * px.data[k + 2];
+    };
+    const values = [];
+    let peak = -1, peakX = cx, peakY = cy;
+    for (let y = Math.max(0, cy - R); y <= Math.min(px.H - 1, cy + R); y++) {
+        for (let x = Math.max(0, cx - R); x <= Math.min(px.W - 1, cx + R); x++) {
+            const v = lum(x, y);
+            values.push(v);
+            if (v > peak) { peak = v; peakX = x; peakY = y; }
+        }
+    }
+    if (!values.length) return [vx, vy];
+    values.sort((a, b) => a - b);
+    const background = values[values.length >> 1];
+    if (peak - background < 12) return [vx, vy];
+    // Centroid of everything above half the peak's height over the background, near the peak.
+    const half = background + (peak - background) / 2;
+    const rc = Math.max(2, Math.round(4 * sx));
+    let sw = 0, swx = 0, swy = 0;
+    for (let y = Math.max(0, peakY - rc); y <= Math.min(px.H - 1, peakY + rc); y++) {
+        for (let x = Math.max(0, peakX - rc); x <= Math.min(px.W - 1, peakX + rc); x++) {
+            const w = lum(x, y) - half;
+            if (w <= 0) continue;
+            sw += w; swx += w * x; swy += w * y;
+        }
+    }
+    if (sw <= 0) return [vx, vy];
+    return [swx / sw / sx, swy / sw / sy];
+}
+
+/**
+ * Add a star circle at an overlay-canvas point, on the frame on screen. It goes into the solve
+ * as a star seen once, at the place the click maps to on the reference chart, so it is drawn on
+ * every frame with the other stars and can be named like them.
+ */
+function addStarAt(ox, oy) {
+    const r = result, view = videoView();
+    if (!r || !view) return;
+    const i = Math.round(par.frame) - r.frame0;
+    const T = r.solved.transforms[i];
+    const inv = T ? invertTransform(T) : null;
+    if (!inv) {
+        params.status = "go to a frame between In and Out to add a star";
+        setRenderOne();
+        return;
+    }
+    const rsx = r.videoW ? view.videoWidth / r.videoW : 1;
+    const rsy = r.videoH ? view.videoHeight / r.videoH : 1;
+    const [dx, dy] = view.canvasToVideoCoords(ox, oy);
+    // The snap reads the picture on screen, so it works where the click is. On a stabilized
+    // picture the result is then taken back to the frame as recorded, where the tracks live.
+    let [vx, vy] = snapToPointSource(view, r, dx / rsx, dy / rsy);
+    const stab = displayedStabilization(view);
+    const unstab = stab && invertAffine(stab);
+    if (unstab) {
+        const [ux, uy] = applyAffine(unstab, vx * rsx, vy * rsy);
+        vx = ux / rsx;
+        vy = uy / rsy;
+    }
+    const [rx, ry] = applyTransform(inv, vx, vy);
+    const index = r.solved.tracks.length;
+    const track = {obs: [{f: i, x: vx, y: vy, rx, ry}], manual: true};
+    // On a run with a fitted lens the circles are placed on the sphere, from each track's
+    // direction; give the new one a direction too.
+    const st = r.lensInfo?.states?.[i];
+    if (st && r.lensInfo.lens) {
+        const ref = frameToRef(st, r.lensInfo.lens, vx, vy, [r.videoW, r.videoH]);
+        if (ref) track.ref = ref;
+    }
+    const entry = {index, klass: "star", position: [rx, ry], magnitude: NaN, n: 1,
+        first: i, last: i, manual: true};
+    const add = () => {
+        r.solved.tracks[index] = track;
+        if (!r.solved.classified.includes(entry)) r.solved.classified.push(entry);
+        params.status = "star added - right-click it for its menu";
+        setRenderOne();
+    };
+    const remove = () => {
+        const k = r.solved.classified.indexOf(entry);
+        if (k >= 0) r.solved.classified.splice(k, 1);
+        if (r.manualLabels?.delete(index) && result === r) applyManualLabels();
+        setRenderOne();
+    };
+    UndoManager.add({description: "Add star", undo: remove, redo: add});
+    add();
+}
+
+/**
+ * The right-click menu on a star circle: everything that can be done to that point. Name it as a
+ * planet or a star, or remove its name; leave it out of the identification or put it back (the
+ * same group a click toggles); delete it, when it is a circle added by hand.
+ *
+ * @param {number[]} group - the circles under the pointer, nearest first: the nearest is named
+ */
+async function showStarMenu(group, clientX, clientY) {
+    const r = result;
+    if (!r) return;
+    const index = group[0];
+    let data;
+    const loading = "loading star catalog", statusBefore = params.status;
+    try {
+        if (!catalogPromise) setStatus(loading);
+        data = await ensureIdentifyData();
+    } catch (e) {
+        params.status = `star catalog failed to load: ${e?.message ?? e}`;
+        return;
+    }
+    if (params.status === loading) setStatus(statusBefore);
+    if (result !== r) return;
+    const {catalog, names} = data;
+    const current = r.manualLabels?.get(index);
+    const menu = Globals.menuBar?.createStandaloneMenu(
+        current ? `Star: ${current.label}` : "Star circle", clientX, clientY, true, true);
+    if (!menu) return;
+
+    // Only what is above the horizon at the sitch's time and place: that is a short list, and a
+    // name below the horizon cannot be the dot. Typing still reaches everything.
+    const date = GlobalDateTimeNode.frameToDate(r.frame0);
+    const observerPos = observerECEF();
+    const up = observerPos.clone().normalize();
+    const above = (raDeg, decDeg) => getStarDirectionECEF(raDeg * D2R, decDeg * D2R, date).dot(up) > -0.02;
+    const options = {"(choose a name)": ""};
+    for (const body of PLANET_LABELS) {
+        const {raDeg, decDeg} = planetRaDecJ2000(body, date, observerPos);
+        if (above(raDeg, decDeg)) options[body] = body;
+    }
+    for (const s of brightNamedStars(catalog, names, LABEL_MENU_MAG_LIMIT)) {
+        if (above(s.raDeg, s.decDeg)) options[`${s.name} (mag ${s.mag.toFixed(1)})`] = s.name;
+    }
+
+    const apply = (text) => {
+        const res = resolveSkyLabel(text, catalog, names);
+        if (res.error) {
+            params.status = res.error;
+            setRenderOne();
+            return false;
+        }
+        setStarLabel(index, res.planet
+            ? {label: res.planet, planet: res.planet, named: true}
+            : {label: res.label, hip: res.hip, raDeg: res.raDeg, decDeg: res.decDeg, mag: res.mag,
+                named: true});
+        return true;
+    };
+    const pick = {name: "", other: ""};
+    menu.add(pick, "name", options).name("Name")
+        .tooltip("The planets, and the named stars brighter than magnitude "
+            + `${LABEL_MENU_MAG_LIMIT}, that are above the horizon at the start of the analysed range.`)
+        .onChange((v) => { if (v && apply(v)) menu.destroy(); });
+    menu.add(pick, "other").name("Other name")
+        .tooltip("Type any star's name, or its Hipparcos number as \"HIP 49669\", then press Enter. "
+            + "The start of a name is enough when only one star name starts that way.")
+        .onFinishChange((v) => { if (v && apply(v)) menu.destroy(); });
+    if (current) {
+        menu.add({run: () => { menu.destroy(); setStarLabel(index, null); }}, "run")
+            .name("Remove name");
+    }
+    const anyOn = group.some((ix) => !r.disabledStars?.has(ix));
+    menu.add({run: () => { menu.destroy(); toggleStarsEnabled(group); }}, "run")
+        .name(anyOn ? "Leave out of identification" : "Use in identification")
+        .tooltip(anyOn
+            ? "Dim this circle and leave it out of Identify Stars and of a fit to names. A plain click does the same."
+            : "Put this circle back into the identification. A plain click does the same.");
+    if (classifiedByIndex(r, index)?.manual) {
+        menu.add({run: () => { menu.destroy(); deleteStarCircle(index); }}, "run")
+            .name("Delete Point")
+            .tooltip("Delete this circle, which you added by hand. Undo puts it back.");
+    }
+    menu.open();
+}
+
+/** Delete a circle added by hand, with its name. One undo step. */
+function deleteStarCircle(index) {
+    const r = result;
+    const entry = r && classifiedByIndex(r, index);
+    if (!entry?.manual) return;
+    const label = r.manualLabels?.get(index) ?? null;
+    const wasOff = !!r.disabledStars?.has(index);
+    const remove = () => {
+        if (result !== r) return;
+        const k = r.solved.classified.indexOf(entry);
+        if (k >= 0) r.solved.classified.splice(k, 1);
+        r.disabledStars?.delete(index);
+        if (r.manualLabels?.delete(index)) applyManualLabels();
+        else params.status = "circle deleted";
+        setRenderOne();
+    };
+    const restore = () => {
+        if (result !== r) return;
+        if (!r.solved.classified.includes(entry)) r.solved.classified.push(entry);
+        if (wasOff) (r.disabledStars ??= new Set()).add(index);
+        if (label) {
+            (r.manualLabels ??= new Map()).set(index, label);
+            applyManualLabels();
+        }
+        setRenderOne();
+    };
+    UndoManager.add({description: "Delete star circle", undo: restore, redo: remove});
+    remove();
 }
 
 /** The overlay canvas, created lazily over the video view, and hooked to redraw each frame. */
@@ -3314,18 +3901,38 @@ function ensureOverlay() {
     }
 
     if (!view._starTrackInteraction) {
-        const hits = e => {
+        const local = e => {
             const rect = overlay.getBoundingClientRect();
-            return starHitsAt(e.clientX - rect.left, e.clientY - rect.top).map(h => h.index);
+            return [e.clientX - rect.left, e.clientY - rect.top];
         };
-        let clicked = [];
+        // Nearest circle first, so a right-click on overlapping circles names the one aimed at.
+        const hits = e => {
+            const [x, y] = local(e);
+            return starHitsAt(x, y)
+                .sort((a, b) => Math.hypot(x - a.x, y - a.y) - Math.hypot(x - b.x, y - b.y))
+                .map(h => h.index);
+        };
+        let clicked = [], addAt = null;
         view._starTrackInteraction = registerSurfaceInteraction(view.canvas, {
-            model: view, view, content: false, profile: "stars",
+            id: "starTracker:circles", model: view, view, content: false, profile: "stars",
             enabled: () => !!result && !!overlay && overlay.parentNode === view.div,
             intent: {kind: "pending", priority: 30},
-            hitTest: e => hits(e).length ? {} : null,
-            begin: e => { clicked = hits(e); },
-            click: () => toggleStarsEnabled(clicked),
+            // Sitrec's gestures for points (GestureActions.js): Ctrl/Cmd-click adds one, as in
+            // Manual Tracking and Ground Track, and right-click opens a point's menu. Off a circle,
+            // a Ctrl/Cmd-click is ours. A plain click on a circle toggles it in or out of the
+            // identification: the quick way to leave many out, and the menu offers the same.
+            hitTest: e => hits(e).length || commandModifier(e) ? {} : null,
+            // The right-click menu only over a circle; elsewhere the video's own menu stays.
+            hitSurface: e => hits(e).length > 0,
+            begin: e => {
+                clicked = hits(e);
+                addAt = !clicked.length && commandModifier(e) ? local(e) : null;
+            },
+            click: () => { if (addAt) addStarAt(...addAt); else toggleStarsEnabled(clicked); },
+            contextMenu: e => {
+                const group = hits(e);
+                if (group.length) showStarMenu(group, e.clientX, e.clientY);
+            },
         });
     }
 
@@ -3360,6 +3967,8 @@ const COLORS = {
     // The status line. Deliberately neutral: it describes the RUN, not anything on screen, so it
     // must not read as a verdict about a circle near it.
     status: "#e6e6e6",
+    // A name the user gave a circle, unlike the catalog's white so the two are told apart.
+    manualName: "#ffe14d",
 };
 
 // How many wrapped lines of status the overlay will draw before it gives up and elides. Three at
@@ -3895,7 +4504,14 @@ export function drawStarTrackerOverlay() {
     // display mapping; when nothing changed the factor is one.
     const rsx = result.videoW ? view.videoWidth / result.videoW : 1;
     const rsy = result.videoH ? view.videoHeight / result.videoH : 1;
-    const toCanvas = (vx, vy) => view.videoToCanvasCoords(vx * rsx, vy * rsy);
+    // A stabilized picture is moved, and perhaps rotated, before it is drawn; the marks move
+    // with it. The hit list is filled from these positions, so clicks follow too.
+    const stab = displayedStabilization(view);
+    const toCanvas = (vx, vy) => {
+        let x = vx * rsx, y = vy * rsy;
+        if (stab) [x, y] = applyAffine(stab, x, y);
+        return view.videoToCanvasCoords(x, y);
+    };
 
     // WHERE A CIRCLE GOES, and why there are two answers.
     //
@@ -3995,17 +4611,21 @@ export function drawStarTrackerOverlay() {
         // a label at quarter opacity over video is unreadable. Bayer designations and HIP
         // numbers do not qualify: those are catalog identifiers rather than names, and nearly
         // every match has one, so honouring them would defeat the tiering entirely.
-        const identifiedStar = c.klass === "star" && result.identify
+        // A name the user gave wins over the catalog's: it is their call, and it is shown
+        // before there are enough of them to fit.
+        const manualLabel = c.klass === "star" ? result.manualLabels?.get(c.index) : null;
+        const identifiedStar = manualLabel ?? (c.klass === "star" && result.identify
             ? result.identify.identified.get(c.index)
-            : null;
+            : null);
         const properlyNamed = !!identifiedStar?.named;
 
         // Everything below the brightest BRIGHT_CIRCLES draws as a thin, faint ring. An
         // UNMEASURED magnitude counts as faint - a star with no photometry cannot claim to be in
         // the top hundred. Only stars are demoted: movers are the point of the analysis and there
         // are few of them, and the rejected classes are off by default anyway.
+        // A circle the user added has no measured magnitude, but they added it on purpose.
         const faint = c.klass === "star"
-            && !properlyNamed
+            && !properlyNamed && !c.manual
             && !(Number.isFinite(c.magnitude) && c.magnitude <= brightCutoff);
 
         // Stars are clickable: register the circle as drawn, and dim a toggled-off star - still
@@ -4074,7 +4694,7 @@ export function drawStarTrackerOverlay() {
             const ly = py + 4 * (1 - slide) + NAME_OFFSET_Y * slide;
             overlayCtx.globalAlpha = alpha * labelFade;
             overlayCtx.setLineDash([]);
-            overlayCtx.fillStyle = properlyNamed ? "#fff" : "#9fdcb0";
+            overlayCtx.fillStyle = manualLabel ? COLORS.manualName : properlyNamed ? "#fff" : "#9fdcb0";
             overlayCtx.font = properlyNamed ? "12px sans-serif" : "11px sans-serif";
             overlayCtx.fillText(identifiedStar.label, lx, ly);
             overlayCtx.globalAlpha = 1;
@@ -4195,6 +4815,67 @@ export function drawStarTrackerOverlay() {
     overlayCtx.setLineDash([]);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Stabilize on stars
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What stabilization does to the picture the video view shows now, as a 2D map in decoded
+ * pixels, or null. Any stabilization, not only this one: the marks must follow the picture
+ * whatever moved it. viewStabilizationMatrix uses the frame that the view gives the decoder.
+ */
+function displayedStabilization(view) {
+    return viewStabilizationMatrix(view, par.frame, view?.videoWidth, view?.videoHeight);
+}
+
+/**
+ * Maps that hold the stars still: each star lands where it is on the In frame, and the edges of
+ * the picture move instead (stabilizingMaps). They come from the solve's frame-to-frame chain - a
+ * shift and a rotation, as the solve holds the scale fixed - so this works on any run that
+ * tracked the field, with or without names. They do not undo lens distortion. Keyed by the
+ * video's own frame numbers, which getImage() stabilizes by.
+ */
+function starStabilizationMaps(r, view) {
+    const maps = new Map();
+    stabilizingMaps(r.solved.transforms).forEach((m, i) => {
+        if (m) maps.set(viewVideoFrame(view, r.frame0 + i), m);
+    });
+    return maps;
+}
+
+// VFR Fix changes the frame numbers of the video, so the star maps (and the analysis they came
+// from) no longer fit it. Turn the stabilization off on both videos, as a new analysis does.
+registerFrameRemap("starStabilization", (remap, {from, to}) => {
+    for (const vd of [from, to]) if (vd?.stabilizationAffine) vd.clearStabilization();
+});
+
+function starStabilizationOn() {
+    const vd = videoView()?.videoData;
+    return !!(vd?.stabilizationEnabled && vd.stabilizationAffine);
+}
+
+function setStarStabilization(on) {
+    const view = videoView(), vd = view?.videoData;
+    if (!on) {
+        if (vd?.stabilizationAffine) vd.clearStabilization();
+        setRenderOne(true);
+        return;
+    }
+    const r = result;
+    const transforms = r?.solved?.transforms;
+    if (!r || !vd || r.videoData !== vd || r.still || !(transforms?.length > 1)) {
+        params.status = "Stabilize on Stars needs a Find Candidate Stars run on this video";
+        setRenderOne(true);
+        return;
+    }
+    vd.setStabilizationTransforms(starStabilizationMaps(r, view), r.videoW, r.videoH);
+    vd.setStabilizationEnabled(true);
+    const last = r.frame0 + transforms.length - 1;
+    params.status = `stabilized on the stars, frames ${r.frame0}-${last}: `
+        + `the stars stay where they are on frame ${r.frame0}`;
+    setRenderOne(true);
+}
+
 /**
  * Discard the solve and clear the overlay. Called on sitch teardown and by the Clear button.
  *
@@ -4205,6 +4886,8 @@ export function drawStarTrackerOverlay() {
  * time a fresh one is needed.
  */
 export function resetStarTracker() {
+    // Stabilize on Stars was made from this solve.
+    if (result?.videoData?.stabilizationAffine) result.videoData.clearStabilization();
     // The camera options rest on the solve being discarded; remove them FIRST so the switches
     // fall back to a valid choice rather than a dangling one.
     detachStarTrackCamera();
@@ -4304,6 +4987,14 @@ export function setupStarTrackerMenu() {
     if (folder && folder.domElement && folder.domElement.isConnected) return;
     folder = null;
 
+    // Development hook, for driving and inspecting the manual naming through the browser bridge.
+    // Installed here, not at module scope: isLocal is resolved during startup, after this file
+    // is evaluated (the same reason StarAdjustOptimize installs its hook late).
+    if (isLocal && typeof window !== "undefined") {
+        window.__starTracker = {result: () => result, setStarLabel, addStarAt, applyManualLabels,
+            router: () => getInteractionRouter()};
+    }
+
     folder = guiMenus.video.addFolder("Star Tracker").close()
         .tooltip("Find the stars in the video, track them from the In frame to the Out frame, and identify them "
             + "against a star catalog. The result can point the look camera to match the footage, "
@@ -4317,6 +5008,32 @@ export function setupStarTrackerMenu() {
             + "With Sync Camera to Star Field on, a successful identification also points the look camera. "
             + "The first identification downloads a 2.5 MB star catalog.");
     addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
+    // The separate steps of Star Tracker Analysis, and the chart export, in the main folder so they
+    // are next to the button that runs them all. Detect Star Size stays in Tweaks with the sliders
+    // it sets.
+    folder.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
+        .name("Find Candidate Stars")
+        .tooltip("Detect blobs on every frame from the In frame to the Out frame, link them into tracks, "
+            + "and sort the tracks into stars, moving objects, light clusters and rejects. "
+            + "It does not identify the stars.");
+    folder.add({identify: () => { identifyStars(); }}, "identify")
+        .name("Identify Stars (catalog)")
+        .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
+            + "you clicked off are left out. With no analysis of this video yet, it runs Find Candidate "
+            + "Stars first. The first use downloads a 2.5 MB catalog.\n"
+            + "With Sync Camera to Star Field on, a success also points the look camera.");
+    folder.add({triples: () => { identifyByBrightTriples(); }}, "triples")
+        .name("Identify Bright Triples")
+        .tooltip("Name a few bright dots from their triangles, for a clip with too few stars for Identify "
+            + "Stars, which runs this by itself when it fails. It uses the planets and the stars brighter "
+            + "than Bright Triples: magnitude limit (in Tweaks), above the horizon at the In frame unless "
+            + "Bright Triples: above horizon only is off. The names then fit the camera as names given by "
+            + "hand do. It replaces the names on the circles; Undo puts them back. With no analysis of "
+            + "this video yet, it runs Find Candidate Stars first.");
+    folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
+        .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
+            + "map and sized by its measured brightness. Identified stars get their names.\n"
+            + "Chart: object tracks adds the paths of moving objects.");
     // In the main folder, not down in Tweaks. Star Tracker Analysis syncs the camera itself on
     // success, so this is the button for the case where it did NOT - a run that had to be tuned
     // by hand, or one whose sync was undone by moving the camera afterwards. That is a
@@ -4329,6 +5046,18 @@ export function setupStarTrackerMenu() {
             + "back to the sources they were on before - it does not merely stop updating "
             + "them - so you can compare the solved pointing against your own and switch "
             + "between them.");
+    // The box reads the video, not a stored flag: Point Track or Motion Analysis can replace this
+    // stabilization, and a new analysis turns it off, and the box must show that.
+    const stabilizeRow = {
+        get stabilizeOnStars() { return starStabilizationOn(); },
+        set stabilizeOnStars(on) { setStarStabilization(on); },
+    };
+    folder.add(stabilizeRow, "stabilizeOnStars").name("Stabilize on Stars").listen()
+        .tooltip("Hold the stars still in the video. Each frame is moved and rotated so that the stars "
+            + "stay where they are on the In frame, and the edges of the picture move instead. Uses the "
+            + "frame-to-frame fit from Find Candidate Stars, so the stars do not need names.\n"
+            + "It replaces any other stabilization. A new analysis turns it off, because the analysis "
+            + "must read the frames as recorded.");
     folder.add(params, "fadeAtCompletion").name("Fade at completion")
         .tooltip("When an identification SUCCEEDS, fade out the working marks one layer at a time, one "
             + "second each: the quad lines, then the star circles, then the catalog-number labels. "
@@ -4423,7 +5152,10 @@ export function setupStarTrackerMenu() {
         .tooltip("Draw a green circle around each star that the tracker found, identified or not. Only the "
             + "circles - the catalog names and the quad lines have their own switches, so the names "
             + "can be read over clean video with every circle hidden.\n"
-            + "Click a circle to leave that star out of Identify Stars; click it again to put it back.");
+            + "Click a circle to leave that star out of Identify Stars; click it again to put it back.\n"
+            + "Right-click a circle for its menu: name it as a planet or a star, leave it out, or delete a "
+            + "circle you added. When three circles have names, the camera is fitted to them.\n"
+            + "Ctrl-click (Cmd-click on a Mac) the video to add a circle where none was found.");
     display.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
         .tooltip("Label each identified star with its catalog name. Works whether or not the "
             + "star markers are drawn.");
@@ -4458,7 +5190,7 @@ export function setupStarTrackerMenu() {
             + "Make Star Chart (PNG), with an arrowhead at the end of each path. Off: the chart shows stars only.");
 
     const tweaks = folder.addFolder("Star Tracker Tweaks").close()
-        .tooltip("Detection and classification settings, and the separate steps that Star Tracker Analysis runs.");
+        .tooltip("Detection and classification settings, and Detect Star Size, the first step of Star Tracker Analysis.");
 
     tweaks.add(params, "autoSigma").name("Auto detect threshold")
         .tooltip("Set Detect threshold from the footage when Star Tracker Analysis or Detect Star Size runs, "
@@ -4510,22 +5242,17 @@ export function setupStarTrackerMenu() {
         .tooltip("Smallest total drift, over the life of a track, for the track to be called moving, in "
             + "multiples of the measured position noise. It stops a tiny but certain drift from "
             + "counting as motion.");
+    tweaks.add(params, "tripleMagLimit", -1.5, 3, 0.1).name("Bright Triples: magnitude limit")
+        .tooltip("Identify Bright Triples uses the planets and the stars brighter than this magnitude. "
+            + "Smaller numbers are brighter. 3, the default, gives about 180 objects over the whole sky "
+            + "and takes a few seconds; 2 gives about 50 and takes a fraction of a second. A higher "
+            + "limit can name fainter stars, and finds more triples that fit by chance.");
+    tweaks.add(params, "tripleAboveHorizon").name("Bright Triples: above horizon only")
+        .tooltip("Off by default: Identify Bright Triples uses the whole sky, with the planets where they "
+            + "are on the sitch's date, so a wrong place or time does not throw out the right stars. Turn "
+            + "it on when the place and time are certain: it then uses only the objects above the horizon, "
+            + "which is faster and gives fewer triples that fit by chance.");
 
-    tweaks.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
-        .name("Find Candidate Stars")
-        .tooltip("Detect blobs on every frame from the In frame to the Out frame, link them into tracks, "
-            + "and sort the tracks into stars, moving objects, light clusters and rejects. "
-            + "It does not identify the stars.");
-    tweaks.add({identify: () => { identifyStars(); }}, "identify")
-        .name("Identify Stars (catalog)")
-        .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
-            + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
-            + "With Sync Camera to Star Field on, a success also points the look camera.");
-    // Sync Camera to Star Field lives in the MAIN folder, under Star Tracker Analysis.
-    tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
-        .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
-            + "map and sized by its measured brightness. Identified stars get their names.\n"
-            + "Chart: object tracks adds the paths of moving objects.");
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear")
         .tooltip("Discard the analysis, its overlay and the Camera > Lens values, and remove the Star "

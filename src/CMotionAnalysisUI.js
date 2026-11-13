@@ -722,6 +722,7 @@ let analyzeMenuItem = null;
 let renderHooked = false;
 
 export function resetMotionAnalysis() {
+    motionStabilization = null;
     if (motionAnalyzer) {
         motionAnalyzer.stop();
         motionAnalyzer = null;
@@ -1467,6 +1468,10 @@ let stabilizeMenuItem = null;
 let defenceMenuItem = null;
 let defenceVideoMenuItem = null;
 let stabilizationEnabled = false;
+// This tool's own offsets and the video they were made for. Point Track and Stabilize on Stars
+// replace the video's stabilization data, so Stabilize Video puts these back rather than turn
+// on whatever data the video holds.
+let motionStabilization = null;
 
 async function exportMotionPanorama() {
     beginPanoJob();
@@ -2175,6 +2180,7 @@ async function stabilizeVideoFromMotion() {
     videoData.setStabilizationData(stabilizationData, referencePoint, true); // true = direct offset mode
     videoData.setStabilizationEnabled(true);
     stabilizationEnabled = true;
+    motionStabilization = {videoData, offsets: stabilizationData};
 
     setMenuItemLabel(stabilizeMenuItem, "menu.panorama.stabilize.disableLabel");
     console.log(`Video stabilization enabled with ${stabilizationData.size} frames of motion data`);
@@ -2184,21 +2190,24 @@ function toggleStabilization() {
     const videoView = NodeMan.get("video", false);
     if (!videoView || !videoView.videoData) return;
 
-    if (stabilizationEnabled) {
-        videoView.videoData.setStabilizationEnabled(false);
+    const videoData = videoView.videoData;
+    // On only while the video still shows these offsets: another tool may have replaced them.
+    const showingOurs = stabilizationEnabled && videoData.stabilizationEnabled
+        && videoData.stabilizationDirectOffset && !videoData.stabilizationAffine;
+    if (showingOurs) {
+        videoData.setStabilizationEnabled(false);
         stabilizationEnabled = false;
         setMenuItemLabel(stabilizeMenuItem, "menu.panorama.stabilize.label");
         console.log("Video stabilization disabled");
+    } else if (motionStabilization?.videoData === videoData) {
+        // Put back the offsets this tool made for this video; no new analysis is needed.
+        videoData.setStabilizationData(motionStabilization.offsets, {x: 0, y: 0}, true);
+        videoData.setStabilizationEnabled(true);
+        stabilizationEnabled = true;
+        setMenuItemLabel(stabilizeMenuItem, "menu.panorama.stabilize.disableLabel");
+        console.log("Video stabilization re-enabled");
     } else {
-        // If we have cached motion data, re-enable; otherwise run full analysis
-        if (videoView.videoData.stabilizationData && videoView.videoData.stabilizationData.size > 0) {
-            videoView.videoData.setStabilizationEnabled(true);
-            stabilizationEnabled = true;
-            setMenuItemLabel(stabilizeMenuItem, "menu.panorama.stabilize.disableLabel");
-            console.log("Video stabilization re-enabled");
-        } else {
-            stabilizeVideoFromMotion();
-        }
+        stabilizeVideoFromMotion();
     }
 }
 
