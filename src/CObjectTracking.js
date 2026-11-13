@@ -26,8 +26,10 @@ import {
 } from './PointTrackCoverage';
 import {showViewMessage} from './ViewMessage';
 import {registerFrameRemap, remapFrameEntries} from './VFRTimeline';
-import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture} from './PointTrackFrequencyGraph';
+import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture, getPointTrackFrequencyView,
+    showPointTrackFrequencyGraph, removePointTrackFrequencyGraph} from './PointTrackFrequencyGraph';
 import {maxOf, minOf} from "./SafeArrays";
+import {pointTracks} from './PointTrackRegistry';
 
 let cv = null;
 
@@ -142,6 +144,9 @@ function gaussianBlur1D(luma, w, h, sigma) {
 }
 
 export class ObjectTracker {
+    // Unmanaged instances are also used by the tracking probes and unit tests.
+    get editable() { return !this.trackId || this === objectTracker; }
+
     constructor(videoView) {
         this.videoView = videoView;
         this.enabled = false;
@@ -351,7 +356,7 @@ export class ObjectTracker {
             view, model: this, content: false, profile: "video",
             intent: {priority: 120},
             // Step aside for the view-edit key, as the view's own handler does (CMouseHandler).
-            enabled: () => this.enabled && !(view.dragKey && isKeyHeld(view.dragKey)),
+            enabled: () => this.enabled && this.editable && !(view.dragKey && isKeyHeld(view.dragKey)),
             hitTest: e => this.grabAt(e.clientX, e.clientY) ? {} : null,
             begin: e => {
                 const grab = this.grabAt(e.clientX, e.clientY);
@@ -403,10 +408,10 @@ export class ObjectTracker {
 
         // An unpinned header must not come up over a point it would hide and take the press of.
         this.removeHeaderRevealBlocker = view.addHeaderRevealBlocker?.(
-            (x, y) => this.enabled && this.grabAt(x, y) !== null);
+            (x, y) => this.enabled && this.editable && this.grabAt(x, y) !== null);
 
-        EventManager.addEventListener("keydown", (data) => {
-            if (!this.enabled) return;
+        this.keydownListener = (data) => {
+            if (!this.enabled || !this.editable) return;
             // Ignore OS auto-repeat — hold loops start once on first keydown
             // and run until KeyMan reports the key released.
             if (data.event?.repeat) return;
@@ -430,7 +435,8 @@ export class ObjectTracker {
                     showError(`Point tracking failed: ${error.message}`);
                 });
             }
-        });
+        };
+        EventManager.addEventListener("keydown", this.keydownListener);
     }
 
     // Hold-key playback used to combine auto and manual tracking:
@@ -467,14 +473,14 @@ export class ObjectTracker {
                 } else if (this.trackingMethod === 'opticalflow' && !getJsfeat()) {
                     await loadJsfeat();
                 }
-                if (!this.enabled || !KeyMan.isKeyHeld(heldKey)) return;
+                if (!this.enabled || !this.editable || !this.holdLoopActive || !KeyMan.isKeyHeld(heldKey)) return;
                 this.analysisResolutionSession = beginVideoAnalysis(videoData, () => { this.tracking = false; });
                 this.tracking = true;
                 this.lastTrackedFrame = Math.floor(par.frame);
                 this.initializeTracker();
                 Globals.justVideoAnalysis = true;
             }
-            while (KeyMan.isKeyHeld(heldKey) && (direction !== 'forward' || this.tracking)) {
+            while (this.holdLoopActive && this.editable && KeyMan.isKeyHeld(heldKey) && (direction !== 'forward' || this.tracking)) {
                 const tickStart = performance.now();
                 const cur = Math.floor(par.frame);
 
@@ -583,6 +589,7 @@ export class ObjectTracker {
     }
     
     disable() {
+        this.holdLoopActive = false;
         if (this.tracking) this.stopTracking();
         this.analysisResolutionSession?.end();
         this.analysisResolutionSession = null;
@@ -596,7 +603,7 @@ export class ObjectTracker {
     }
     
     startTracking() {
-        if (!this.enabled || this.tracking || this.holdLoopActive) return;
+        if (!this.enabled || !this.editable || this.tracking || this.holdLoopActive) return;
         this.playbackControl = acquirePlaybackControl(() => this.stopTracking());
         if (!this.playbackControl) return;
         this.trackingRunId = (this.trackingRunId || 0) + 1;
@@ -2124,9 +2131,11 @@ export class ObjectTracker {
     // the result.
     async analyseObject(onProgress) {
         const session = beginVideoAnalysis(this.videoView?.videoData);
+        this.analysingObject = true;
         try {
             return await this.analyseObjectAtResolution(onProgress, session);
         } finally {
+            this.analysingObject = false;
             session.end();
         }
     }
@@ -2588,7 +2597,7 @@ export class ObjectTracker {
     }
 
     drawFrequencyAperture(ctx, frame) {
-        const aperture = getPointTrackFrequencyAperture();
+        const aperture = getPointTrackFrequencyAperture(this.trackId);
         if (!aperture) return;
         const f = Math.floor(frame);
         // Where Frequency Analysis measures this frame. On a frame with no
@@ -2722,18 +2731,18 @@ export class ObjectTracker {
 
         const ctx = this.overlayCtx;
         ctx.clearRect(0, 0, width, height);
-        
-        if (this.thresholdPreview) {
+
+        if (this.editable && this.thresholdPreview) {
             this.renderThresholdPreview(ctx, width, height);
             return;
         }
 
-        if (this.showMotionField && this.trackingMethod === 'motion') {
+        if (this.editable && this.showMotionField && this.trackingMethod === 'motion') {
             this.renderMotionField(ctx);
             // fall through so the cursor still draws on top of the field
         }
 
-        if (this.featureSizePreview) {
+        if (this.editable && this.featureSizePreview) {
             this.renderFeatureSizePreview(ctx, width, height);
             // fall through so the cursor and existing-keyframe markers still draw
         }
@@ -2755,6 +2764,11 @@ export class ObjectTracker {
                 this.trackedPositions.clear();
                 this.trackedPositions.set(Math.floor(par.frame), {x: this.trackX, y: this.trackY});
             }
+        }
+
+        if (!this.editable) {
+            this.renderDisplayTrack(ctx, frame);
+            return;
         }
 
         // Only the tracking loop measures frames. Rendering a frame while its
@@ -2810,7 +2824,7 @@ export class ObjectTracker {
         // at is what you actually need when reading a track back, and the colour
         // already says whether tracking is running.
         ctx.fillText(unavailable ? `${pointFrame}: target not found; drag marker to re-seed` :
-            `${pointFrame} (${Math.round(this.trackX)}, ${Math.round(this.trackY)})${estimated ? ' estimated' : interpolated ? ' interpolated' : ''}`,
+            `${this.trackName ? this.trackName + ': ' : ''}${pointFrame} (${Math.round(this.trackX)}, ${Math.round(this.trackY)})${estimated ? ' estimated' : interpolated ? ' interpolated' : ''}`,
             unavailable ? 12 : cx + canvasRadius + 10, unavailable ? 24 : cy);
         if (this.tracking && this.trackingMethod === 'motion') {
             const background = this.motionRegime.state === 'unknown'
@@ -2865,6 +2879,28 @@ export class ObjectTracker {
                 ctx.lineTo(kx, ky + keyframeRadius + 3);
                 ctx.stroke();
             }
+        }
+        this.drawFrequencyAperture(ctx, frame);
+    }
+
+    renderDisplayTrack(ctx, frame) {
+        const positions = this.getOutputPositions();
+        // All tracks share the same video stabilization transform at this frame.
+        const shift = this.stabilizationShift(frame);
+        const canvasPoint = p => this.videoView.videoToCanvasCoordsOriginal(p.x + shift.x, p.y + shift.y);
+        const vertices = sortedTrackFrames(positions).map(f => {
+            const p = positions.get(f), [x, y] = canvasPoint(p);
+            return {frame: f, x, y, estimated: p.estimated};
+        });
+        this.strokeTrackLine(ctx, vertices, positions, {color: this.displayColor, width: 1, alpha: .6});
+        const p = this.getInterpolatedPosition(Math.floor(frame));
+        if (p) {
+            const [x, y] = canvasPoint(p);
+            ctx.strokeStyle = ctx.fillStyle = this.displayColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(x, y, 6, 0, 2 * Math.PI); ctx.stroke();
+            ctx.font = '12px monospace';
+            ctx.fillText(this.trackName, x + 10, y - 8);
         }
         this.drawFrequencyAperture(ctx, frame);
     }
@@ -2941,7 +2977,7 @@ export class ObjectTracker {
 
     refreshSmoothedOutput() {
         const vd = this.videoView?.videoData;
-        if (vd?.stabilizationEnabled && !vd.stabilizationDirectOffset && this.trackedPositions.size) {
+        if (this.editable && vd?.stabilizationEnabled && !vd.stabilizationDirectOffset && this.trackedPositions.size) {
             const points = this.getOutputPositions();
             const first = minOf(points.keys());
             vd.setStabilizationData(points, points.get(first));
@@ -3025,6 +3061,7 @@ export class ObjectTracker {
     }
     
     updateSliderStatus() {
+        if (!this.editable || !this.enabled) return;
         const slider = NodeMan.get("FrameSlider", false);
         if (slider) {
             slider.setStatusOverlay(this.getCacheStatusArray(), 2);
@@ -3032,6 +3069,7 @@ export class ObjectTracker {
     }
     
     clearSliderStatus() {
+        if (!this.editable) return;
         const slider = NodeMan.get("FrameSlider", false);
         if (slider) {
             slider.clearStatusOverlay();
@@ -3040,46 +3078,203 @@ export class ObjectTracker {
 }
 
 let objectTracker = null;
+let nextTrackId = 1;
+const TRACK_COLORS = ['#54e2a8', '#71b7ff', '#ffaf70', '#df95ff', '#ff8098', '#e2db70'];
 let trackingFolder = null;
+let trackListFolder = null;
+let editTrackMenuItem = null;
 let enableMenuItem = null;
 let startMenuItem = null;
 let analyseMenuItem = null;
-let renderHooked = false;
+let renderHookView = null;
+let trackRenderHook = null;
+
+export function getPointTracks() { return [...pointTracks]; }
+
+function hookTrackRendering(videoView) {
+    if (renderHookView === videoView) return;
+    unhookTrackRendering();
+    renderHookView = videoView;
+    const hook = {original: videoView.renderCanvas, active: true};
+    hook.render = function(frame) {
+        hook.original.call(this, frame);
+        if (hook.active) for (const tracker of pointTracks) if (tracker.enabled) tracker.renderOverlay(frame);
+    };
+    trackRenderHook = hook;
+    videoView.renderCanvas = hook.render;
+}
+
+function unhookTrackRendering() {
+    if (trackRenderHook) {
+        trackRenderHook.active = false;
+        // Another analysis may wrap rendering after us. Leave its wrapper intact;
+        // our old hook becomes inert even if it remains inside that chain.
+        if (renderHookView.renderCanvas === trackRenderHook.render) renderHookView.renderCanvas = trackRenderHook.original;
+    }
+    renderHookView = trackRenderHook = null;
+}
+
+function createPointTracker(videoView, data = {}) {
+    const tracker = new ObjectTracker(videoView);
+    applyPendingTrackingSettings(tracker);
+    tracker.trackId = data.trackId || `track${nextTrackId++}`;
+    tracker.trackName = data.trackName || `Track ${pointTracks.length + 1}`;
+    tracker.displayColor = data.displayColor || TRACK_COLORS[pointTracks.length % TRACK_COLORS.length];
+    pointTracks.push(tracker);
+    hookTrackRendering(videoView);
+    return tracker;
+}
+
+function syncTrackControls() {
+    enableMenuItem?.name(t(objectTracker?.enabled ? 'tracking.enable.disableLabel' : 'tracking.enable.label'));
+    startMenuItem?.name(t(objectTracker?.tracking ? 'tracking.start.stopLabel' : 'tracking.start.label'));
+    if (isLocal) {
+        window._objectTracker = objectTracker;
+        window._pointTracks = {list: getPointTracks, add: addPointTrack, select: selectPointTrack,
+            remove: removePointTrack, serialize: serializeAutoTracking};
+    }
+    setRenderOne(true);
+}
+
+export function selectPointTrack(id) {
+    const tracker = pointTracks.find(track => track.trackId === id);
+    if (!tracker || tracker === objectTracker) return tracker ?? null;
+    if (par.playbackLocked || objectTracker?.holdLoopActive || objectTracker?.analysingObject || objectTracker?.analysisResolutionSession) return null;
+    objectTracker?.clearSliderStatus();
+    if (objectTracker) {
+        objectTracker.isDragging = false;
+        objectTracker.draggingKeyframe = null;
+        objectTracker.thresholdPreview = objectTracker.featureSizePreview = false;
+        objectTracker.showMotionField = false;
+        objectTracker.motionFieldResolutionSession?.end();
+        objectTracker.motionFieldResolutionSession = null;
+    }
+    objectTracker = tracker;
+    NodeMan.get('autoTrackLOS', false)?.recalculateCascade();
+    if (tracker.enabled) tracker.updateSliderStatus();
+    const videoData = tracker.videoView.videoData;
+    if (videoData?.stabilizationEnabled) {
+        if (tracker.trackedPositions.size) applyTrackStabilization(videoData, videoData.stabilizeCenters, videoData.stabilizationDirectOffset);
+        else {
+            videoData.setStabilizationEnabled(false);
+            stabilizeToggleMenuItem?.name(t('tracking.stabilizeToggle.enableLabel'));
+        }
+    }
+    syncTrackControls();
+    return tracker;
+}
+
+export function addPointTrack() {
+    if (par.playbackLocked || objectTracker?.holdLoopActive || objectTracker?.analysingObject || objectTracker?.analysisResolutionSession) return null;
+    const videoView = NodeMan.get('video', false);
+    if (!videoView) return null;
+    // Start the new cursor in the middle of the image; no measurements are copied.
+    const tracker = createPointTracker(videoView);
+    selectPointTrack(tracker.trackId);
+    tracker.enable();
+    refreshPointTrackList();
+    syncTrackControls();
+    return tracker;
+}
+
+function disposePointTracker(tracker) {
+    tracker.disable();
+    tracker.unregisterGrabInteraction?.();
+    tracker.removeHeaderRevealBlocker?.();
+    if (tracker.keydownListener) EventManager.removeEventListener('keydown', tracker.keydownListener);
+    tracker.overlay?.remove?.();
+    tracker.motionTracker?.dispose();
+    tracker.motionTracker = null;
+    tracker.resetTemplates();
+}
+
+export function removePointTrack(id) {
+    if (par.playbackLocked || objectTracker?.holdLoopActive || objectTracker?.analysingObject || objectTracker?.analysisResolutionSession) return false;
+    const index = pointTracks.findIndex(track => track.trackId === id);
+    if (index < 0) return false;
+    const tracker = pointTracks[index];
+    const wasActive = tracker === objectTracker;
+    disposePointTracker(tracker);
+    removePointTrackFrequencyGraph(id);
+    pointTracks.splice(index, 1);
+    if (wasActive) {
+        objectTracker = null;
+        const replacement = pointTracks[Math.min(index, pointTracks.length - 1)];
+        if (replacement) selectPointTrack(replacement.trackId);
+        else {
+            tracker.videoView.videoData?.setStabilizationEnabled(false);
+            NodeMan.get('autoTrackLOS', false)?.recalculateCascade();
+            stabilizeToggleMenuItem?.name(t('tracking.stabilizeToggle.enableLabel'));
+        }
+    }
+    refreshPointTrackList();
+    syncTrackControls();
+    return true;
+}
+
+function refreshPointTrackList() {
+    const options = Object.fromEntries(pointTracks.map((track, i) => [`${i + 1}. ${track.trackName}`, track.trackId]));
+    editTrackMenuItem?.options?.(pointTracks.length ? options : {'No tracks': ''});
+    if (!trackListFolder) return;
+    for (const folder of [...(trackListFolder.folders ?? [])]) folder.destroy();
+    for (const tracker of pointTracks) {
+        const folder = trackListFolder.addFolder(tracker.trackName).close();
+        const proxy = {
+            get display() { return tracker.enabled; },
+            set display(value) {
+                if (value) tracker.enable(); else tracker.disable();
+                syncTrackControls();
+            },
+            get graph() { return getPointTrackFrequencyView(tracker.trackId)?.visible ?? false; },
+            set graph(value) { showPointTrackFrequencyGraph(value, null, tracker.trackId); },
+            edit() { selectPointTrack(tracker.trackId); },
+        };
+        folder.add(proxy, 'display').name('Display Track').listen();
+        folder.add(proxy, 'graph').name('Frequency Analysis').listen();
+        folder.add(proxy, 'edit').name('Edit This Track');
+    }
+}
+
+function addPointTrackListMenu(folder) {
+    const proxy = {
+        get editTrack() { return objectTracker?.trackId ?? ''; },
+        set editTrack(id) { selectPointTrack(id); },
+        get trackName() { return objectTracker?.trackName ?? ''; },
+        set trackName(name) { if (objectTracker) objectTracker.trackName = String(name).trim() || 'Track'; },
+        addTrack: addPointTrack,
+        async deleteTrack() {
+            const tracker = objectTracker;
+            if (!tracker) return;
+            if (!await showConfirm(`Delete "${tracker.trackName}" and all its points?`,
+                {title: 'Delete Point Track', yesLabel: 'Delete', noLabel: 'Keep'})) return;
+            removePointTrack(tracker.trackId);
+        },
+    };
+    editTrackMenuItem = folder.add(proxy, 'editTrack', {'No tracks': ''}).name('Edit Track').listen().perm()
+        .tooltip('Choose the track to edit, analyze, stabilize on, and use as the Point Track line of sight. Other displayed tracks stay visible.');
+    folder.add(proxy, 'trackName').name('Track Name').listen().perm().onFinishChange(refreshPointTrackList);
+    folder.add(proxy, 'addTrack').name('Add Point Track').perm();
+    folder.add(proxy, 'deleteTrack').name('Delete Selected Track').perm();
+    trackListFolder = folder.addFolder('Track List').close().perm()
+        .tooltip('Show or hide each track and its frequency graph independently.');
+    refreshPointTrackList();
+}
 
 export function resetObjectTracking() {
-    if (objectTracker) {
-        // Clear video stabilization
-        const videoView = objectTracker.videoView;
-        const videoData = videoView?.videoData;
-        if (videoData) {
-            videoData.setStabilizationEnabled(false);
-            videoData.stabilizationData = null;
-            videoData.stabilizationReferencePoint = null;
-        }
-
-        objectTracker.disable();
-        // The video view outlives this tracker; a new one registers its own.
-        objectTracker.unregisterGrabInteraction?.();
-        objectTracker.removeHeaderRevealBlocker?.();
-        // Every cv.Mat the motion tracker holds lives in the OpenCV heap and is
-        // freed only by hand, so dropping the reference alone leaks the whole
-        // cache on every sitch or video reload.
-        if (objectTracker.motionTracker) {
-            objectTracker.motionTracker.dispose();
-            objectTracker.motionTracker = null;
-        }
-        objectTracker = null;
+    const videoData = objectTracker?.videoView?.videoData;
+    if (videoData) {
+        videoData.setStabilizationEnabled(false);
+        videoData.stabilizationData = null;
+        videoData.stabilizationReferencePoint = null;
     }
-    renderHooked = false;
-    if (enableMenuItem) {
-        enableMenuItem.name(t("tracking.enable.label"));
-    }
-    if (startMenuItem) {
-        startMenuItem.name(t("tracking.start.label"));
-    }
-    if (stabilizeToggleMenuItem) {
-        stabilizeToggleMenuItem.name(t("tracking.stabilizeToggle.enableLabel"));
-    }
+    for (const tracker of pointTracks) disposePointTracker(tracker);
+    pointTracks.length = 0;
+    objectTracker = null;
+    nextTrackId = 1;
+    unhookTrackRendering();
+    refreshPointTrackList();
+    syncTrackControls();
+    stabilizeToggleMenuItem?.name(t('tracking.stabilizeToggle.enableLabel'));
 }
 
 function toggleEnableTracking() {
@@ -3099,27 +3294,13 @@ function toggleEnableTracking() {
     }
     
     if (!objectTracker) {
-        objectTracker = new ObjectTracker(videoView);
-        applyPendingTrackingSettings(objectTracker);
-        // Local-only debug hook so MCP / console can reach the module-scoped
-        // tracker (mirrors the tools-page window.shf pattern). Never exposed in
-        // production builds.
-        if (isLocal) window._objectTracker = objectTracker;
+        objectTracker = createPointTracker(videoView);
+        refreshPointTrackList();
+        syncTrackControls();
     }
     
     objectTracker.enable();
     if (enableMenuItem) enableMenuItem.name(t("tracking.enable.disableLabel"));
-    
-    if (!renderHooked) {
-        renderHooked = true;
-        const originalRender = videoView.renderCanvas.bind(videoView);
-        videoView.renderCanvas = function(frame) {
-            originalRender(frame);
-            if (objectTracker && objectTracker.enabled) {
-                objectTracker.renderOverlay(frame);
-            }
-        };
-    }
     
     setRenderOne(true);
 }
@@ -3575,7 +3756,8 @@ export function addObjectTrackingMenu() {
     if (!guiMenus.view) return;
 
     trackingFolder = guiMenus.video.addFolder("Point Track").close().perm()
-        .tooltip("Follow one object through the video, automatically or with points you place by hand.\nThe track can stabilize the video, and Traverse > LOS Source > Camera + Point Track uses it as the line of sight.");
+        .tooltip("Follow multiple objects through the video. Edit Track chooses the track used by the controls, stabilization, and the Point Track line of sight.");
+    addPointTrackListMenu(trackingFolder);
     addVideoAnalysisResolutionMenu(trackingFolder, () => NodeMan.get('video', false)?.videoData);
     const smoothing = {
         get smoothingFrames() { return objectTracker?.smoothingFrames ?? pendingTrackingSettings.smoothingFrames; },
@@ -4057,8 +4239,8 @@ export function addObjectTrackingMenu() {
         .perm();
 }
 
-export function getObjectTracker() {
-    return objectTracker;
+export function getObjectTracker(id) {
+    return id == null ? objectTracker : pointTracks.find(track => track.trackId === id) ?? null;
 }
 
 // The Point Track overlay, while it shows on screen: its canvas and the view
@@ -4070,10 +4252,18 @@ export function getPointTrackOverlay() {
     return {canvas: overlay, view: objectTracker.videoView};
 }
 
-export function serializeAutoTracking() {
-    if (!objectTracker) return null;
-    if (objectTracker.trackedPositions.size === 0) return null;
+export function getPointTrackOverlays() {
+    return pointTracks.filter(track => track.enabled && track.overlay && track.overlay.style.display !== 'none')
+        .map(track => ({canvas: track.overlay, view: track.videoView}));
+}
 
+export function serializeAutoTracking() {
+    if (!pointTracks.length) return null;
+    return {...serializePointTracker(objectTracker), version: 2, activeTrackId: objectTracker?.trackId,
+        nextTrackId, tracks: pointTracks.map(serializePointTracker)};
+}
+
+function serializePointTracker(objectTracker) {
     const videoView = objectTracker.videoView;
     const videoData = videoView?.videoData;
 
@@ -4081,6 +4271,9 @@ export function serializeAutoTracking() {
     // so no scaling is needed at serialize time.
     return {
         coordSpace: "original",
+        trackId: objectTracker.trackId,
+        trackName: objectTracker.trackName,
+        displayColor: objectTracker.displayColor,
         // Whether the tracker is switched on. Disabling leaves the tracker and its
         // trackedPositions intact, so without this flag a disabled tracker serializes
         // identically to an enabled one and always comes back enabled.
@@ -4136,44 +4329,26 @@ export async function deserializeAutoTracking(data) {
     const videoData = videoView.videoData;
     if (!videoData) return;
 
-    // Create the tracker. Whether it is switched on is saved state; saves made
-    // before the `enabled` flag existed have tracking data only, so a missing
-    // flag means "on" — the behaviour those saves were made under.
-    if (!objectTracker) {
-        objectTracker = new ObjectTracker(videoView);
-        applyPendingTrackingSettings(objectTracker);
-        // Local-only debug hook so MCP / console can reach the module-scoped
-        // tracker (mirrors the tools-page window.shf pattern). Never exposed in
-        // production builds.
-        if (isLocal) window._objectTracker = objectTracker;
+    resetObjectTracking();
+    const tracks = Array.isArray(data.tracks) && data.tracks.length ? data.tracks : [data];
+    for (const saved of tracks) {
+        const tracker = createPointTracker(videoView, saved);
+        restorePointTracker(tracker, saved, videoData);
     }
-    const enableTracker = data.enabled ?? true;
-    if (enableTracker) {
-        objectTracker.enable();
-    } else if (objectTracker.enabled) {
-        // Only when a live tracker carried over from a previous sitch; a freshly
-        // constructed one is already disabled. The overlay is deliberately left
-        // uncreated - creating it would hook the tracker's pointer and key handling
-        // into the video view, and createOverlay() no longer recenters a restored
-        // track, so deferring it to the user's first enable is safe.
-        objectTracker.disable();
+    nextTrackId = Math.max(Number(data.nextTrackId) || 1, ...pointTracks.map(track =>
+        (Number(track.trackId.replace(/^track/, '')) || 0) + 1));
+    objectTracker = pointTracks.find(track => track.trackId === data.activeTrackId) ?? pointTracks[0];
+    for (const tracker of pointTracks) if (tracker.restoreEnabled) tracker.enable();
+    if (data.stabilizationEnabled) {
+        applyTrackStabilization(videoData, data.stabilizeCenters ?? true, data.stabilizationDirectOffset ?? false);
     }
-    if (enableMenuItem) {
-        enableMenuItem.name(enableTracker ? t("tracking.enable.disableLabel") : t("tracking.enable.label"));
-    }
+    refreshPointTrackList();
+    syncTrackControls();
+    if (objectTracker.enabled) objectTracker.updateSliderStatus();
+}
 
-    // Hook rendering if not already done
-    if (!renderHooked) {
-        renderHooked = true;
-        const originalRender = videoView.renderCanvas.bind(videoView);
-        videoView.renderCanvas = function(frame) {
-            originalRender(frame);
-            if (objectTracker && objectTracker.enabled) {
-                objectTracker.renderOverlay(frame);
-            }
-        };
-    }
-
+function restorePointTracker(objectTracker, data, videoData) {
+    objectTracker.restoreEnabled = data.enabled ?? true;
     // Restore tracker state (positions stored in original-video coords)
     objectTracker.trackX = data.trackX ?? 0;
     objectTracker.trackY = data.trackY ?? 0;
@@ -4227,14 +4402,6 @@ export async function deserializeAutoTracking(data) {
     objectTracker.lastVideoWidth = origW;
     objectTracker.lastVideoHeight = origH;
 
-    // Restore stabilization if there's tracking data
-    if (data.stabilizationEnabled) {
-        applyTrackStabilization(videoData, data.stabilizeCenters ?? true, data.stabilizationDirectOffset ?? false);
-    }
-
-    // enable() ran before the points were restored, so show them on the timeline now.
-    if (objectTracker.enabled) objectTracker.updateSliderStatus();
-
     setRenderOne(true);
 }
 
@@ -4257,18 +4424,20 @@ function applyTrackStabilization(videoData, stabilizeCenters, directOffset) {
 // video has arrived. Stabilization lives on the video data, so it is rebuilt there.
 registerFrameRemap("pointTracking", (remap, {from, to}) => {
     const saved = Sit.autoTracking;
-    if (saved) {
-        if (Array.isArray(saved.trackedPositions)) saved.trackedPositions = [...remapFrameEntries(saved.trackedPositions, remap)];
-        if (Array.isArray(saved.unmeasuredFrames)) saved.unmeasuredFrames = saved.unmeasuredFrames.map(remap);
-        if (Array.isArray(saved.manualKeyframes)) saved.manualKeyframes = saved.manualKeyframes.map(remap);
+    for (const track of saved ? [saved, ...(saved.tracks ?? [])] : []) {
+        if (Array.isArray(track.trackedPositions)) track.trackedPositions = [...remapFrameEntries(track.trackedPositions, remap)];
+        if (Array.isArray(track.unmeasuredFrames)) track.unmeasuredFrames = track.unmeasuredFrames.map(remap);
+        if (Array.isArray(track.manualKeyframes)) track.manualKeyframes = track.manualKeyframes.map(remap);
     }
-    if (!objectTracker) return;
-    const positions = remapFrameEntries(objectTracker.trackedPositions, remap);
-    positions.unmeasuredFrames = new Set([...(objectTracker.trackedPositions.unmeasuredFrames ?? [])].map(remap));
-    objectTracker.trackedPositions = positions;
-    objectTracker.manualKeyframes = new Set([...objectTracker.manualKeyframes].map(remap));
-    if (Number.isFinite(objectTracker.lastTrackedFrame)) objectTracker.lastTrackedFrame = remap(objectTracker.lastTrackedFrame);
-    objectTracker.resetMotionHistory();
+    for (const tracker of pointTracks) {
+        const positions = remapFrameEntries(tracker.trackedPositions, remap);
+        positions.unmeasuredFrames = new Set([...(tracker.trackedPositions.unmeasuredFrames ?? [])].map(remap));
+        tracker.trackedPositions = positions;
+        tracker.manualKeyframes = new Set([...tracker.manualKeyframes].map(remap));
+        if (Number.isFinite(tracker.lastTrackedFrame)) tracker.lastTrackedFrame = remap(tracker.lastTrackedFrame);
+        tracker.resetMotionHistory();
+        tracker.updateSliderStatus();
+    }
     if (from?.stabilizationEnabled && to && to !== from) {
         applyTrackStabilization(to, from.stabilizeCenters ?? true, from.stabilizationDirectOffset ?? false);
     }

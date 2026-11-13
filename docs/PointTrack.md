@@ -19,6 +19,29 @@ This page has five parts:
 
 ## A. Simple procedures
 
+### Track several objects
+
+Use **Add Point Track** for each object. Give it a **Track Name**, place its cursor,
+then run the standard procedure below. **Edit Track** selects the track whose points
+and settings you can change. Only that track responds to dragging and tracking keys;
+the timeline also shows that track's coverage. Stop tracking before switching tracks.
+
+Open **Track List** to control each track's **Display Track** and **Frequency Analysis**
+independently. Several tracks and frequency graphs can stay visible together. Each graph
+shows its track name and stays with that track when you change the edit selection.
+Use **Arrange Frequency Graphs** to place the visible graphs side by side below the video.
+The frequency settings apply to the selected track. All graphs use the timeline's In/Out
+range, so they compare the same interval.
+
+Each track keeps its own points, tracking settings, smoothing and frequency settings.
+Saving the sitch preserves the tracks, edit selection, display choices and graph windows.
+An older single-track sitch opens as **Track 1**. **Delete Selected Track** removes only
+the selected track and its graph, after confirmation.
+
+The selected track also supplies **Camera + Point Track** and point-track stabilization.
+Switching tracks while stabilized switches the stabilization target; selecting an empty
+track turns stabilization off. Displaying a track does not select it for editing.
+
 ### The standard procedure
 
 On the three reference clips in [What to expect](#what-to-expect), this procedure tracked the whole clip:

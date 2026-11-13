@@ -23,6 +23,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     constructor(v) {
         super(v);
         this.skipModSerialize = true;
+        this.trackId = v.trackId ?? 'track1';
         this.options = {...FREQUENCY_DEFAULTS, ...v.options};
         this.isFrameX = false;
         this.series = [];
@@ -122,7 +123,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         if (performance.now() < this._pollAt && !this.regionMovedInsideMeasurement()) return;
         this._pollAt = performance.now() + 250;
         const video = NodeMan.get('video', false)?.videoData, source = sourceVideoOf(video);
-        const tracker = getObjectTracker();
+        const tracker = getObjectTracker(this.trackId);
         const mask = NodeMan.get('videoMask', false) ?? NodeMan.get('motionMaskOverlay', false);
         mask?.ensureMaskInitialized();
         const enabled = mask?.maskEnabled !== false;
@@ -209,6 +210,8 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         setRenderOne();
     }
 
+    get trackName() { return getObjectTracker(this.trackId)?.trackName ?? ''; }
+
     get percent() { return this.options.percent && Math.abs(this.spectrum?.mean ?? 0) > 1e-6; }
     get scale() { return this.percent ? 100 / Math.abs(this.spectrum.mean) : 1; }
     statusMessage() {
@@ -233,7 +236,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     renderCanvas(frame) {
         if (!this.visible) return;
         this.ensureAnalysis();
-        const key = [this.widthPx, this.heightPx, this.dark, this.job?.result.version, JSON.stringify(this.options), this.statusMessage()].join('|');
+        const key = [this.trackName, this.widthPx, this.heightPx, this.dark, this.job?.result.version, JSON.stringify(this.options), this.statusMessage()].join('|');
         if (key !== this._plotKey) { this.autoScale(); this._plot = this.drawPlot(); this._plotKey = key; }
         CNodeTabbedCanvasView.prototype.renderCanvas.call(this, frame);
         if (this._plot) this.ctx.drawImage(this._plot, 0, 0);
@@ -246,7 +249,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const w = width - 2 * MARGIN, h = height - 2 * MARGIN;
         ctx.fillStyle = c.bg; ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = c.text; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
-        ctx.fillText(t('pointFrequency.title'), width / 2, 18, width - 20);
+        ctx.fillText(`${this.trackName ? this.trackName + ' — ' : ''}${t('pointFrequency.title')}`, width / 2, 18, width - 20);
         ctx.font = '11px sans-serif';
         const s = this.spectrum, input = this._inputs;
         const status = this.statusMessage();
@@ -397,12 +400,13 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
                 interpolated.has(i) ? 'interpolated' : 'tracked'].join(','));
         });
         const {saveAs} = await import('file-saver');
-        saveAs(new Blob([rows.join('\n')], {type: 'text/csv;charset=utf-8'}), 'PointTrackFrequency.csv');
+        saveAs(new Blob([rows.join('\n')], {type: 'text/csv;charset=utf-8'}), `PointTrackFrequency-${this.trackName.replace(/[^a-zA-Z0-9_-]+/g, '_') || this.trackId}.csv`);
     }
 }
 
-export function createPointTrackFrequencyGraphView(id, options) {
-    return new CNodePointTrackFrequencyGraphView({id, options, menuName: t('pointFrequency.title'),
-        visible: true, alwaysOnTop: true, left: .23, top: .48, width: .62, height: .46,
+export function createPointTrackFrequencyGraphView(id, options, trackId) {
+    const offset = ((Number(trackId?.replace(/^track/, '')) || 1) - 1) % 6 * .035;
+    return new CNodePointTrackFrequencyGraphView({id, options, trackId, menuName: t('pointFrequency.title'),
+        visible: true, alwaysOnTop: true, left: .23 + offset, top: .28 + offset, width: .62, height: .46,
         draggable: true, resizable: true, freeAspect: true, shiftDrag: false});
 }

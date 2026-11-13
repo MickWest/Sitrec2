@@ -19,6 +19,13 @@ Open the tool with **Video → Point Track → Frequency Analysis**. This guide 
 - [Why small objects and noisy backgrounds cause problems](#why-small-objects-and-noisy-backgrounds-cause-problems)
 - [Video compression and the DCT](#video-compression-and-the-dct)
 
+To compare several objects, add their tracks in **Video → Point Track**. Under **Track List**,
+turn on **Frequency Analysis** for each one. Each window measures its own named track and
+remains attached to it when you switch **Edit Track**. Choose a track to adjust its aperture,
+peak floor and other frequency settings, refresh its analysis, or export its CSV. Track
+visibility and graph visibility are independent. All graphs use the shared In/Out interval;
+their settings, visibility and window positions are saved with the sitch.
+
 ## Basic limits: frames, duration and pixels
 
 ### Frame rate limits the highest usable frequency

@@ -1,6 +1,7 @@
 import {Globals, NodeMan, setRenderOne, Sit} from './Globals';
 import {ViewMan} from './CViewManager';
 import {t} from './i18n';
+import {findPointTrack, pointTracks} from './PointTrackRegistry';
 
 const VIEW_ID = 'pointTrackFrequencyGraph';
 // minPeakHz is the peak-search floor in Hz (0 = off), also when flashes per
@@ -19,8 +20,14 @@ export const clampPeakFloor = value => {
 };
 const sanitizeOption = (key, value) => key === 'radius' ? clampApertureRadius(value)
     : key === 'minPeakHz' ? clampPeakFloor(value) : !!value;
-let settings = {...FREQUENCY_DEFAULTS};
-let wanted = false;
+const trackSettings = new Map();
+const wanted = new Map();
+const activeId = () => findPointTrack()?.trackId ?? 'track1';
+const viewId = id => id === 'track1' ? VIEW_ID : `${VIEW_ID}_${id}`;
+function settingsFor(id = activeId()) {
+    if (!trackSettings.has(id)) trackSettings.set(id, {...FREQUENCY_DEFAULTS});
+    return trackSettings.get(id);
+}
 // Render Widening Video: In/Out go from In 1/Out 1 to In 2/Out 2, and back
 // if pingPong is on. A frame is null until the user sets it. Until then
 // In 2/Out 2 show the In/Out region, and In 1/Out 1 show its middle quarter
@@ -43,48 +50,63 @@ async function renderWidening() {
     const {renderWideningVideo} = await import('./pointFrequency/WideningVideo');
     await renderWideningVideo({...widening});
 }
-const currentView = () => NodeMan.get(VIEW_ID, false);
+export const getPointTrackFrequencyView = (id = activeId()) => NodeMan.get(viewId(id), false);
+const currentView = getPointTrackFrequencyView;
 
 export const pointFrequencyTargetColor = (dark = true) => dark ? '#54e2a8' : '#087a51';
 
-export function getPointTrackFrequencyAperture() {
-    const view = currentView();
+export function getPointTrackFrequencyAperture(id) {
+    const view = currentView(id);
     return view?.visible ? {radius: view.options.radius, color: pointFrequencyTargetColor(view.dark)} : null;
 }
 
-export async function showPointTrackFrequencyGraph(show, savedState = null) {
+export async function showPointTrackFrequencyGraph(show, savedState = null, id = activeId()) {
     show = !!show;
-    wanted = show;
-    let view = currentView();
+    wanted.set(id, show);
+    let view = currentView(id);
     if (!view) {
         if (!show) return;
         const generation = Globals.loadGeneration;
         const {createPointTrackFrequencyGraphView} = await import('./pointFrequency/CNodePointTrackFrequencyGraphView');
-        if (Globals.loadGeneration !== generation || !wanted) return;
-        view = currentView() ?? createPointTrackFrequencyGraphView(VIEW_ID, settings);
+        if (Globals.loadGeneration !== generation || !wanted.get(id)) return;
+        view = currentView(id) ?? createPointTrackFrequencyGraphView(viewId(id), settingsFor(id), id);
     }
     if (savedState) view.modDeserialize(savedState);
     view.show(show);
     if (show && savedState?.fullscreenSuppressed && ViewMan.fullscreenView) ViewMan.fullscreenSuppressed.add(view);
-    wanted = false;
+    wanted.delete(id);
+    setRenderOne();
+}
+
+export function arrangePointTrackFrequencyGraphs() {
+    const views = pointTracks.map(track => currentView(track.trackId)).filter(view => view?.visible);
+    const columns = Math.min(3, views.length), rows = Math.ceil(views.length / columns);
+    views.forEach((view, i) => {
+        Object.assign(view, {left: i % columns / columns, top: .5 + Math.floor(i / columns) * .48 / rows,
+            width: 1 / columns, height: .48 / rows});
+        view.updateWH();
+    });
     setRenderOne();
 }
 
 export function addPointTrackFrequencyMenu(folder) {
     const proxy = {
-        get show() { return currentView()?.visible ?? wanted; },
+        get show() { return currentView()?.visible ?? wanted.get(activeId()) ?? false; },
         set show(value) { showPointTrackFrequencyGraph(value); },
         refresh() { currentView()?.refreshAnalysis(); },
         exportCSV() { currentView()?.exportCSV(); },
+        arrange: arrangePointTrackFrequencyGraphs,
     };
     folder.add(proxy, 'show').name(t('pointFrequency.menu')).tooltip(t('pointFrequency.tooltip')).listen().perm();
+    folder.add(proxy, 'arrange').name('Arrange Frequency Graphs')
+        .tooltip('Place the visible point-track graphs side by side below the video.').perm();
     const controls = folder.addFolder(t('pointFrequency.settings')).close().perm()
         .tooltip(t('pointFrequency.settingsTooltip'));
     for (const key of Object.keys(FREQUENCY_DEFAULTS)) Object.defineProperty(proxy, key, {
-        get() { return (currentView()?.options ?? settings)[key]; },
+        get() { return (currentView()?.options ?? settingsFor())[key]; },
         set(value) {
             value = sanitizeOption(key, value);
-            settings[key] = value;
+            settingsFor()[key] = value;
             const view = currentView();
             if (view) {
                 view.options[key] = value;
@@ -120,20 +142,45 @@ export function addPointTrackFrequencyMenu(folder) {
 }
 
 export function serializePointTrackFrequencyGraph() {
-    const view = currentView();
-    if (!view?.visible) return undefined;
-    const state = view.modSerialize();
-    state.fullscreenSuppressed = !!ViewMan.fullscreenView && ViewMan.fullscreenSuppressed.has(view);
-    delete state.rootTestRemove;
-    return state;
+    const tracks = {};
+    const ids = new Set([...trackSettings.keys(), ...pointTracks.map(track => track.trackId)]);
+    for (const id of ids) {
+        const settings = settingsFor(id);
+        const view = currentView(id);
+        const state = view?.modSerialize() ?? {visible: false, frequencyOptions: {...settings}};
+        state.fullscreenSuppressed = !!ViewMan.fullscreenView && ViewMan.fullscreenSuppressed.has(view);
+        delete state.rootTestRemove;
+        tracks[id] = state;
+    }
+    return Object.keys(tracks).length ? {version: 2, tracks, widening: {...widening}} : undefined;
 }
 
-export function deserializePointTrackFrequencyGraph(state) {
-    if (state?.visible) return showPointTrackFrequencyGraph(true, state);
+export async function deserializePointTrackFrequencyGraph(state) {
+    if (!state) return;
+    if (state.widening) widening = {...WIDENING_DEFAULTS, ...state.widening};
+    const tracks = state.tracks ?? {track1: state};
+    for (const [id, saved] of Object.entries(tracks)) {
+        if (!findPointTrack(id)) continue;
+        const settings = settingsFor(id);
+        for (const key of Object.keys(FREQUENCY_DEFAULTS)) {
+            settings[key] = sanitizeOption(key, saved.frequencyOptions?.[key] ?? FREQUENCY_DEFAULTS[key]);
+        }
+        if (!saved.visible && saved.left === undefined) continue;
+        // Hidden windows keep their position and options too.
+        await showPointTrackFrequencyGraph(true, saved, id);
+        if (!saved.visible) await showPointTrackFrequencyGraph(false, null, id);
+    }
+}
+
+export function removePointTrackFrequencyGraph(id) {
+    wanted.delete(id);
+    trackSettings.delete(id);
+    const view = currentView(id);
+    if (view) NodeMan.disposeRemove(view.id);
 }
 
 export function resetPointTrackFrequencyGraph() {
-    wanted = false;
-    settings = {...FREQUENCY_DEFAULTS};
+    wanted.clear();
+    trackSettings.clear();
     widening = {...WIDENING_DEFAULTS};
 }
