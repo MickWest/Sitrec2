@@ -19,6 +19,21 @@ Open the tool with **Video → Point Track → Frequency Analysis**. This guide 
 - [Why small objects and noisy backgrounds cause problems](#why-small-objects-and-noisy-backgrounds-cause-problems)
 - [Video compression and the DCT](#video-compression-and-the-dct)
 
+To compare several objects, add their tracks in **Video → Point Track**. Under **Track List**,
+turn on **Frequency Analysis** for each one. Each window measures its own named track and
+remains attached to it when you switch **Edit Track**. The main **Frequency Analysis**
+checkbox shows or hides all graphs. **Frequency Analysis Settings** applies to all tracks,
+and **Refresh** measures all graphs again. To give one track a different aperture, set
+**Track List → [track name] → Frequency Radius** to a nonzero value. **0** uses the common
+radius; a nonzero radius is at least 2 pixels. Choose **Edit Track** to select the CSV to
+export. Track visibility and individual graph visibility remain independent.
+
+All visible graphs use the same Y-axis range: the largest range needed by any of them,
+including the displayed background curve and room for warnings. They also use the shared
+In/Out interval. Shared settings, radius overrides, visibility and window positions are
+saved with the sitch. Older per-track settings use the selected track's settings as the
+common values; different aperture radii are preserved as explicit overrides.
+
 ## Basic limits: frames, duration and pixels
 
 ### Frame rate limits the highest usable frequency
@@ -88,7 +103,7 @@ for examples and checks.
    spectrum describes the background at the point.
 2. Set the **In** and **Out** markers around that interval.
 3. Turn on **Video → Point Track → Frequency Analysis**.
-4. Open **Frequency Analysis Settings** in the same Point Track folder. Set **Object radius
+4. Open **Frequency Analysis Settings** in the same Point Track folder. Set **Frequency Radius
    (px)** so the green measuring circle contains the whole object, with room for small tracking
    errors, while keeping [neighboring objects](#neighboring-objects) out of the circle and out
    of the background ring around it.
@@ -176,7 +191,7 @@ between two points that has such a frame is not interpolated.
 | Control | What it does |
 |---|---|
 | **Frequency Analysis** | Shows or hides the graph and the green measuring circle. |
-| **Object radius (px)** | Measuring-circle radius in original video pixels. Default **4**, range **2–100**. The 2-pixel minimum is an aperture limit, not a minimum object diameter. |
+| **Frequency Radius (px)** | Measuring-circle radius in original video pixels. Default **4**, range **2–100**. The 2-pixel minimum is an aperture limit, not a minimum object diameter. |
 | **Amplitude as percent** | On by default. Divides semi-amplitude by the absolute mean object-minus-background flux and multiplies by 100. Off uses **DN·pixels**, recorded pixel value times pixel area. Effectively zero mean flux also uses DN·pixels. |
 | **Show local background** | On by default. Shows the pink comparison curve, using the same scale as the object. |
 | **Peak search floor (Hz)** | Default **0.5 Hz**, range **0–30 Hz**. Limits which frequency gets the largest-peak label, and which frequencies set the vertical scale. It does not remove any part of the spectrum. |

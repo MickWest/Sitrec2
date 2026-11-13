@@ -1153,7 +1153,7 @@ export class VideoExportManager {
         const { ExportProgressWidget, drawVideoWatermark } = await import("./utils");
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
         const { getMotionAnalysisOverlays } = await import("./CMotionAnalysisUI");
-        const { getPointTrackOverlay } = await import("./CObjectTracking");
+        const { getPointTrackOverlays } = await import("./CObjectTracking");
         const { CNodeView3D } = await import("./nodes/CNodeView3D");
         const {createVideoFormatExportLayer} = await import("./videoFilters/VideoFormatLayer");
 
@@ -1420,10 +1420,11 @@ export class VideoExportManager {
                     }
                     // The Point Track overlay is a canvas in this view's div, above the
                     // view's overlays. view.renderCanvas() above has just redrawn it.
-                    const pointTrack = getPointTrackOverlay();
-                    if (pointTrack?.view === view && pointTrack.canvas.width > 0 && pointTrack.canvas.height > 0) {
-                        compositeCtx.drawImage(pointTrack.canvas, (view.leftPx - originX) * scale, (view.topPx - originY) * scale,
-                            view.widthPx * scale, view.heightPx * scale);
+                    for (const pointTrack of getPointTrackOverlays()) {
+                        if (pointTrack.view === view && pointTrack.canvas.width > 0 && pointTrack.canvas.height > 0) {
+                            compositeCtx.drawImage(pointTrack.canvas, (view.leftPx - originX) * scale, (view.topPx - originY) * scale,
+                                view.widthPx * scale, view.heightPx * scale);
+                        }
                     }
                 }
 

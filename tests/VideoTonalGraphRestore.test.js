@@ -21,6 +21,7 @@ import {createPointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePoi
 import {addPointTrackFrequencyMenu, deserializePointTrackFrequencyGraph, MIN_APERTURE_RADIUS, resetPointTrackFrequencyGraph,
     serializePointTrackFrequencyGraph, showPointTrackFrequencyGraph} from "../src/PointTrackFrequencyGraph";
 import {measurePointFlux} from "../src/pointFrequency/PointFrequencyStatistics";
+import {pointTracks} from '../src/PointTrackRegistry';
 
 describe.each([
     {id: 'videoTonalGraph', createVideoTonalGraphView, deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph},
@@ -33,7 +34,7 @@ const saved = {visible: true, left: 0.55, top: 0.20, width: 0.45, height: 0.53, 
 let graph;
 
 function makeGraph(id) {
-    graph = {id, in: {}, visible: true, ...saved,
+    graph = {id, in: {}, visible: true, ...saved, refreshAnalysis() {}, updateSpectrum() {},
         modDeserialize(state) {
             for (const key of Object.keys(saved)) if (state[key] !== undefined) this[key] = state[key];
         },
@@ -59,9 +60,16 @@ beforeEach(() => {
     ViewMan.list = {};
     ViewMan.setFullscreenView(null);
     resetVideoTonalGraph();
+    pointTracks.splice(0, pointTracks.length, {trackId: 'track1', editable: true});
     NodeMan.get.mockImplementation(() => graph);
     createVideoTonalGraphView.mockReset().mockImplementation(makeGraph);
 });
+afterEach(() => { pointTracks.length = 0; });
+
+const savedGraph = () => {
+    const state = serializeVideoTonalGraph();
+    return id === 'pointTrackFrequencyGraph' ? state?.tracks.track1 : state;
+};
 
 test("a legacy saved graph restores visibly on top of the fullscreen video", async () => {
     const video = restoreFullscreen();
@@ -70,7 +78,7 @@ test("a legacy saved graph restores visibly on top of the fullscreen video", asy
     expect(ViewMan.fullscreenView).toBe(video);
     expect(graph._effectivelyVisible).toBe(true);
     expect(graph).toMatchObject(saved);
-    expect(serializeVideoTonalGraph()).toEqual({...saved, fullscreenSuppressed: false});
+    expect(savedGraph()).toEqual({...saved, fullscreenSuppressed: false});
 });
 
 test("an already-created graph is re-shown after fullscreen restoration", async () => {
@@ -89,7 +97,7 @@ test("a graph deliberately covered by fullscreen stays covered after a round tri
     makeGraph(id);
     restoreFullscreen();
     const state = serializeVideoTonalGraph();
-    expect(state.fullscreenSuppressed).toBe(true);
+    expect(savedGraph().fullscreenSuppressed).toBe(true);
     delete ViewMan.list[id];
     graph = null;
     restoreFullscreen();
@@ -107,7 +115,8 @@ test("graphs without fullscreen and explicitly hidden graphs keep their visibili
     ViewMan.computeEffectiveVisibility();
     expect(graph._effectivelyVisible).toBe(true);
     await showVideoTonalGraph(false);
-    expect(serializeVideoTonalGraph()).toBeUndefined();
+    if (id === 'pointTrackFrequencyGraph') expect(savedGraph().visible).toBe(false);
+    else expect(serializeVideoTonalGraph()).toBeUndefined();
     graph = null;
     await deserializeVideoTonalGraph({visible: false});
     expect(graph).toBeNull();

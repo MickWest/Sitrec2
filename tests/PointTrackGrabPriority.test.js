@@ -5,6 +5,7 @@
 import {ObjectTracker} from '../src/CObjectTracking';
 import {getInteractionRouter} from '../src/InteractionRouter';
 import {makeDraggable, makeResizable} from '../src/DragResizeUtils';
+import {EventManager} from '../src/CEventManager';
 
 jest.mock('../src/Globals', () => ({
     Globals: {}, Sit: {frames: 20, aFrame: 0, bFrame: 19},
@@ -103,4 +104,20 @@ test('the header stays down over the point, and a disabled tracker claims nothin
     pointer(bar, 'pointerdown', 200, 15);
     pointer(document, 'pointerup', 200, 15);
     expect(dragStart).toHaveBeenCalledTimes(1);
+});
+
+test('a displayed track that is not selected cannot grab the pointer or delete a point', () => {
+    tracker.trackId = 'inactive';
+    tracker.trackedPositions.set(0, {x: 200, y: 12});
+    tracker.manualKeyframes.add(0);
+    tracker.videoView.mouse.x = 200;
+    tracker.videoView.mouse.y = 12;
+    const keydown = EventManager.addEventListener.mock.calls.at(-1)[1];
+    keydown({key: 'Delete'});
+    expect(tracker.trackedPositions.has(0)).toBe(true);
+    expect(blocker(200, 12)).toBe(false);
+    pointer(bar, 'pointerdown', 200, 15);
+    pointer(document, 'pointerup', 200, 15);
+    expect(dragStart).toHaveBeenCalledTimes(1);
+    expect(tracker.trackX).toBe(200);
 });

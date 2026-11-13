@@ -24,7 +24,10 @@ jest.mock('../src/configUtils', () => ({isLocal: false}));
 jest.mock('../src/i18n', () => ({t: v => v}));
 jest.mock('../src/PointTrackFrequencyGraph', () => ({
     addPointTrackFrequencyMenu: jest.fn(),
+    clampFrequencyRadiusOverride: value => Number(value) > 0 ? Math.max(2, Number(value)) : 0,
+    showNewPointTrackFrequencyGraph: jest.fn(),
     getPointTrackFrequencyAperture: jest.fn(() => null),
+    removePointTrackFrequencyGraph: jest.fn(),
 }));
 
 // The settings that are held before Enable. Each is also the menu property that sets it.
@@ -185,4 +188,93 @@ test('Stabilize with no tracker reports through showError', () => {
     controls.stabilizeVideo.object.stabilizeVideo();
     expect(showError).toHaveBeenCalledWith(
         "Please enable tracking first and track an object before stabilizing.");
+});
+
+
+test('three tracks keep independent points, settings, visibility and edit selection across save/load', async () => {
+    const {tracking, enable, set, value} = load();
+    enable();
+    const first = tracking.getObjectTracker();
+    first.trackedPositions.set(2, {x: 100, y: 200});
+    first.manualKeyframes.add(2);
+    set('trackRadius', 7);
+    const second = tracking.addPointTrack();
+    second.trackName = 'Second object';
+    second.frequencyRadius = 9;
+    second.trackedPositions.set(3, {x: 300, y: 210});
+    second.trackedPositions.unmeasuredFrames = new Set([4]);
+    set('trackRadius', 12);
+    const third = tracking.addPointTrack();
+    third.trackName = 'Empty seed';
+    third.trackX = 50; third.trackY = 60;
+    second.disable();
+    tracking.selectPointTrack(first.trackId);
+    expect(value('trackRadius')).toBe(7);
+    expect([first.editable, second.editable, third.editable]).toEqual([true, false, false]);
+    expect(second.trackRadius).toBe(12);
+    expect(first.enabled).toBe(true);
+    expect(third.trackedPositions.size).toBe(0);
+    const saved = tracking.serializeAutoTracking();
+    await tracking.deserializeAutoTracking(saved);
+    const tracks = tracking.getPointTracks();
+    expect(tracks).toHaveLength(3);
+    expect(tracking.getObjectTracker().trackId).toBe(first.trackId);
+    expect(tracks.map(t => t.enabled)).toEqual([true, false, true]);
+    expect(tracks[0].trackedPositions.get(2)).toEqual({x: 100, y: 200});
+    expect(tracks[0].manualKeyframes.has(2)).toBe(true);
+    expect(tracks[1].frequencyRadius).toBe(9);
+    expect(tracks[0].frequencyRadius).toBe(0);
+    expect(tracks[1].trackedPositions.get(3)).toEqual({x: 300, y: 210});
+    expect(tracks[1].trackedPositions.unmeasuredFrames.has(4)).toBe(true);
+    expect(tracks[2]).toMatchObject({trackName: 'Empty seed', trackX: 50, trackY: 60});
+    tracking.selectPointTrack(second.trackId);
+    expect(tracking.getObjectTracker()).toBe(tracks[1]);
+    tracks[1].clearTrack();
+    expect(tracks[0].trackedPositions.size).toBe(1);
+    // Clear Track keeps a seed at the playhead, but removes the old measurement.
+    expect(tracks[1].trackedPositions.has(3)).toBe(false);
+});
+
+test('deletion releases a track and never reuses its graph identity', () => {
+    const {tracking, enable} = load();
+    enable();
+    const first = tracking.getObjectTracker();
+    const second = tracking.addPointTrack();
+    const third = tracking.addPointTrack();
+    expect(tracking.removePointTrack(second.trackId)).toBe(true);
+    expect(tracking.getObjectTracker()).toBe(third);
+    expect(tracking.getPointTracks()).toEqual([first, third]);
+    const fourth = tracking.addPointTrack();
+    expect(new Set([first, second, third, fourth].map(t => t.trackId)).size).toBe(4);
+    expect(require('../src/PointTrackFrequencyGraph').removePointTrackFrequencyGraph).toHaveBeenCalledWith(second.trackId);
+    tracking.removePointTrack(fourth.trackId);
+    expect(tracking.getObjectTracker()).toBe(third);
+});
+
+test('selection and deletion cannot redirect an in-progress tracking run', () => {
+    const {tracking, enable} = load();
+    enable();
+    const first = tracking.getObjectTracker(), second = tracking.addPointTrack();
+    const {par} = require('../src/par');
+    par.playbackLocked = true;
+    try {
+        expect(tracking.selectPointTrack(first.trackId)).toBeNull();
+        expect(tracking.addPointTrack()).toBeNull();
+        expect(tracking.removePointTrack(second.trackId)).toBe(false);
+        expect(tracking.getObjectTracker()).toBe(second);
+    } finally { par.playbackLocked = false; }
+});
+
+test('restoring tracks preserves another analysis render hook without drawing tracks twice', async () => {
+    const {tracking, videoView, enable} = load();
+    enable();
+    const saved = tracking.serializeAutoTracking();
+    const original = videoView.renderCanvas;
+    const otherOverlay = jest.fn();
+    videoView.renderCanvas = function(frame) { original.call(this, frame); otherOverlay(); };
+    await tracking.deserializeAutoTracking(saved);
+    const draw = tracking.getObjectTracker().renderOverlay = jest.fn();
+    videoView.renderCanvas(0);
+    expect(otherOverlay).toHaveBeenCalledTimes(1);
+    expect(draw).toHaveBeenCalledTimes(1);
 });

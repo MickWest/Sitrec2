@@ -7,7 +7,7 @@ import {getObjectTracker} from '../CObjectTracking';
 import {abFrameRange} from '../TraverseAnalysisData';
 import {displayIndexForFrame, sourceVideoOf} from '../videoQP/VideoQPAnalysis';
 import {startTonalAnalysis} from '../videoTonal/VideoTonalAnalysis';
-import {clampApertureRadius, clampPeakFloor, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
+import {clampApertureRadius, clampPeakFloor, FREQUENCY_DEFAULTS, pointFrequencyTargetColor, sharedPointTrackFrequencyMaxY} from '../PointTrackFrequencyGraph';
 import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling, searchedMaximum} from './PointFrequencyStatistics';
 import {maxOf} from '../SafeArrays';
 
@@ -23,9 +23,11 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     constructor(v) {
         super(v);
         this.skipModSerialize = true;
+        this.trackId = v.trackId ?? 'track1';
         this.options = {...FREQUENCY_DEFAULTS, ...v.options};
         this.isFrameX = false;
         this.series = [];
+        this.menuName = this.graphTitle;
         this.refreshAnalysis();
     }
 
@@ -122,7 +124,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         if (performance.now() < this._pollAt && !this.regionMovedInsideMeasurement()) return;
         this._pollAt = performance.now() + 250;
         const video = NodeMan.get('video', false)?.videoData, source = sourceVideoOf(video);
-        const tracker = getObjectTracker();
+        const tracker = getObjectTracker(this.trackId);
         const mask = NodeMan.get('videoMask', false) ?? NodeMan.get('motionMaskOverlay', false);
         mask?.ensureMaskInitialized();
         const enabled = mask?.maskEnabled !== false;
@@ -209,6 +211,9 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         setRenderOne();
     }
 
+    get trackName() { return getObjectTracker(this.trackId)?.trackName ?? ''; }
+    get graphTitle() { return this.trackName ? t('pointFrequency.trackTitle', {name: this.trackName}) : t('pointFrequency.title'); }
+
     get percent() { return this.options.percent && Math.abs(this.spectrum?.mean ?? 0) > 1e-6; }
     get scale() { return this.percent ? 100 / Math.abs(this.spectrum.mean) : 1; }
     statusMessage() {
@@ -218,25 +223,86 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         if (result && !result.complete) return t('videoTonal.analyzing', {percent: Math.floor(100 * result.done / result.frames)});
         return this.spectrumError || '';
     }
+    requiredMaxY() {
+        let maximum = 0;
+        // The peak-search floor applies to every graph, including its Y range.
+        for (const spectrum of [this.spectrum, this.options.showBackground ? this.backgroundSpectrum : null]) {
+            if (spectrum) maximum = Math.max(maximum, searchedMaximum(spectrum) * this.scale * 1.1);
+        }
+        if (maximum < 1e-9) maximum = 1;
+        const {height: warningsHeight} = this.warningLayout();
+        const h = this.heightPx - 2 * MARGIN;
+        if (warningsHeight && h > 0) maximum = Math.max(maximum, maximum / 1.1 / (1 - Math.min(.5, (warningsHeight + 10) / h)));
+        return maximum;
+    }
     autoScale() {
         this.minX = 0; this.maxX = this.spectrum?.nyquist || 15;
-        this.minY = 0; this.maxY = 0;
-        // Only the frequencies that the peak search considers set the scale. A
-        // curve below the floor can go off the top of the plot, where it is clipped.
-        for (const spectrum of [this.spectrum, this.options.showBackground ? this.backgroundSpectrum : null]) {
-            if (spectrum) this.maxY = Math.max(this.maxY, searchedMaximum(spectrum) * this.scale * 1.1);
-        }
-        if (this.maxY < 1e-9) this.maxY = 1;
+        this.minY = 0; this.maxY = sharedPointTrackFrequencyMaxY(this);
         this.hasY2 = false; this.hasY3 = false;
     }
     point(x, y) { return this.graphToScreenAxis(x, y, this.minY, this.maxY); }
     renderCanvas(frame) {
         if (!this.visible) return;
         this.ensureAnalysis();
-        const key = [this.widthPx, this.heightPx, this.dark, this.job?.result.version, JSON.stringify(this.options), this.statusMessage()].join('|');
-        if (key !== this._plotKey) { this.autoScale(); this._plot = this.drawPlot(); this._plotKey = key; }
+        this.menuName = this.graphTitle;
+        this.autoScale();
+        const key = [this.maxY, this.trackName, this.widthPx, this.heightPx, this.dark, this.job?.result.version, JSON.stringify(this.options), this.statusMessage()].join('|');
+        if (key !== this._plotKey) { this._plot = this.drawPlot(); this._plotKey = key; }
         CNodeTabbedCanvasView.prototype.renderCanvas.call(this, frame);
         if (this._plot) this.ctx.drawImage(this._plot, 0, 0);
+    }
+    wrapText(ctx, text, limit) {
+        const lines = []; let line = '';
+        for (const word of text.split(/\s+/)) {
+            if (line && ctx.measureText(line + ' ' + word).width > limit) { lines.push(line); line = word; }
+            else line += (line ? ' ' : '') + word;
+        }
+        if (line) lines.push(line);
+        return lines;
+    }
+    warningLayout() {
+        const ctx = this.ctx;
+        if (!ctx || !(this.heightPx >= 180 && this.widthPx >= 180)) return {warnings: [], height: 0};
+        const key = [this.widthPx, this.heightPx, this.job?.result.version, this._inputs?.trackKey,
+            this.spectrum, JSON.stringify(this.options), this.statusMessage(), !!this.warningClosed];
+        if (this._warningLayoutKey?.every((value, i) => value === key[i])) return this._warningLayout;
+        const w = this.widthPx - 2 * MARGIN;
+        const s = this.spectrum, input = this._inputs, status = this.statusMessage();
+        const perMinute = this.options.perMinute, xUnit = perMinute ? 60 : 1;
+        const frequencyUnit = t(perMinute ? 'pointFrequency.perMinuteUnit' : 'pointFrequency.hz');
+        const frequencyText = hz => (hz * xUnit).toFixed(perMinute ? 1 : 2);
+        // Warnings about the samples, at the top of the plot. Frames with no
+        // tracked point come first, in a box in the red that those frames have on
+        // the timeline and on the trail: their samples are measured at a position
+        // that is a guess, and nothing else on the graph shows that.
+        const warnings = [];
+        if (!status && s && input.plan.untracked && this.untrackedWarningShows(input.range)) {
+            const untracked = input.plan.untracked, radius = this.options.radius;
+            warnings.push({alert: true, text: t('pointFrequency.interpolated', untracked) + ' '
+                + (untracked.trial !== null ? t('pointFrequency.interpolatedTrial', {error: untracked.trial.toFixed(1), radius})
+                    : t('pointFrequency.interpolatedMove', {move: untracked.move.toFixed(1), radius}))});
+        }
+        if (!status && s && input.sampling.irregular) {
+            const {minFps, maxFps} = input.sampling;
+            warnings.push({text: t('pointFrequency.irregularTiming', {min: minFps.toFixed(2), max: maxFps.toFixed(2),
+                limit: frequencyText(minFps / 2), frequencyUnit})});
+        }
+        if (!status && s) {
+            const fractions = input.plan.indices.map(i => this.job.result.clippedFraction[i]).filter(fraction => fraction > 0);
+            if (fractions.length) warnings.push({text: t('pointFrequency.clipped', {frames: fractions.length, total: input.plan.indices.length,
+                max: (100 * maxOf(fractions)).toFixed(0)})});
+        }
+        let warningsHeight = 0;
+        for (const warning of warnings) {
+            ctx.font = warning.alert ? 'bold 12px sans-serif' : '11px sans-serif';
+            // The box keeps its top right corner free for the ×.
+            warning.lines = this.wrapText(ctx, warning.text, w - 36 - (warning.alert ? 2 * CLOSE_SIZE : 0));
+            warning.step = warning.alert ? 16 : 14;
+            warning.height = warning.lines.length * warning.step + (warning.alert ? 10 : 2);
+            warningsHeight += warning.height + 4;
+        }
+        this._warningLayoutKey = key;
+        return this._warningLayout = {warnings, height: warningsHeight};
     }
     drawPlot() {
         const width = this.widthPx, height = this.heightPx;
@@ -246,7 +312,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const w = width - 2 * MARGIN, h = height - 2 * MARGIN;
         ctx.fillStyle = c.bg; ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = c.text; ctx.textAlign = 'center'; ctx.font = '14px sans-serif';
-        ctx.fillText(t('pointFrequency.title'), width / 2, 18, width - 20);
+        ctx.fillText(this.graphTitle, width / 2, 18, width - 20);
         ctx.font = '11px sans-serif';
         const s = this.spectrum, input = this._inputs;
         const status = this.statusMessage();
@@ -268,50 +334,8 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             else peakText = t('pointFrequency.flat');
         }
         ctx.fillText(peakText, width / 2, 49, width - 20);
-        // Warnings about the samples, at the top of the plot. Frames with no
-        // tracked point come first, in a box in the red that those frames have on
-        // the timeline and on the trail: their samples are measured at a position
-        // that is a guess, and nothing else on the graph shows that.
-        const warnings = [];
         this._warningClose = null;
-        if (!status && s && input.plan.untracked && this.untrackedWarningShows(input.range)) {
-            const untracked = input.plan.untracked, radius = this.options.radius;
-            warnings.push({alert: true, text: t('pointFrequency.interpolated', untracked) + ' '
-                + (untracked.trial !== null ? t('pointFrequency.interpolatedTrial', {error: untracked.trial.toFixed(1), radius})
-                    : t('pointFrequency.interpolatedMove', {move: untracked.move.toFixed(1), radius}))});
-        }
-        if (!status && s && input.sampling.irregular) {
-            const {minFps, maxFps} = input.sampling;
-            warnings.push({text: t('pointFrequency.irregularTiming', {min: minFps.toFixed(2), max: maxFps.toFixed(2),
-                limit: frequencyText(minFps / 2), frequencyUnit})});
-        }
-        if (!status && s) {
-            const fractions = input.plan.indices.map(i => this.job.result.clippedFraction[i]).filter(fraction => fraction > 0);
-            if (fractions.length) warnings.push({text: t('pointFrequency.clipped', {frames: fractions.length, total: input.plan.indices.length,
-                max: (100 * maxOf(fractions)).toFixed(0)})});
-        }
-        const wrap = (text, limit) => {
-            const lines = []; let line = '';
-            for (const word of text.split(/\s+/)) {
-                if (line && ctx.measureText(line + ' ' + word).width > limit) { lines.push(line); line = word; }
-                else line += (line ? ' ' : '') + word;
-            }
-            if (line) lines.push(line);
-            return lines;
-        };
-        let warningsHeight = 0;
-        for (const warning of warnings) {
-            ctx.font = warning.alert ? 'bold 12px sans-serif' : '11px sans-serif';
-            // The box keeps its top right corner free for the ×.
-            warning.lines = wrap(warning.text, w - 36 - (warning.alert ? 2 * CLOSE_SIZE : 0));
-            warning.step = warning.alert ? 16 : 14;
-            warning.height = warning.lines.length * warning.step + (warning.alert ? 10 : 2);
-            warningsHeight += warning.height + 4;
-        }
-        // Room for the warnings above the curves: the largest value that the scale
-        // fits (autoScale leaves it at 1/1.1 of the top) stays below them. In a
-        // small window the warnings get at most half of the plot.
-        if (warningsHeight) this.maxY = Math.max(this.maxY, this.maxY / 1.1 / (1 - Math.min(.5, (warningsHeight + 10) / h)));
+        const {warnings} = this.warningLayout();
         ctx.font = '11px sans-serif';
         const xs = this.calculateStep(this.maxX * xUnit, w) / xUnit, ys = this.calculateStep(this.maxY, h);
         ctx.save(); ctx.beginPath(); ctx.rect(MARGIN, MARGIN, w, h); ctx.clip(); ctx.strokeStyle = c.grid;
@@ -356,7 +380,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         ctx.lineWidth = 1;
         if (status) {
             ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-            const lines = wrap(status, w - 20);
+            const lines = this.wrapText(ctx, status, w - 20);
             ctx.fillStyle = c.bg; ctx.fillRect(MARGIN + 5, height / 2 - 15, w - 10, lines.length * 18 + 8);
             ctx.fillStyle = c.text;
             lines.forEach((text, i) => ctx.fillText(text, width / 2, height / 2 + i * 18));
@@ -397,12 +421,13 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
                 interpolated.has(i) ? 'interpolated' : 'tracked'].join(','));
         });
         const {saveAs} = await import('file-saver');
-        saveAs(new Blob([rows.join('\n')], {type: 'text/csv;charset=utf-8'}), 'PointTrackFrequency.csv');
+        saveAs(new Blob([rows.join('\n')], {type: 'text/csv;charset=utf-8'}), `PointTrackFrequency-${this.trackName.replace(/[^a-zA-Z0-9_-]+/g, '_') || this.trackId}.csv`);
     }
 }
 
-export function createPointTrackFrequencyGraphView(id, options) {
-    return new CNodePointTrackFrequencyGraphView({id, options, menuName: t('pointFrequency.title'),
-        visible: true, alwaysOnTop: true, left: .23, top: .48, width: .62, height: .46,
+export function createPointTrackFrequencyGraphView(id, options, trackId) {
+    const offset = ((Number(trackId?.replace(/^track/, '')) || 1) - 1) % 6 * .035;
+    return new CNodePointTrackFrequencyGraphView({id, options, trackId, menuName: t('pointFrequency.title'),
+        visible: true, alwaysOnTop: true, left: .23 + offset, top: .28 + offset, width: .62, height: .46,
         draggable: true, resizable: true, freeAspect: true, shiftDrag: false});
 }

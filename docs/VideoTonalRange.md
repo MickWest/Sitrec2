@@ -130,7 +130,7 @@ background. All regions obey the enabled video mask.
 
 Sitrec does not draw this aperture or ring on the video. The circle that
 [Frequency Analysis](FrequencyAnalysis.md) draws is a different
-aperture, with its own **Object radius (px)**.
+aperture, with its own **Frequency Radius (px)**.
 
 Set **Object radius (px)** so that the circle just contains the object. A larger circle averages
 in background. If the object reaches past twice the radius, it enters the background ring and
