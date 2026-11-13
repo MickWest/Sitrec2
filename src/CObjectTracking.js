@@ -3465,10 +3465,22 @@ function clearTrack() {
     }
 }
 
-function clearFromHere() {
-    if (objectTracker) {
-        objectTracker.clearFromHere();
+// Asks first only when the range holds points placed by hand, as Clear User Points does: auto
+// points can be tracked again, the points a person placed cannot.
+async function clearFromHere() {
+    const tracker = objectTracker;
+    if (!tracker) return;
+    const from = Math.floor(par.frame);
+    const to = Sit.bFrame ?? (Sit.frames - 1);
+    const placed = [...tracker.manualKeyframes].filter((f) => f >= from && f <= to).length;
+    if (placed > 0) {
+        const ok = await showConfirm(
+            `Delete the tracked points from frame ${from} to ${to}, including the ${placed} `
+            + `point${placed === 1 ? "" : "s"} you placed by hand? You cannot undo it.`,
+            {title: "Clear from Here", yesLabel: "Delete", noLabel: "Keep"});
+        if (!ok || objectTracker !== tracker) return;
     }
+    tracker.clearFromHere();
 }
 
 // Go to Next Untracked. The video says which frames the playhead is now at, or

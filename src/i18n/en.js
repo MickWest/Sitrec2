@@ -1240,7 +1240,7 @@ const en = {
         },
         clearFromHere: {
             label: "Clear from Here",
-            tooltip: "Delete all tracked points, including the points you placed by hand, from the current frame to the end of the A-B range. Points before the current frame stay.",
+            tooltip: "Delete all tracked points, including the points you placed by hand, from the current frame to the end of the A-B range. Points before the current frame stay. When the range holds points you placed, it asks first.",
         },
         clearTrack: {
             label: "Clear Track",
@@ -2180,7 +2180,7 @@ const en = {
             },
             clearRegions: {
                 label: "Clear All Regions",
-                tooltip: "Remove all text extraction regions",
+                tooltip: "Remove all text extraction regions. It asks first, because you cannot undo it.",
             },
             startExtract: {
                 label: "Start Extraction",

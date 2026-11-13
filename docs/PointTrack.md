@@ -104,7 +104,7 @@ the recommended method in **Tracking Method**, then press **Start Point Track**.
 1. Stop the track, or let it finish.
 2. Go to the first frame where the track is off the object.
 3. Press **Clear from Here**. This deletes every point from the current frame to the Out
-   frame, including your user points.
+   frame, including your user points. When there are user points in that range, it asks first.
 4. Go forward to a frame where you can see the object again, and drag the cursor onto it. This
    is a **user point**: the tracker takes it as fact and restarts from it.
 5. Press **Start Point Track** again. Frames that already have points are kept.
@@ -479,7 +479,7 @@ and full black. The black in those outlines is a strong difference, not a mask.
 | **Edit Head Only** | off | — | Only the point at the current frame can be dragged; see below |
 | **Show N Keyframes** | 20 | 0–100 | Draws only this many user points (magenta crosses), the ones nearest the current frame |
 | **Go to Next Untracked** | — | — | Go to the next frame, from the In frame to the Out frame, that has no tracked point; see [Frames with no point](#frames-with-no-point) |
-| **Clear from Here** | — | — | Delete all points, user points included, from the current frame to the Out frame |
+| **Clear from Here** | — | — | Delete all points, user points included, from the current frame to the Out frame. When the range holds user points, it asks first |
 | **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
 
 You can set these controls before you press **Enable Point Track**, except **Edit Head Only**,

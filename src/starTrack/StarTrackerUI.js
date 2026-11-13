@@ -1,5 +1,7 @@
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
+import {getInteractionRouter} from "../InteractionRouter";
+import {commandModifier} from "../GestureActions";
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from '../VideoAnalysisResolution';
 // Star Tracker: the app-facing layer over the pure Star Track pipeline.
 //
@@ -3373,7 +3375,7 @@ function toggleStarsEnabled(indices) {
 //
 // A clip with only a few bright dots - planets and one or two stars in twilight - has too few
 // stars for the blind identification. The user can see which dot is which, so a right-click on a
-// circle names it, and a shift-click adds a circle where the tracker found none. When three
+// circle names it, and a Ctrl/Cmd-click adds a circle where the tracker found none. When three
 // enabled circles have names, the plate model is fitted to them (StarManualFit) and the camera
 // is synced exactly as after a blind identification.
 
@@ -3759,7 +3761,7 @@ function addStarAt(ox, oy) {
     const add = () => {
         r.solved.tracks[index] = track;
         if (!r.solved.classified.includes(entry)) r.solved.classified.push(entry);
-        params.status = "star added - right-click it to name it";
+        params.status = "star added - right-click it for its menu";
         setRenderOne();
     };
     const remove = () => {
@@ -3772,10 +3774,17 @@ function addStarAt(ox, oy) {
     add();
 }
 
-/** The right-click menu on a star circle: name it as a planet or a star, or remove its name. */
-async function showStarLabelMenu(index, clientX, clientY) {
+/**
+ * The right-click menu on a star circle: everything that can be done to that point. Name it as a
+ * planet or a star, or remove its name; leave it out of the identification or put it back (the
+ * same group a click toggles); delete it, when it is a circle added by hand.
+ *
+ * @param {number[]} group - the circles under the pointer, nearest first: the nearest is named
+ */
+async function showStarMenu(group, clientX, clientY) {
     const r = result;
     if (!r) return;
+    const index = group[0];
     let data;
     const loading = "loading star catalog", statusBefore = params.status;
     try {
@@ -3790,7 +3799,7 @@ async function showStarLabelMenu(index, clientX, clientY) {
     const {catalog, names} = data;
     const current = r.manualLabels?.get(index);
     const menu = Globals.menuBar?.createStandaloneMenu(
-        current ? `Star: ${current.label}` : "Name this star", clientX, clientY, true, true);
+        current ? `Star: ${current.label}` : "Star circle", clientX, clientY, true, true);
     if (!menu) return;
 
     // Only what is above the horizon at the sitch's time and place: that is a short list, and a
@@ -3834,7 +3843,48 @@ async function showStarLabelMenu(index, clientX, clientY) {
         menu.add({run: () => { menu.destroy(); setStarLabel(index, null); }}, "run")
             .name("Remove name");
     }
+    const anyOn = group.some((ix) => !r.disabledStars?.has(ix));
+    menu.add({run: () => { menu.destroy(); toggleStarsEnabled(group); }}, "run")
+        .name(anyOn ? "Leave out of identification" : "Use in identification")
+        .tooltip(anyOn
+            ? "Dim this circle and leave it out of Identify Stars and of a fit to names. A plain click does the same."
+            : "Put this circle back into the identification. A plain click does the same.");
+    if (classifiedByIndex(r, index)?.manual) {
+        menu.add({run: () => { menu.destroy(); deleteStarCircle(index); }}, "run")
+            .name("Delete Point")
+            .tooltip("Delete this circle, which you added by hand. Undo puts it back.");
+    }
     menu.open();
+}
+
+/** Delete a circle added by hand, with its name. One undo step. */
+function deleteStarCircle(index) {
+    const r = result;
+    const entry = r && classifiedByIndex(r, index);
+    if (!entry?.manual) return;
+    const label = r.manualLabels?.get(index) ?? null;
+    const wasOff = !!r.disabledStars?.has(index);
+    const remove = () => {
+        if (result !== r) return;
+        const k = r.solved.classified.indexOf(entry);
+        if (k >= 0) r.solved.classified.splice(k, 1);
+        r.disabledStars?.delete(index);
+        if (r.manualLabels?.delete(index)) applyManualLabels();
+        else params.status = "circle deleted";
+        setRenderOne();
+    };
+    const restore = () => {
+        if (result !== r) return;
+        if (!r.solved.classified.includes(entry)) r.solved.classified.push(entry);
+        if (wasOff) (r.disabledStars ??= new Set()).add(index);
+        if (label) {
+            (r.manualLabels ??= new Map()).set(index, label);
+            applyManualLabels();
+        }
+        setRenderOne();
+    };
+    UndoManager.add({description: "Delete star circle", undo: restore, redo: remove});
+    remove();
 }
 
 /** The overlay canvas, created lazily over the video view, and hooked to redraw each frame. */
@@ -3864,21 +3914,24 @@ function ensureOverlay() {
         };
         let clicked = [], addAt = null;
         view._starTrackInteraction = registerSurfaceInteraction(view.canvas, {
-            model: view, view, content: false, profile: "stars",
+            id: "starTracker:circles", model: view, view, content: false, profile: "stars",
             enabled: () => !!result && !!overlay && overlay.parentNode === view.div,
             intent: {kind: "pending", priority: 30},
-            // A shift-click anywhere on the video is ours: off a circle it adds one.
-            hitTest: e => hits(e).length || e.shiftKey ? {} : null,
+            // Sitrec's gestures for points (GestureActions.js): Ctrl/Cmd-click adds one, as in
+            // Manual Tracking and Ground Track, and right-click opens a point's menu. Off a circle,
+            // a Ctrl/Cmd-click is ours. A plain click on a circle toggles it in or out of the
+            // identification: the quick way to leave many out, and the menu offers the same.
+            hitTest: e => hits(e).length || commandModifier(e) ? {} : null,
             // The right-click menu only over a circle; elsewhere the video's own menu stays.
             hitSurface: e => hits(e).length > 0,
             begin: e => {
                 clicked = hits(e);
-                addAt = !clicked.length && e.shiftKey ? local(e) : null;
+                addAt = !clicked.length && commandModifier(e) ? local(e) : null;
             },
             click: () => { if (addAt) addStarAt(...addAt); else toggleStarsEnabled(clicked); },
             contextMenu: e => {
-                const [index] = hits(e);
-                if (index !== undefined) showStarLabelMenu(index, e.clientX, e.clientY);
+                const group = hits(e);
+                if (group.length) showStarMenu(group, e.clientX, e.clientY);
             },
         });
     }
@@ -4938,7 +4991,8 @@ export function setupStarTrackerMenu() {
     // Installed here, not at module scope: isLocal is resolved during startup, after this file
     // is evaluated (the same reason StarAdjustOptimize installs its hook late).
     if (isLocal && typeof window !== "undefined") {
-        window.__starTracker = {result: () => result, setStarLabel, addStarAt, applyManualLabels};
+        window.__starTracker = {result: () => result, setStarLabel, addStarAt, applyManualLabels,
+            router: () => getInteractionRouter()};
     }
 
     folder = guiMenus.video.addFolder("Star Tracker").close()
@@ -5099,8 +5153,9 @@ export function setupStarTrackerMenu() {
             + "circles - the catalog names and the quad lines have their own switches, so the names "
             + "can be read over clean video with every circle hidden.\n"
             + "Click a circle to leave that star out of Identify Stars; click it again to put it back.\n"
-            + "Right-click a circle to name it as a planet or a star. When three circles have names, "
-            + "the camera is fitted to them. Shift-click the video to add a circle where none was found.");
+            + "Right-click a circle for its menu: name it as a planet or a star, leave it out, or delete a "
+            + "circle you added. When three circles have names, the camera is fitted to them.\n"
+            + "Ctrl-click (Cmd-click on a Mac) the video to add a circle where none was found.");
     display.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
         .tooltip("Label each identified star with its catalog name. Works whether or not the "
             + "star markers are drawn.");

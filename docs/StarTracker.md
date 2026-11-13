@@ -86,7 +86,7 @@ A red detection looks like this:
 
 The Star Tracker does not put a moving object into the 3D views. To follow one and get a line of sight, use [Point Tracking](PointTrack.md).
 
-**Clicking a green circle toggles that star off** — it dims but stays visible, so you can click it back on. This is for the case where you can see something has been mis-measured, or know a "star" is really a planet, and would rather it did not vote. Toggling is read when identification runs, so **re-run *Identify Stars (catalog)*** for it to take effect. A fit to [names you gave](#naming-stars-by-hand) is the exception: it is redone at once. Only stars toggle; red and orange markers do not. The circle is what you click, so turning **Show star markers** off also turns the toggling off — names alone are not clickable.
+**Clicking a green circle toggles that star off** — it dims but stays visible, so you can click it back on. The circle's right-click menu does the same, with **Leave out of identification** and **Use in identification**. This is for the case where you can see something has been mis-measured, or know a "star" is really a planet, and would rather it did not vote. Toggling is read when identification runs, so **re-run *Identify Stars (catalog)*** for it to take effect. A fit to [names you gave](#naming-stars-by-hand) is the exception: it is redone at once. Only stars toggle; red and orange markers do not. The circle is what you click, so turning **Show star markers** off also turns the toggling off — names alone are not clickable.
 
 ### The five verdicts
 
@@ -139,15 +139,17 @@ The catalog identification needs enough stars to find a pattern and then confirm
 
 1. Set the sitch's date, time and camera position first. A planet's place among the stars changes with the date, and the Moon's place also changes with where you are.
 2. Press **Find Candidate Stars** or **Star Tracker Analysis**, so that the points have green circles.
-3. **Right-click a green circle.** The **Name this star** menu opens:
+3. **Right-click a green circle.** Its menu opens:
    - **Name** lists the planets, and the named stars brighter than magnitude 3.5, that are above the horizon at the **In** frame. Pick one.
    - **Other name** takes any star's proper name, or its Hipparcos number as `HIP 49669`. Type it and press **Enter**. The start of a name is enough when only one star name starts that way: `Regul` gives Regulus.
    - **Remove name** is there when the circle already has a name.
+   - **Leave out of identification** dims the circle, as a click does. On a dimmed circle the item is **Use in identification**.
+   - **Delete Point** is there on a circle that you added by hand (see below).
 4. Name two more circles. When three circles that are switched on have names, Sitrec fits the camera to them at once. With **Sync Camera to Star Field** ticked, Sitrec's camera is then pointed and zoomed to match, as after a catalog identification.
 
 The names are drawn in yellow, so you can tell them from the catalog's names. One name belongs to one circle: if you give a name to a second circle, it moves there. To leave a named circle out of the fit, click it (it dims). Click it again to put it back. The fit is redone after each change, and **Undo** reverses each one. If fewer than three named circles are left on, the fit is removed, and the camera's heading and FOV go back to the sources they had before the sync.
 
-**If a point has no green circle**, shift-click it. A new circle goes at that point, on the frame you see, and you can then name it. A click on a small point is easily a few pixels off, so Sitrec moves the new circle onto the centre of the brightest point within about 12 pixels of the click. Use this for a point the tracker called *moving* or rejected, or one it did not find. Shift-click on a point that already has a green circle toggles that circle, as a plain click does.
+**If a point has no green circle**, Ctrl-click it (Cmd-click on a Mac), as you add a point in Manual Tracking and Ground Track. A new circle goes at that point, on the frame you see, and you can then name it. A click on a small point is easily a few pixels off, so Sitrec moves the new circle onto the centre of the brightest point within about 12 pixels of the click. Use this for a point the tracker called *moving* or rejected, or one it did not find. Ctrl-click on a point that already has a green circle toggles that circle, as a plain click does. To remove a circle you added, use **Delete Point** in its right-click menu, or **Undo**. While a Manual Tracking overlay is on the video, Ctrl-click adds a Manual Tracking point instead.
 
 The **Status** line then reads, for example, `fitted to 3 named stars - vertical FOV 61.02 deg, rms 0.2 px, worst 0.2 px`, and the **Lens** field reads `manual: pinhole, vertical FOV 61.02 deg, from 3 named stars`.
 
@@ -178,7 +180,7 @@ What the fit assumes, and how to check it:
 
 What to know:
 
-- **The marks follow the picture.** The circles and names are drawn on the stabilized picture. You can name a circle, click it on or off, and shift-click to add one with the box ticked.
+- **The marks follow the picture.** The circles and names are drawn on the stabilized picture. You can name a circle, click it on or off, and Ctrl-click to add one with the box ticked.
 - **Frames outside the In/Out range** keep the correction of the nearest frame in the range.
 - **It does not undo lens distortion.** Each frame's correction is one rotation and one shift. On a wide lens the frame-to-frame motion is not the same everywhere in the picture (see [Why fitting the lens matters](#why-fitting-the-lens-matters)), so stars far from the centre can still move.
 - **One stabilization at a time.** Ticking the box replaces stabilization from Motion Analysis or Point Track, and their buttons replace this one. Selecting, clearing or deleting a point track leaves it on.
@@ -222,7 +224,7 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 
 | Control | What it does |
 |---|---|
-| **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video. The circles are also what you click: a click toggles a star, a right-click names it, and a shift-click off a circle adds one. See [Naming stars by hand](#naming-stars-by-hand) |
+| **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video. The circles are also what you click: a click toggles a star, a right-click opens its menu (name it, leave it out, or delete a circle you added), and a Ctrl-click (Cmd-click on a Mac) off a circle adds one. See [Naming stars by hand](#naming-stars-by-hand) |
 | **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself |
 | **Show HIP star numbers** | Also label the stars that have no proper name, by Hipparcos number. Most matches are these; untick it to leave only the named stars. Needs **Show star names** |
 | **Show quad lines** | Draw the four-star shapes the solve matched against the catalog, line weight scaling with how much of the field each one explains. On by default; they are the visible evidence for the identification, so turn them off once you trust it. See [Identifying the stars](#identifying-the-stars) |

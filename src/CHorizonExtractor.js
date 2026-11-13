@@ -5,6 +5,9 @@ import {EventManager} from "./CEventManager";
 import {CNode} from "./nodes/CNode";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
 import {registerFrameRemap, remapFrameEntries} from "./VFRTimeline";
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
+import {showPointContextMenu} from "./PointContextMenu";
+import {showConfirm} from "./showError";
 
 // Manual horizon-angle extractor. The user enables this and a cross overlay
 // appears on the video view. They drag the cross center to position it on
@@ -161,6 +164,31 @@ class HorizonExtractor {
         this.videoView.div.appendChild(this.overlay);
         this.overlayCtx = this.overlay.getContext('2d');
 
+        // Right-click on the cross centre opens its menu, as a point's does elsewhere in Sitrec
+        // (PointContextMenu.js): deleting a keyframe is an explicit menu choice. Left-button
+        // presses stay with the video mouse handlers hooked above. Registered once per video
+        // view; the callbacks read the current extractor, which a sitch reload replaces.
+        const view = this.videoView;
+        if (!view._horizonInteraction && view.canvas) {
+            view._horizonInteraction = registerSurfaceInteraction(view.canvas, {
+                id: "horizon:centre", model: view, view, content: false, profile: "horizon",
+                enabled: () => !!horizonExtractor?.enabled,
+                intent: {kind: "pending", priority: 30},
+                hitTest: () => null,
+                hitSurface: () => !!horizonExtractor?.isOverCentre(),
+                contextMenu: (e) => {
+                    const he = horizonExtractor;
+                    if (!he) return;
+                    const f = Math.floor(par.frame);
+                    const has = he.keyframes.has(f);
+                    showPointContextMenu(e, "Horizon keyframe", [{
+                        label: "Delete Keyframe", enabled: has, action: () => he.deleteKeyframeAt(f),
+                        tooltip: has ? `Delete the keyframe at frame ${f}.` : `Frame ${f} has no keyframe.`,
+                    }]);
+                },
+            });
+        }
+
         // renderHooked is module-level (see bottom of file) so resetting the
         // singleton on sitch reload clears it and the next instance re-hooks
         // the new videoView's renderCanvas. If we stored the flag on `this`
@@ -221,13 +249,8 @@ class HorizonExtractor {
 
         mouse.handlers.down = (e) => {
             if (this.enabled) {
-                // Shift+click on the cross centre deletes the keyframe at
-                // the current frame (if any) and consumes the event — quick
-                // alternative to the menu "Delete Keyframe at Current Frame".
-                if (e?.shiftKey && this.isOverCentre()) {
-                    this.deleteKeyframeAt(Math.floor(par.frame));
-                    return;
-                }
+                // Deleting a keyframe is the cross centre's right-click menu (see ensureOverlay),
+                // not a modifier on a click: shift-click adds a point in other Sitrec tools.
                 if (this.tryHitTest()) return;
             }
             if (origDown) origDown(e);
@@ -269,7 +292,7 @@ class HorizonExtractor {
         return Math.abs(b - a);
     }
 
-    // Quick predicate used by the shift+click-to-delete shortcut. Same
+    // Whether the pointer is on the cross centre, for its right-click menu. Same
     // hit-zone as the centre-translate hit.
     isOverCentre() {
         const [vx, vy] = this.mouseToVideo();
@@ -501,7 +524,7 @@ class HorizonExtractor {
                 "• Drag a cyan handle to rotate; horizontal line = horizon",
                 "• Each move/rotate writes a keyframe at the current frame",
                 "• , / . step one frame    < / > jump prev/next keyframe",
-                "• Shift+click centre to delete current keyframe",
+                "• Right-click centre to delete current keyframe",
             ];
             ctx.font = '12px monospace';
             ctx.textBaseline = 'top';
@@ -637,9 +660,16 @@ function toggleEnable() {
     }
 }
 
-function clearAll() {
-    if (!horizonExtractor) return;
-    horizonExtractor.clearKeyframes();
+// It cannot be undone, so it asks first, as Sitrec's other clears of work a person did do.
+async function clearAll() {
+    const he = horizonExtractor;
+    if (!he || he.keyframes.size === 0) return;
+    const n = he.keyframes.size;
+    const ok = await showConfirm(
+        `Delete all ${n} horizon keyframe${n === 1 ? "" : "s"}, including the copy kept in this browser `
+        + "for this video? You cannot undo it.",
+        {title: "Clear All Keyframes", yesLabel: "Delete", noLabel: "Keep"});
+    if (ok && horizonExtractor === he) he.clearKeyframes();
 }
 
 function deleteCurrentKeyframe() {
@@ -673,11 +703,11 @@ export function setupHorizonExtractorMenu() {
         .tooltip("Toggle the horizon-cross overlay on the video view");
 
     horizonFolder.add(actions, "deleteCurrent").name("Delete Keyframe at Current Frame")
-        .tooltip("Remove the keyframe at the current playback frame, if any (Shift+click on the cross center does the same)");
+        .tooltip("Remove the keyframe at the current playback frame, if any. Right-click on the cross center, then Delete Keyframe, does the same.");
 
     horizonFolder.add(actions, "clearAll").name("Clear All Keyframes")
         .tooltip("Delete every horizon keyframe, including the copy kept in this browser's storage for this video. "
-            + "You cannot undo it.");
+            + "It asks first: you cannot undo it.");
 
     horizonFolder.add(actions, "showHintAgain").name("Show Hint")
         .tooltip("Re-display the on-screen interaction hint");
