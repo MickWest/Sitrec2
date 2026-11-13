@@ -31,14 +31,9 @@ const situationDefaults = {
     startDistance: 7,
     targetSpeed: 320,
 
-    // Tgt Start Dist range, in the sitch's big units. A sitch that knows its own
-    // scene may override both (SitAguadilla, SitGoFast).
-    //
-    // The floor is 0.01 rather than 0: a start distance of exactly zero puts the
-    // object at the sensor, which is not a traverse but a degenerate case every
-    // fit then has to defend against. The ceiling came down from 80 because the
-    // slider spent most of its travel in a range nothing is ever solved at,
-    // which made the useful part of it hard to set precisely.
+    // Start Distance uses the first LOS's ground range. This fixed maximum,
+    // in the sitch's big units, is the fallback when that LOS misses the ground.
+    // Keep startDistanceMin for compatibility with older sitch definitions.
     startDistanceMin: 0.01,
     startDistanceMax: 50,
 

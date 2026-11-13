@@ -52,7 +52,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
             + "Each method adds one assumption. Help > Documentation > Traverse Methods describes each one.\n"
             + "Target Object: follows the target track, not the LOS.\n"
             + "Sequential methods (Constant Distance, Constant Ground/Air Speed, Constant Altitude, "
-            + "Straight Line, Windblown Object) start at Tgt Start Dist on the frame 0 LOS. Starting Altitude starts at Tgt Start Altitude.\n"
+            + "Straight Line, Windblown Object) start at Start Distance on the frame 0 LOS. Starting Altitude starts at Tgt Start Altitude.\n"
             + "Global Fit methods fit one path to all the LOS in the A-B range.\n"
             + "Analysis Snapshot: the exact path that you applied from Analyze Traverse Methods.",
         // Display-only renames (CNodeSwitch v.labels). Saved sitches serialize the

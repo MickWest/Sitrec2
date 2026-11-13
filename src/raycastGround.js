@@ -314,8 +314,10 @@ function segmentRectExit(lat0, lon0, lat1, lon1, rect, padLat, padLon) {
 //
 // direction must be normalized. Returns a freshly allocated ECEF Vector3, or
 // null if the ray never reaches the ground (looking up / over the horizon)
-// within maxDistance.
-export function raycastGroundElevationFast(origin, direction, maxDistance = 1000000) {
+// within maxDistance. surfaceOffset shifts the elevation surface vertically in
+// metres (negative is underground). Offset queries return null when only the
+// rendered-mesh fallback is available: that mesh has no offset surface.
+export function raycastGroundElevationFast(origin, direction, maxDistance = 1000000, surfaceOffset = 0) {
     const terrainNode = NodeMan.exists("TerrainModel") ? NodeMan.get("TerrainModel") : null;
 
     // Terrain "flattening" (flat-earth sitches) bends the rendered mesh away
@@ -323,7 +325,7 @@ export function raycastGroundElevationFast(origin, direction, maxDistance = 1000
     // below simply does not describe the rendered terrain, so use the exact
     // mesh raycast instead.
     if (terrainNode && terrainNode.in.flattening !== undefined && terrainNode.in.flattening.v0 > 0) {
-        return raycastGroundMeshFallback(origin, direction);
+        return surfaceOffset === 0 ? raycastGroundMeshFallback(origin, direction) : null;
     }
 
     const elevationMap = terrainNode ? terrainNode.elevationMap : null;
@@ -388,7 +390,9 @@ export function raycastGroundElevationFast(origin, direction, maxDistance = 1000
     const B = {};
     const at = (tt, slot) => {
         p.copy(origin).addScaledVector(direction, tt);
-        return sampleGroundSurface(p, elevationMap, slot);
+        sampleGroundSurface(p, elevationMap, slot);
+        slot.clearance -= surfaceOffset;
+        return slot;
     };
 
     // bisect a bracket [lo: clearance>0, hi: clearance<=0] to ~1 cm
@@ -440,7 +444,7 @@ export function raycastGroundElevationFast(origin, direction, maxDistance = 1000
 
     // Step budget exhausted (pathological grazing ray skimming the surface).
     // Do it the exact, slow way instead of guessing.
-    return raycastGroundMeshFallback(origin, direction);
+    return surfaceOffset === 0 ? raycastGroundMeshFallback(origin, direction) : null;
 }
 
 // Exact mesh-raycast fallback for rays the elevation marcher gives up on —

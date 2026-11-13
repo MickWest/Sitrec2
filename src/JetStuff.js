@@ -34,6 +34,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CNodeConstant} from "./nodes/CNode";
 import {scaleNodeF2M} from "./nodes/CNodeScale";
 import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
+import {CNodeStartDistance} from "./nodes/CNodeStartDistance";
 import {CNodeLOSTraverse} from "./nodes/CNodeLOSTraverse";
 import {CNodeLOSTraverseConstantSpeed} from "./nodes/CNodeLOSTraverseConstantSpeed";
 import {CNodeMunge} from "./nodes/CNodeMunge";
@@ -594,33 +595,17 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
     // A GUI variable for the start distance - this is one of the biggest variables
     // It's the distance of the start of the traverse along the first LOS
     if (!NodeMan.exists("startDistance")) {
-        // new CNodeScale("startDistance", Units.big2M, new CNodeGUIValue({
-        //     id: "startDistanceGUI",
-        //     value: Sit.startDistance,
-        //     start: Sit.startDistanceMin,
-        //     end: Sit.startDistanceMax,
-        //     step: 0.01,
-        //     desc: "Tgt Start Dist " + Units.bigUnitsAbbrev,
-        //     color: "#FFC0C0",
-        // }, guiMenus.traverse))
-
-        // new method, we supply the units, and return the value in SI units
-        new CNodeGUIValue({
+        new CNodeStartDistance({
             id: "startDistance",
+            los,
             value: Sit.startDistance,
-            start: Sit.startDistanceMin,
             end: Sit.startDistanceMax,
-            // No explicit maxMax: it defaults to `end`, so re-ranging the
-            // slider can always reach the range the sitch declared. A fixed 30
-            // sat BELOW the default ceiling and quietly capped it there.
-            step: 0.001,
-            desc: "Tgt Start Dist",
+            desc: "Start Distance",
             color: "#FFC0C0",
             unitType: "big",
-            // elastic: true,
-            // elasticMin: 1,
-            // elasticMax: 10000,
             tooltip: "Distance from the camera, along the frame 0 LOS (line of sight), where the traverse object starts.\n"
+                + "The linear slider runs from just in front of the camera to 100 m below the ground. It updates when the first LOS or terrain changes.\n"
+                + "If the LOS misses the ground, a fixed distance range is used. Type a larger distance to extend the range.\n"
                 + "Used by the sequential methods: Constant Distance, Constant Ground Speed, Constant Air Speed, Constant Altitude, Straight Line, Windblown Object and Perspective.\n"
                 + "Most Global Fit methods find their own range.",
         }, guiMenus.traverse)

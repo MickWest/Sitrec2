@@ -1679,7 +1679,7 @@ export function addAnalyzeTweaks(traverseMenu) {
         color: "#C0E0FF",
         unitType: "big",
         tooltip: "Smallest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
-            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Start Distance.",
     }, folder);
 
     new CNodeGUIValue({
@@ -1689,7 +1689,7 @@ export function addAnalyzeTweaks(traverseMenu) {
         color: "#C0E0FF",
         unitType: "big",
         tooltip: "Largest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
-            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Start Distance.",
     }, folder);
 
     const groundMode = folder.add(analyzeTweaks, "groundMode", GROUND_MODES).name("Ground contact");

@@ -4288,7 +4288,7 @@ const en = {
         },
         minimizeGroundSpeed: {
             label: "Minimize Ground Speed",
-            tooltip: "Set Tgt Start Dist to the value that makes the Perspective traverse move the shortest straight-line distance between the first and last keyframes. That is the lowest average speed.\nNeeds 3 or more keyframes. Use it with Curve Type Perspective and Traverse > LOS Source Camera + Object Track.",
+            tooltip: "Set Start Distance to the value that makes the Perspective traverse move the shortest straight-line distance between the first and last keyframes. That is the lowest average speed.\nNeeds 3 or more keyframes. Use it with Curve Type Perspective and Traverse > LOS Source Camera + Object Track.",
         },
         minimizeAirSpeed: {
             label: "Minimize Air Speed",
@@ -4311,7 +4311,7 @@ const en = {
         },
         setStartDistanceFromSize: {
             label: "Set Start Dist from Size",
-            tooltip: "Set Tgt Start Dist to the size-derived range at the first measured keyframe.\n\nIn Perspective mode this is all the calibration needed: the three keyframe positions already fix every depth ratio, leaving the start distance as the only free parameter.",
+            tooltip: "Set Start Distance to the size-derived range at the first measured keyframe.\n\nIn Perspective mode this is all the calibration needed: the three keyframe positions already fix every depth ratio, leaving the start distance as the only free parameter.",
         },
     },
 
@@ -5328,6 +5328,7 @@ const en = {
         videoSaturate: "Saturation",
         abSize: "Assumed Size",
         startDistanceGUI: "Start Distance",
+        startDistance: "Start Distance",
         targetVCGUI: "Target Vert. Speed",
         targetSpeedGUI: "Target Speed",
         lockWind: "Lock Target Wind to Local",
