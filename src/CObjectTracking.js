@@ -2,7 +2,7 @@ import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, unreg
 import {acquirePlaybackControl, par} from "./par";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
-import {applyAffine, interpolatePosition} from "./CVideoData";
+import {applyAffine, interpolatePosition, viewStabilizationMatrix} from "./CVideoData";
 import {EventManager} from "./CEventManager";
 import {isKeyHeld, KeyMan} from "./KeyBoardHandler";
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
@@ -2589,7 +2589,7 @@ export class ObjectTracker {
         const video = this.videoView.videoData;
         const width = video?.originalVideoWidth || video?.videoWidth;
         const height = video?.originalVideoHeight || video?.videoHeight;
-        const m = video?.stabilizationMatrix?.(Math.floor(frame), width, height);
+        const m = viewStabilizationMatrix(this.videoView, frame, width, height);
         if (!m) return point;
         const [x, y] = applyAffine(m, point.x, point.y);
         return {x, y};
@@ -4452,5 +4452,8 @@ registerFrameRemap("pointTracking", (remap, {from, to}) => {
     }
     if (from?.stabilizationEnabled && to && to !== from) {
         applyTrackStabilization(to, from.stabilizeCenters ?? true, from.stabilizationDirectOffset ?? false);
+        // A VFR Fix wrapper draws its own stabilization over its source's picture, so the
+        // stabilization must not stay on as well on the video it moved from.
+        if (to.stabilizationEnabled) from.setStabilizationEnabled(false);
     }
 });

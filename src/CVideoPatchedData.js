@@ -179,9 +179,14 @@ export class CVideoPatchedData extends CVideoData {
         this.syncSourceCache();
         const V = Math.floor(frame);
         const S = this.virtualToSource(V);
-        const img = this.source.getImage(S);
+        let img = this.source.getImage(S);
         this.videoWidth = this.source.videoWidth;
         this.videoHeight = this.source.videoHeight;
+        // Point Track, Motion Analysis and Stabilize on Stars set their stabilization on the
+        // video that the view shows, which is this wrapper, in its own frame numbers. The
+        // source has none of it, so it is drawn here. Not when the source has its own, as
+        // the picture from the source is then already moved.
+        if (img && this.ownsStabilization()) img = this.getStabilizedImage(V, img);
         if (this.heldMarker && img && this.isHeldFrame(V)) {
             return this._withHeldMarker(S, img);
         }
@@ -196,13 +201,23 @@ export class CVideoPatchedData extends CVideoData {
         return this.source.getCachedImage(this.virtualToSource(Math.floor(frame)));
     }
 
-    // getImage() takes its frame, shift included, from the source, so these do too.
+    // These match getImage(): the wrapper's own stabilization when it has one, else the
+    // source's picture and key as they are.
+    ownsStabilization() {
+        return this.stabilizationEnabled && !this.source.stabilizationEnabled;
+    }
+
     getCachedStabilizedImage(frame) {
-        return this.source.getCachedStabilizedImage(this.virtualToSource(Math.floor(frame)));
+        const V = Math.floor(frame);
+        if (!this.ownsStabilization()) {
+            return this.source.getCachedStabilizedImage(this.virtualToSource(V));
+        }
+        const image = this.source.getCachedImage(this.virtualToSource(V));
+        return image ? this.getStabilizedImage(V, image) : null;
     }
 
     getStabilizationKey() {
-        return this.source.getStabilizationKey();
+        return this.ownsStabilization() ? super.getStabilizationKey() : this.source.getStabilizationKey();
     }
 
     getImageNoPurge(frame) {
@@ -224,8 +239,10 @@ export class CVideoPatchedData extends CVideoData {
         const w = img.width || img.videoWidth;
         const h = img.height || img.videoHeight;
         if (!w || !h) return img;  // image not yet decoded
+        // The picture under the marker can be stabilized, so a stabilization change is a new picture.
+        const stab = this.getStabilizationKey();
         if (this._heldMarkerCache &&
-            this._heldMarkerCache.sourceFrame === sourceFrame &&
+            this._heldMarkerCache.sourceFrame === sourceFrame && this._heldMarkerCache.stab === stab &&
             this._heldMarkerCache.w === w && this._heldMarkerCache.h === h) {
             return this._heldMarkerCache.canvas;
         }
@@ -238,7 +255,7 @@ export class CVideoPatchedData extends CVideoData {
         const margin = 4;
         ctx.fillStyle = 'red';
         ctx.fillRect(w - size - margin, margin, size, size);
-        this._heldMarkerCache = {sourceFrame, w, h, canvas};
+        this._heldMarkerCache = {sourceFrame, stab, w, h, canvas};
         return canvas;
     }
 

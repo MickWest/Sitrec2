@@ -95,7 +95,8 @@ so playback runs at the speed of the analysis until those frames are done.
 2. Press **Stabilize Video**. Sitrec analyzes the range if necessary, then shifts every frame to
    cancel the background motion. The button changes to **Disable Stabilization**.
 3. Press **Disable Stabilization** to see the original video. Press **Stabilize Video** again to
-   switch the same stabilization back on without analyzing again. This keeps the old shifts even
+   switch the same stabilization back on without analyzing again. This also works after Point Track
+   or **Stabilize on Stars** has replaced it. It keeps the old shifts even
    if you have changed In/Out or the Tracking Parameters. To use new settings, reload the sitch.
    Then, with Analyze Motion on, set the In/Out range and the Tracking Parameters again, and press
    **Stabilize Video**. A reload keeps only what the sitch saved.

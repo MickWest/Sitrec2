@@ -108,9 +108,31 @@ Every track ends up in one of five classes. Only two are drawn by default:
 
 Green means only that the point did not move measurably. A planet is green, and so is anything that drifts less than the **Moving** thresholds. A name means that the point's position matched a catalog star.
 
+## Bright Triples
+
+The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A twilight clip can show only a few bright points: planets and the brightest stars. When **Identify Stars (catalog)** fails, it then tries **Bright Triples**, which works on three points at a time. You can also press **Identify Bright Triples** yourself.
+
+Its catalog is made for the sitch: the planets, and the stars brighter than **Bright Triples: magnitude limit** (2.0 by default), at the date of the **In** frame. With **Bright Triples: above horizon only** on (the default), only the ones above the horizon at the sitch's place and time take part. Turn it off when the place or the time is not certain: the whole sky is then used, with the planets where they are on the sitch's date. The Moon is left out, because it is a disk and not a point.
+
+1. Set the sitch's date and time, and the camera position if you know it.
+2. Set the camera's FOV to at least the video's real field of view. Bright Triples does not try a triangle of objects that is wider than the camera's diagonal field of view.
+3. Press **Star Tracker Analysis**, **Identify Stars (catalog)** or **Identify Bright Triples**. Each of the two identify buttons runs **Find Candidate Stars** first when this video has no analysis yet.
+
+**How it matches.** Take the two points of a triangle that are farthest apart, and put them at (0,0) and (1,1). The position of the third point is then the triangle's *code*, as for the quads in [Identifying the stars](#identifying-the-stars). Each triangle of the 12 brightest candidate stars is compared with each triangle of the catalog. A close code proposes three names, and Sitrec fits the camera to them as it does to [names you give](#naming-stars-by-hand). That camera then puts every bright object into the frame. An object that lands on another circle supports the answer. An object that lands in the frame where there is no circle counts against it: it can be behind a tree or too faint, so it does not rule the answer out. The answer that names the most circles wins, then the one with fewer objects missing, then the one with the smaller fit error.
+
+**The result.** The names go on the circles, the camera is fitted to all of them, and with **Sync Camera to Star Field** ticked Sitrec's camera is pointed and zoomed to match. On the dawn clip of Regulus, Jupiter and Mars, the Status line read:
+
+`identify failed: too few stars to identify - Bright Triples: Mars, Alphard, Jupiter, Regulus - fitted to 4 named stars - vertical FOV 60.76 deg, rms 0.3 px, worst 0.5 px - 12 other triples also fit; next: Mirzam, Adhara, Sirius: 3 matched, 2 missing, rms 1.19 px, field 58.7 deg`
+
+It also named a fourth point, low in the frame, as Alphard. The search took 13 ms with 33 objects above the horizon. With **Bright Triples: above horizon only** off it used 53 objects, took 17 ms and gave the same answer.
+
+- **Read the "next" answer.** It is the best answer that gives other names. Three points always fit some set of three objects, so an answer that names only three circles is the least certain. Check the names against what you know of the sky. If they are wrong, [name the points by hand](#naming-stars-by-hand).
+- **It replaces the names on the circles**, as one **Undo** step. After a failed catalog identification it runs only when no circle has a name that you gave.
+- **The fit is the one for names given by hand:** a pinhole lens with its axis at the frame centre. The same checks apply.
+
 ## Naming stars by hand
 
-The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A clip with only a few bright points — planets and one or two bright stars in twilight — does not have enough. If you can see which point is which, name them yourself. Three names are enough to point the camera.
+The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A clip with only a few bright points — planets and one or two bright stars in twilight — does not have enough. [Bright Triples](#bright-triples) tries to name such points. If it gets them wrong and you can see which point is which, name them yourself. Three names are enough to point the camera.
 
 1. Set the sitch's date, time and camera position first. A planet's place among the stars changes with the date, and the Moon's place also changes with where you are.
 2. Press **Find Candidate Stars** or **Star Tracker Analysis**, so that the points have green circles.
@@ -157,7 +179,7 @@ What to know:
 - **Frames outside the In/Out range** keep the correction of the nearest frame in the range.
 - **It does not undo lens distortion.** Each frame's correction is one rotation and one shift. On a wide lens the frame-to-frame motion is not the same everywhere in the picture (see [Why fitting the lens matters](#why-fitting-the-lens-matters)), so stars far from the centre can still move.
 - **One stabilization at a time.** Ticking the box replaces stabilization from Motion Analysis or Point Track, and their buttons replace this one. Selecting, clearing or deleting a point track leaves it on.
-- **A new analysis turns it off**, because the analysis must read the frames as recorded. Tick the box again after the run. **Clear** also turns it off.
+- **A new analysis turns it off**, because the analysis must read the frames as recorded. Tick the box again after the run. **Clear** also turns it off, and so does turning [VFR Fix](LoadingVideo.md#variable-frame-rate-vfr-fix) on or off, because that changes the frame numbers.
 - **It is not saved with the sitch.** Like the analysis, it lasts until the sitch is loaded again.
 
 ## GUI reference
@@ -173,7 +195,8 @@ The Star Tracker folder lives under **Video**.
 | **Star Tracker Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Analysis Resolution** / **Analysis pixels** | The resolution the frames are analysed at, shared with the other video analysis tools. See [Analysis resolution](PointTrack.md#analysis-resolution) in Point Track |
 | **Find Candidate Stars** | Run the analysis only: find the stars, track them from the **In** frame to the **Out** frame, and sort the tracks. It does not identify the stars |
-| **Identify Stars (catalog)** | Run the catalog match against the last analysis. Stars you clicked off are left out |
+| **Identify Stars (catalog)** | Run the catalog match against the last analysis. Stars you clicked off are left out. With no analysis of this video yet, it runs **Find Candidate Stars** first |
+| **Identify Bright Triples** | Name a few bright points from their triangles, using the planets and the brightest stars. **Identify Stars (catalog)** runs it when it fails. With no analysis of this video yet, it runs **Find Candidate Stars** first. See [Bright Triples](#bright-triples) |
 | **Make Star Chart (PNG)** | Download a chart of the solved field. **Chart: object tracks** in [Star Tracker Display](#star-tracker-display) adds the paths of moving objects |
 | **Sync Camera to Star Field** | On by default. Whenever an identification succeeds, point Sitrec's camera the way the identification says the real one was pointing: *Star Track* is selected as both the heading and the FOV source (only the heading on a fisheye or timelapse run, where the Fisheye render carries the field of view). Untick it to put both back to the sources they were on before, so you can compare the solved pointing with your own |
 | **Stabilize on Stars** | Off by default. Move and rotate each frame so that the stars stay where they are on the **In** frame. It needs a **Find Candidate Stars** run, and a new analysis turns it off. See [Stabilizing on the stars](#stabilizing-on-the-stars) |
@@ -219,6 +242,8 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 | **Min detections per track** | 3–40 | How many frames a point must appear in before it is judged at all. Below this it is `short` |
 | **Moving: significance** | 2–20 | How *confident* the drift must be — how many times larger than its own uncertainty. Raise it if slow-drifting stars are being called movers |
 | **Moving: min drift (sigma)** | 2–40 | How *far* it must actually move, in multiples of this clip's position noise. Raise it to ignore small real motions and only catch obvious ones |
+| **Bright Triples: magnitude limit** | −1.5–3 | The planets and the stars brighter than this take part in [Bright Triples](#bright-triples). 2.0 by default. A higher limit gives more triangles that fit by chance |
+| **Bright Triples: above horizon only** | — | On by default: only objects above the horizon at the sitch's place and time. Off: the whole sky, for a sitch whose place or time is not certain |
 
 ## Optimize For Star Tracking
 
@@ -544,7 +569,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 ## Limitations and when it refuses
 
 - **The lens fit declines on clips whose motion does not exercise the lens.** Rolling about the line of sight, or too short a baseline between the frames it compares, leaves the lens shape unconstrained. This is reported in the **Lens** field, not hidden.
-- **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails and you can see which points are which, name three of them: see [Naming stars by hand](#naming-stars-by-hand). Otherwise set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
+- **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails, [Bright Triples](#bright-triples) tries to name a few bright points. If that fails too and you can see which points are which, name three of them: see [Naming stars by hand](#naming-stars-by-hand). Otherwise set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
 - **Hand-held footage works, but a zoom reads as motion.** The frame-to-frame solve holds scale fixed. In a synthetic test of that solve, a 5% zoom across 40 frames called 79 of 84 stars *moving*. Analyse a stretch with no zoom.
 - **The Star Tracker reads the stabilized picture.** With **Video → Motion Analysis → Stabilize Video** or **Video → Point Track → Stabilize** on, the detector reads the shifted frames, so the solve follows the shifted picture and not the camera. Press **Disable Stabilization** before you run the analysis. [Stabilize on Stars](#stabilizing-on-the-stars) does not need this: a new analysis turns it off.
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star. The **Enough** button is not offered, since there is nothing to stop short of. On a still, the Fisheye render, **Fit lens from stars** and **Fixed camera** have no effect, and identification uses the flat chart. **From timelapse** is the exception: it takes the Fisheye render as its starting lens.
@@ -566,7 +591,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 | Almost everything is called *moving* | The lens was not fitted and the clip is wide or cropped, so the flat model is biased at the frame edges. Check the **Lens** field |
 | Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first, or press **Optimize Adjustments for Frame** on a frame with sky and then run **Star Tracker Analysis** |
 | A visible star is not circled | Check that **Show star markers** is on, in **Star Tracker Display**: the completion fade turns it off. Then turn on **Show rejected**: if the point appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it is a `short` track (lower **Min detections per track**, or use a longer In/Out range), a detection under the mask (turn on **Show Mask** to check), or a point the detector never accepted (lower **Detect threshold (sigma)** or **Min blob area**) |
-| Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range, or [name three points by hand](#naming-stars-by-hand). Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
+| Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range. On a few bright points, read what [Bright Triples](#bright-triples) found, or [name three points by hand](#naming-stars-by-hand). Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
 | Fisheye footage: many real stars called *moving*, or the sphere solve fails | Turn on **Fixed camera** for a mounted camera. Check the Fisheye render is roughly matched to the footage first — the solve takes that lens as given |
 | The run is taking forever | Press **Enough (solve what we have)**, or shorten the In/Out range |
 

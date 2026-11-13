@@ -4,7 +4,7 @@
 // them and maps overlay points with them. A star seen on any frame must land where it is on the
 // first frame, at any decoded size, and the shift-only modes must keep their old numbers.
 
-import {CVideoData, applyAffine, invertAffine} from "../src/CVideoData";
+import {CVideoData, applyAffine, invertAffine, viewStabilizationMatrix, viewVideoFrame} from "../src/CVideoData";
 import {applyTransform, stabilizingMaps} from "../src/starTrack/StarMatch";
 
 const D2R = Math.PI / 180;
@@ -173,5 +173,29 @@ describe("getStabilizedImage", () => {
         const m = v.stabilizationMatrix(5, 1280, 720);
         expect(calls[0]).toEqual(["setTransform", m.a, m.b, m.c, m.d, m.e, m.f]);
         expect(calls[1]).toEqual(["drawImage", 0, 0]);
+    });
+});
+
+// The picture is stabilized with the frame that the view gives getImage(): Lock to In Frame
+// counts from the In frame, and getImage() divides by the video speed. An overlay that asked
+// with the sitch frame would use another frame's map.
+describe("viewStabilizationMatrix", () => {
+    test("uses the stream frame divided by the video speed", () => {
+        const v = new CVideoData({id: "video", frames: 0});
+        v.videoSpeed = 2;
+        const maps = stabilizingMaps(TRANSFORMS);
+        v.setStabilizationTransforms(new Map(maps.map((m, i) => [i, m])), 1920, 1080);
+        v.setStabilizationEnabled(true);
+        const view = {videoData: v, streamFrame: f => Math.max(0, f - 40)};
+        // Sitch frame 45, In frame 40: stream frame 5, video frame floor(5 / 2) = 2.
+        expect(viewVideoFrame(view, 45.7)).toBe(2);
+        expect(viewStabilizationMatrix(view, 45.7, 1920, 1080)).toEqual(v.stabilizationMatrix(2, 1920, 1080));
+        expect(viewStabilizationMatrix(view, 45.7, 1920, 1080)).not.toEqual(v.stabilizationMatrix(3, 1920, 1080));
+    });
+
+    test("a view with no lock and speed 1 asks for the sitch frame", () => {
+        const v = new CVideoData({id: "video", frames: 0});
+        expect(viewVideoFrame({videoData: v}, 7.9)).toBe(7);
+        expect(viewStabilizationMatrix({videoData: v}, 7, 100, 100)).toBeNull();
     });
 });

@@ -82,6 +82,24 @@ export function invertAffine(m) {
         e: (m.c * m.f - m.d * m.e) / det, f: (m.b * m.e - m.a * m.f) / det};
 }
 
+// The stabilization on the picture that a video view shows at sitch frame `frame`, in the
+// pixels of a width x height picture. The view gives getImage() its stream frame (Lock to In
+// Frame), and getImage() divides that by the video speed, so the map is that frame's. An
+// overlay drawn on the picture must use this, or it moves with another frame's map.
+export function viewStabilizationMatrix(view, frame, width, height) {
+    const video = view?.videoData;
+    if (!video?.stabilizationMatrix) return null;
+    return video.stabilizationMatrix(viewVideoFrame(view, frame), width, height);
+}
+
+// The video's own frame number for sitch frame `frame` in a video view: the frame that
+// getImage() decodes and stabilizes.
+export function viewVideoFrame(view, frame) {
+    const f = Math.floor(frame);
+    const stream = view?.streamFrame ? view.streamFrame(f) : f;
+    return Math.floor(stream / (view?.videoData?.videoSpeed || 1));
+}
+
 export class CVideoData {
     constructor(v) {
         this.id = v.id;

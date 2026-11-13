@@ -17,7 +17,8 @@ import {isLocal, SITREC_APP} from "../configUtils";
 import {ECEFToLLAVD_radii, LLAToECEFVD} from "../LLA-ECEF-ENU";
 import * as Astronomy from "astronomy-engine";
 import {CVideoImageData} from "../CVideoImageData";
-import {applyAffine, invertAffine} from "../CVideoData";
+import {applyAffine, invertAffine, viewStabilizationMatrix, viewVideoFrame} from "../CVideoData";
+import {registerFrameRemap} from "../VFRTimeline";
 import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
@@ -25,6 +26,7 @@ import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator"
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
+import {identifyBrightTriples} from "./StarTriples";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
@@ -164,6 +166,11 @@ const params = {
     minObservations: STAR_SOLVE_DEFAULTS.minObservations,
     driftSignificance: STAR_SOLVE_DEFAULTS.driftSignificance,
     driftMinSigmas: STAR_SOLVE_DEFAULTS.driftMinSigmas,
+    // Identify Bright Triples uses the planets and the stars brighter than this (StarTriples.js).
+    tripleMagLimit: 2.0,
+    // ...and only those above the horizon at the sitch's place and time. Off when the place or
+    // the time is not certain: then the whole sky, with the planets where they are on the date.
+    tripleAboveHorizon: true,
     // Lens. On a wide-angle clip the 2D similarity sky model is biased at the frame edges - a
     // measured ~10-12 px on the reference clip, enough to report edge stars as movers. When this
     // is on, the lens is fitted from the star field and the classification is redone on the
@@ -2060,12 +2067,26 @@ function applySolveToCamera(r) {
     }
 }
 
+/**
+ * The analysis of the video on screen. When there is none yet (or only one of another video),
+ * run Find Candidate Stars first, as its button does, so the identify buttons work on a fresh
+ * sitch. False when that run fails or is aborted: its own status then stays on screen.
+ */
+async function ensureCandidateStars() {
+    if (result && result.videoData === videoView()?.videoData) return true;
+    const analyzed = await runStarTracker();
+    setRenderOne();
+    return !!analyzed && !!result;
+}
+
 export async function identifyStars(opts = {}) {
     // opts.scoring marks a run whose ONLY purpose is to produce a number for a search. It still
     // identifies - that is the number - but it must not steer the user's camera while doing it.
     const scoring = !!opts.scoring;
+    // A scoring run always follows an analysis of its own; it must not start one.
+    if (!scoring && !await ensureCandidateStars()) return;
     if (!result) {
-        params.status = "run Analyze first";
+        params.status = "run Find Candidate Stars first";
         return;
     }
     const myResult = result;
@@ -2379,6 +2400,9 @@ export async function identifyStars(opts = {}) {
         }
         if (!solved || !solved.ok) {
             params.status = `identify failed: ${solved ? solved.reason : "no result"}`;
+            // Too few stars for quads is what triples are for. Not on a scoring run, which
+            // must not steer the camera.
+            if (!scoring) await identifyByBrightTriples({auto: true, quadFailure: params.status});
             return;
         }
 
@@ -3483,6 +3507,118 @@ function applyManualLabels() {
 }
 
 /**
+ * Name a few bright dots from their triangles (StarTriples.js), for a clip with too few stars for
+ * the quad solver. The catalog is made for the In frame's time and place: the planets and the
+ * stars brighter than tripleMagLimit that are above the horizon. A triple may be no wider than
+ * the camera's widest angle, its diagonal field of view. The names it finds fit the camera as
+ * names given by hand do (applyManualLabels), as one undo step.
+ *
+ * opts.auto: run because the quad solve failed. Names that the user gave are then left alone,
+ * and the triples are not tried. opts.quadFailure: that failure, kept at the start of the status.
+ */
+export async function identifyByBrightTriples(opts = {}) {
+    if (!await ensureCandidateStars()) return false;
+    const r = result;
+    if (!r) {
+        params.status = "run Find Candidate Stars first";
+        setRenderOne();
+        return false;
+    }
+    const lead = opts.quadFailure ? `${opts.quadFailure} - ` : "";
+    const userNamed = [...(r.manualLabels?.values() ?? [])].some((e) => e.source !== "triples");
+    if (opts.auto && userNamed) {
+        params.status = `${lead}Bright Triples not tried: circles have names you gave`;
+        setRenderOne();
+        return false;
+    }
+    let data;
+    try {
+        data = await ensureIdentifyData();
+    } catch (e) {
+        params.status = `star catalog failed to load: ${e?.message ?? e}`;
+        return false;
+    }
+    if (result !== r) return false;
+    const {catalog, names} = data;
+    const date = GlobalDateTimeNode.frameToDate(r.frame0);
+    const observerPos = observerECEF();
+    const up = observerPos.clone().normalize();
+    // The same horizon test as the label menu, unless the place or the time is not certain.
+    const above = params.tripleAboveHorizon
+        ? (raDeg, decDeg) => getStarDirectionECEF(raDeg * D2R, decDeg * D2R, date).dot(up) > -0.02
+        : () => true;
+    const limit = params.tripleMagLimit;
+    const objects = [];
+    for (const body of PLANET_LABELS) {
+        if (body === "Moon") continue;              // a disk, not a point of light
+        const mag = Astronomy.Illumination(body, date).mag;
+        if (!(mag <= limit)) continue;
+        const {raDeg, decDeg} = planetRaDecJ2000(body, date, observerPos);
+        if (above(raDeg, decDeg)) objects.push({label: body, planet: body, raDeg, decDeg, mag});
+    }
+    for (let i = 0; i < catalog.n; i++) {
+        if (!(catalog.mag[i] <= limit)) continue;
+        const raDeg = catalog.ra[i] / D2R, decDeg = catalog.dec[i] / D2R;
+        if (!above(raDeg, decDeg)) continue;
+        const hip = catalog.hip[i];
+        objects.push({label: names.get(hip)?.name ?? `HIP ${hip}`, hip, raDeg, decDeg, mag: catalog.mag[i]});
+    }
+    const stars = r.solved.classified
+        .filter((c) => (c.klass2D ?? c.klass) === "star" && c.position && !r.disabledStars?.has(c.index)
+            && (Number.isFinite(c.magnitude) || c.manual))
+        .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
+    const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
+    const maxFovDeg = 2 * Math.atan(Math.tan(vfov * D2R / 2) * Math.hypot(1, r.videoW / r.videoH)) / D2R;
+    setStatus(`${lead}Bright Triples: ${stars.length} candidate stars, ${objects.length} objects `
+        + `brighter than mag ${limit}${params.tripleAboveHorizon ? " above the horizon" : " in the whole sky"}`);
+    await yieldToBrowser();
+    if (result !== r) return false;
+
+    const t0 = performance.now();
+    const res = identifyBrightTriples({stars, objects, width: r.videoW, height: r.videoH, maxFovDeg});
+    const ms = performance.now() - t0;
+    const describe = (c) => `${c.matches.map((m) => m.object.label).join(", ")}: ${c.nMatched} matched, `
+        + `${c.nMissing} missing, rms ${c.rmsPx.toFixed(2)} px, field ${c.fovDeg.toFixed(1)} deg`;
+    // The inputs too, so a run that names the wrong objects can be checked from the console.
+    r.tripleReport = {...res, maxFovDeg, magLimit: limit, aboveHorizon: params.tripleAboveHorizon, ms, date, observer: ECEFToLLAVD_radii(observerPos),
+        objects: objects.map(({label, raDeg, decDeg, mag}) => ({label, raDeg, decDeg, mag})), stars};
+    console.log(`[Bright Triples] ${ms.toFixed(0)} ms, camera diagonal ${maxFovDeg.toFixed(1)} deg, `
+        + JSON.stringify(res.counts) + (res.nFitting !== undefined ? `, ${res.nFitting} fit` : ""));
+    res.candidates.forEach((c, k) => console.log(`[Bright Triples] ${k + 1}. ${describe(c)}`));
+    if (!res.ok) {
+        params.status = `${lead}Bright Triples failed: ${res.reason}`;
+        setRenderOne();
+        return false;
+    }
+
+    const labels = new Map();
+    for (const {star, object} of res.best.matches) {
+        labels.set(star.index, object.planet
+            ? {label: object.label, planet: object.planet, named: true, source: "triples"}
+            : {label: object.label, hip: object.hip, raDeg: object.raDeg, decDeg: object.decDeg,
+                mag: object.mag, named: true, source: "triples"});
+    }
+    const before = {labels: new Map(r.manualLabels ?? []), disabled: new Set(r.disabledStars ?? [])};
+    const after = {labels, disabled: before.disabled};
+    const restore = (state) => {
+        if (result !== r) return;
+        r.manualLabels = new Map(state.labels);
+        r.disabledStars = new Set(state.disabled);
+        applyManualLabels();
+    };
+    UndoManager.add({description: "Identify Bright Triples", undo: () => restore(before), redo: () => restore(after)});
+    restore(after);
+    const others = res.nFitting - 1;
+    const next = res.candidates[1];
+    params.status = `${lead}Bright Triples: ${res.best.matches.map((m) => m.object.label).join(", ")} - `
+        + params.status
+        + (others > 0 ? ` - ${others} other triple${others === 1 ? "" : "s"} also fit` : "")
+        + (next ? `; next: ${describe(next)}` : "");
+    setRenderOne();
+    return true;
+}
+
+/**
  * The centre of the point of light nearest a click, in analysed-frame pixels, or the click
  * itself when nothing there stands out from the background. A click on a small dot in a scaled
  * video view is easily several video pixels off, which is a large error for a fit to three dots.
@@ -4582,16 +4718,11 @@ export function drawStarTrackerOverlay() {
 
 /**
  * What stabilization does to the picture the video view shows now, as a 2D map in decoded
- * pixels (CVideoData.stabilizationMatrix), or null. Any stabilization, not only this one: the
- * marks must follow the picture whatever moved it. The frame is the one the view asks the
- * decoder for (an In-locked view counts from the In frame), in the video's own frame numbers.
+ * pixels, or null. Any stabilization, not only this one: the marks must follow the picture
+ * whatever moved it. viewStabilizationMatrix uses the frame that the view gives the decoder.
  */
 function displayedStabilization(view) {
-    const vd = view?.videoData;
-    if (!vd?.stabilizationMatrix) return null;
-    const f = Math.floor(par.frame);
-    const source = view.streamFrame ? view.streamFrame(f) : f;
-    return vd.stabilizationMatrix(Math.floor(source / (vd.videoSpeed || 1)), view.videoWidth, view.videoHeight);
+    return viewStabilizationMatrix(view, par.frame, view?.videoWidth, view?.videoHeight);
 }
 
 /**
@@ -4602,15 +4733,18 @@ function displayedStabilization(view) {
  * video's own frame numbers, which getImage() stabilizes by.
  */
 function starStabilizationMaps(r, view) {
-    const speed = view.videoData.videoSpeed || 1;
     const maps = new Map();
     stabilizingMaps(r.solved.transforms).forEach((m, i) => {
-        if (!m) return;
-        const g = r.frame0 + i;
-        maps.set(Math.floor((view.streamFrame ? view.streamFrame(g) : g) / speed), m);
+        if (m) maps.set(viewVideoFrame(view, r.frame0 + i), m);
     });
     return maps;
 }
+
+// VFR Fix changes the frame numbers of the video, so the star maps (and the analysis they came
+// from) no longer fit it. Turn the stabilization off on both videos, as a new analysis does.
+registerFrameRemap("starStabilization", (remap, {from, to}) => {
+    for (const vd of [from, to]) if (vd?.stabilizationAffine) vd.clearStabilization();
+});
 
 function starStabilizationOn() {
     const vd = videoView()?.videoData;
@@ -4781,8 +4915,17 @@ export function setupStarTrackerMenu() {
     folder.add({identify: () => { identifyStars(); }}, "identify")
         .name("Identify Stars (catalog)")
         .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
-            + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
+            + "you clicked off are left out. With no analysis of this video yet, it runs Find Candidate "
+            + "Stars first. The first use downloads a 2.5 MB catalog.\n"
             + "With Sync Camera to Star Field on, a success also points the look camera.");
+    folder.add({triples: () => { identifyByBrightTriples(); }}, "triples")
+        .name("Identify Bright Triples")
+        .tooltip("Name a few bright dots from their triangles, for a clip with too few stars for Identify "
+            + "Stars, which runs this by itself when it fails. It uses the planets and the stars brighter "
+            + "than Bright Triples: magnitude limit (in Tweaks), above the horizon at the In frame unless "
+            + "Bright Triples: above horizon only is off. The names then fit the camera as names given by "
+            + "hand do. It replaces the names on the circles; Undo puts them back. With no analysis of "
+            + "this video yet, it runs Find Candidate Stars first.");
     folder.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
         .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
             + "map and sized by its measured brightness. Identified stars get their names.\n"
@@ -4994,6 +5137,15 @@ export function setupStarTrackerMenu() {
         .tooltip("Smallest total drift, over the life of a track, for the track to be called moving, in "
             + "multiples of the measured position noise. It stops a tiny but certain drift from "
             + "counting as motion.");
+    tweaks.add(params, "tripleMagLimit", -1.5, 3, 0.1).name("Bright Triples: magnitude limit")
+        .tooltip("Identify Bright Triples uses the planets and the stars brighter than this magnitude. "
+            + "Smaller numbers are brighter: 2 gives about 35 to 45 objects above the horizon. A higher "
+            + "limit finds more triples and takes longer.");
+    tweaks.add(params, "tripleAboveHorizon").name("Bright Triples: above horizon only")
+        .tooltip("Use only the planets and stars above the horizon at the sitch's place and time. Turn it "
+            + "off when the place or the time is not certain: Identify Bright Triples then uses the whole "
+            + "sky, with the planets where they are on the sitch's date. More objects give more triples "
+            + "that fit by chance.");
 
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear")
