@@ -14,7 +14,7 @@
 // which are placed patches of camera-facing images and stay unchanged.
 
 import {CNode} from "./CNode";
-import {Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {par} from "../par";
 import {t} from "../i18n";
 import {showConfirm} from "../showError";
@@ -39,11 +39,34 @@ import {
     presetLayers,
     serializeCloudState,
 } from "../clouds/CloudLayerModel";
-import {DEG2RAD, enuBasis, llaToECEF, METERS_PER_SECOND_PER_KNOT, windVelocityEN, WGS84_A, WGS84_B} from "../clouds/CloudMath";
+import {
+    cloudNightLight,
+    DEG2RAD,
+    enuBasis,
+    llaToECEF,
+    METERS_PER_SECOND_PER_KNOT,
+    moonLightFactor,
+    RAD2DEG,
+    windDisplacementAt,
+    windDisplacementTable,
+    windVelocityEN,
+    WGS84_A,
+    WGS84_B,
+} from "../clouds/CloudMath";
+import {getCelestialDirection} from "../CelestialMath";
+import {lunarEclipseDimming} from "../CLunarEclipseCalc";
+import {getLocalUpVector} from "../SphericalMath";
 import {CloudVolumeMesh} from "../clouds/CloudVolumeMesh";
 import {cloudNoiseTextures, requestCloudNoiseTextures} from "../clouds/CloudNoiseTextures";
 
 const WIND_NODE_IDS = {local: "localWind", target: "targetWind"};
+
+// The moon's light on the clouds when full and high, relative to the day's sun
+// (a display choice: the scene shows the night at a night exposure, not a physical one).
+const MOON_KEY_LIGHT = 0.06;
+
+// The Measure button: frames rendered with and without the clouds, per view.
+const MEASURE_REPEATS = 7;
 
 export class CNodeCloudLayers extends CNode {
     constructor(v) {
@@ -68,8 +91,13 @@ export class CNodeCloudLayers extends CNode {
         this._renderState = {
             layers: this.visibleLayers, derived: this.visibleDerived, frame: 0, quality: this.quality,
             radii: {a: WGS84_A, b: WGS84_B}, sun: {dir: new Vector3(0, 0, 1), intensity: 0, angle: 90},
-            ambient: 0, lens: null,
+            ambient: 0, airlightScale: 1, lens: null,
         };
+        // The moon, recomputed only when the time or the camera moves on.
+        this._moon = {time: NaN, magnitude: NaN, x: NaN, y: NaN, z: NaN, dir: new Vector3(), angle: -90, light: 0};
+        this._night = {nightFactor: 0, airlightScale: 1, ambientScale: 1};
+        this._displacement = {east: 0, north: 0};
+        this.cost = "";
 
         this.volume = new CloudVolumeMesh(camera => this.renderState(camera));
         this.layerFolders = new Map();
@@ -95,9 +123,12 @@ export class CNodeCloudLayers extends CNode {
                 this.derived.set(layer.id, {
                     velocity: {east: 0, north: 0}, windECEF: [0, 0, 0], windDir: [1, 0, 0],
                     east: [1, 0, 0], north: [0, 1, 0], discECEF: null, discUp: [0, 0, 1],
+                    windTable: null, windKey: "",
                 });
             }
             this.updateAnchor(layer);
+            // The wind's history is rebuilt when next needed (its source may have changed).
+            this.derived.get(layer.id).windKey = "";
         }
         for (const id of [...this.derived.keys()]) {
             if (!this.layers.some(layer => layer.id === id)) this.derived.delete(id);
@@ -162,6 +193,7 @@ export class CNodeCloudLayers extends CNode {
     }
 
     updateVolumeVisibility() {
+        this.volume.setQuality(this.quality);
         this.volume.setViews(this.showMain, this.showLook);
         this.volume.setVisible(this.hasVisibleLayers);
     }
@@ -220,6 +252,34 @@ export class CNodeCloudLayers extends CNode {
         return this._profileId ? NodeMan.get(this._profileId) : null;
     }
 
+    // A wind that changes with time (a track-driven wind) is integrated over the
+    // frames (CloudMath.windDisplacementTable); a constant one is velocity x time.
+    windVaries(layer) {
+        return layer.wind.mode === "local" || layer.wind.mode === "target";
+    }
+
+    // The table of the layer's displacement at each frame, rebuilt when the sitch
+    // length or rate changes, the layer changes, or the wind at this frame no
+    // longer matches the table (an edited wind track or wind setting).
+    ensureWindTable(layer, derived, f) {
+        const frames = Math.max(1, Math.floor(Sit?.frames ?? 1));
+        const fps = Sit?.fps > 0 ? Sit.fps : 30;
+        const key = `${frames}|${fps}|${layer.wind.mode}|${derived.anchorLat}|${derived.anchorLon}|${layer.baseAltitude}|${layer.thickness}`;
+        let table = derived.windTable;
+        let stale = !table || derived.windKey !== key;
+        if (!stale) {
+            const whole = Math.min(frames - 1, Math.max(0, Math.floor(f)));
+            stale = Math.abs(table.velocity[2 * whole] - derived.velocity.east) > 1e-6
+                || Math.abs(table.velocity[2 * whole + 1] - derived.velocity.north) > 1e-6;
+        }
+        if (stale) {
+            derived.windTable = windDisplacementTable((frame, out) => this.windVelocity(layer, derived, frame, out),
+                frames, fps, table);
+            derived.windKey = key;
+        }
+        return derived.windTable;
+    }
+
     update(f) {
         super.update(f);
         if (!this.hasVisibleLayers) return;
@@ -227,6 +287,7 @@ export class CNodeCloudLayers extends CNode {
             const layer = this.visibleLayers[index];
             const derived = this.visibleDerived[index];
             this.windVelocity(layer, derived, f, derived.velocity);
+            if (this.windVaries(layer)) this.ensureWindTable(layer, derived, f);
         }
     }
 
@@ -237,34 +298,154 @@ export class CNodeCloudLayers extends CNode {
         if (!this.hasVisibleLayers || this.visibleLayers.length === 0) return null;
         const state = this._renderState;
         const frame = Number.isFinite(par.frame) ? par.frame : 0;
-        const seconds = frame / (Sit?.fps > 0 ? Sit.fps : 30);
+        const fps = Sit?.fps > 0 ? Sit.fps : 30;
         state.frame = frame;
         state.quality = this.quality;
         state.radii.a = Globals.equatorRadius ?? WGS84_A;
         state.radii.b = Globals.polarRadius ?? WGS84_B;
+        const displacement = this._displacement;
         for (let index = 0; index < this.visibleDerived.length; index++) {
             const derived = this.visibleDerived[index];
+            const layer = this.visibleLayers[index];
             const {velocity, east, north, windECEF, windDir} = derived;
+            if (derived.windTable && this.windVaries(layer)) {
+                windDisplacementAt(derived.windTable, frame, displacement);
+            } else {
+                displacement.east = velocity.east * frame / fps;
+                displacement.north = velocity.north * frame / fps;
+            }
             for (let axis = 0; axis < 3; axis++) {
-                const v = east[axis] * velocity.east + north[axis] * velocity.north;
-                windECEF[axis] = v * seconds;
-                windDir[axis] = v;
+                windECEF[axis] = east[axis] * displacement.east + north[axis] * displacement.north;
+                windDir[axis] = east[axis] * velocity.east + north[axis] * velocity.north;
             }
             const speed = Math.hypot(windDir[0], windDir[1], windDir[2]);
             for (let axis = 0; axis < 3; axis++) windDir[axis] = speed > 1e-6 ? windDir[axis] / speed : east[axis];
         }
+
+        // The key light: the sun (dimmed by a solar eclipse), or the moon at night.
         const sunPosition = Globals.sunLight?.position;
         if (sunPosition && sunPosition.lengthSq() > 0) state.sun.dir.copy(sunPosition).normalize();
         const sunNode = NodeMan.get("theSun", false);
+        let daySun;
         if (sunNode && !sunNode.moonlightMode) {
-            state.sun.intensity = (sunNode.ambientOnly ? 0 : sunNode.sunIntensity) * Math.PI * (sunNode.sunBoost ?? 1);
+            daySun = (sunNode.ambientOnly ? 0 : sunNode.sunIntensity) * Math.PI * (sunNode.sunBoost ?? 1);
+            state.sun.intensity = daySun;
+            const date = GlobalDateTimeNode?.dateNow;
+            const eclipse = date ? sunNode.calculateEclipseLightFactor?.(camera.position, date) : null;
+            if (eclipse && eclipse.obscuration > 0) state.sun.intensity *= eclipse.lightFraction;
         } else {
-            state.sun.intensity = Globals.sunLight?.intensity ?? 0;
+            // Long Exposure's moonlight mode already aims the scene's light at the moon.
+            daySun = Globals.sunLight?.intensity ?? 0;
+            state.sun.intensity = daySun;
         }
         state.sun.angle = Number.isFinite(Globals.sunAngle) ? Globals.sunAngle : 90;
         state.ambient = (Globals.ambientLight?.intensity ?? 0) / Math.PI;
+        const night = cloudNightLight(state.sun.angle, 0, this._night);
+        state.airlightScale = 1;
+        if (night.nightFactor > 0 && sunNode && !sunNode.moonlightMode) {
+            const moon = this.moonState(camera);
+            cloudNightLight(state.sun.angle, moon.light, night);
+            state.airlightScale = night.airlightScale;
+            state.ambient *= night.ambientScale;
+            if (moon.light > 0) {
+                state.sun.dir.copy(moon.dir);
+                state.sun.intensity = daySun * MOON_KEY_LIGHT * moon.light * night.nightFactor;
+                state.sun.angle = moon.angle;
+            } else {
+                state.sun.intensity = 0;
+            }
+        } else if (night.nightFactor <= 0) {
+            state.airlightScale = night.airlightScale;
+        }
         state.lens = atmosphereFisheyeLens(camera);
+        if (state.lens) state.lens.fovRadians = (Globals.fisheye?.fov ?? 180) * DEG2RAD / Math.max(state.lens.scale ?? 1, 0.05);
         return state;
+    }
+
+    // The moon's direction, elevation and light (CloudMath.moonLightFactor) for a
+    // camera, recomputed only when the time changes or the camera moves a kilometer.
+    moonState(camera) {
+        const moon = this._moon;
+        const date = GlobalDateTimeNode?.dateNow;
+        const time = date?.getTime?.() ?? NaN;
+        const position = camera.position;
+        // (The night sky updates the moon's magnitude itself, possibly after this frame's first call.)
+        const magnitude = NodeMan.get("NightSkyNode", false)?.planets?.planetSprites?.Moon?.mag;
+        if (time === moon.time && magnitude === moon.magnitude && Math.abs(position.x - moon.x) < 1000
+            && Math.abs(position.y - moon.y) < 1000 && Math.abs(position.z - moon.z) < 1000) return moon;
+        moon.time = time;
+        moon.magnitude = magnitude;
+        moon.x = position.x; moon.y = position.y; moon.z = position.z;
+        moon.light = 0;
+        const direction = date ? getCelestialDirection("Moon", date, position) : null;
+        if (!direction) return moon;
+        moon.dir.copy(direction).normalize();
+        moon.angle = 90 - moon.dir.angleTo(getLocalUpVector(position)) * RAD2DEG;
+        moon.light = moonLightFactor(magnitude, moon.angle, lunarEclipseDimming(date));
+        return moon;
+    }
+
+    // Measure what the clouds cost, on demand only: each view that draws them is
+    // rendered with and without the clouds, interleaved, MEASURE_REPEATS times,
+    // each frame waited for (a one-pixel read), and the median difference shown.
+    // This times what a user waits for (CPU and GPU together) on any GPU; timer
+    // queries do not (Apple GPUs count earlier work in them). Everything it
+    // touches is restored; it refuses to run during playback or an export.
+    // Returns {look, main} in ms (null for a view that does not draw clouds), or null.
+    measureCost() {
+        if (!par.paused || Globals.scriptedVideoRendering) {
+            this.cost = t("cloudLayers.measure.paused");
+            return null;
+        }
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+            this.cost = t("cloudLayers.measure.hidden");
+            return null;
+        }
+        if (!this.hasVisibleLayers || !this.volume.hasTextures) {
+            this.cost = t("cloudLayers.measure.nothing");
+            return null;
+        }
+        const views = {look: this.showLook ? NodeMan.get("lookView", false) : null,
+            main: this.showMain ? NodeMan.get("mainView", false) : null};
+        const result = {look: null, main: null};
+        const pixel = new Uint8Array(4);
+        const wasVisible = this.volume.wantVisible;
+        try {
+            for (const [key, view] of Object.entries(views)) {
+                if (!view?.visible || typeof view.renderTargetAndEffects !== "function") continue;
+                const gl = view.renderer.getContext();
+                const frame = () => {
+                    const start = performance.now();
+                    view.renderTargetAndEffects();
+                    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+                    return performance.now() - start;
+                };
+                // One frame each way first: lazy targets and programs are made then.
+                this.volume.setVisible(true);
+                frame();
+                this.volume.setVisible(false);
+                frame();
+                const differences = [];
+                for (let repeat = 0; repeat < MEASURE_REPEATS; repeat++) {
+                    this.volume.setVisible(true);
+                    const on = frame();
+                    this.volume.setVisible(false);
+                    differences.push(on - frame());
+                }
+                differences.sort((first, second) => first - second);
+                result[key] = Math.max(0, differences[differences.length >> 1]);
+            }
+        } finally {
+            this.volume.setVisible(wasVisible);
+            setRenderOne(true);
+        }
+        const format = value => value.toFixed(1);
+        if (result.look !== null && result.main !== null) {
+            this.cost = t("cloudLayers.measure.both", {look: format(result.look), main: format(result.main)});
+        } else if (result.look !== null) this.cost = t("cloudLayers.measure.look", {ms: format(result.look)});
+        else if (result.main !== null) this.cost = t("cloudLayers.measure.main", {ms: format(result.main)});
+        else this.cost = t("cloudLayers.measure.nothing");
+        return result;
     }
 
     // ---- editing (also the API the MCP tests drive) ------------------------------
@@ -484,6 +665,12 @@ export class CNodeCloudLayers extends CNode {
             .keepLiveWhenFolderOff();
         this.gui.add(this, "status").name(t("cloudLayers.status.label")).listen().disable()
             .tooltip(t("cloudLayers.status.tooltip"));
+        this.cost = t("cloudLayers.measure.none");
+        const measureActions = {measure: () => this.measureCost()};
+        this.gui.add(measureActions, "measure").name(t("cloudLayers.measure.label"))
+            .tooltip(t("cloudLayers.measure.tooltip"));
+        this.gui.add(this, "cost").name(t("cloudLayers.measure.resultLabel")).listen().disable()
+            .tooltip(t("cloudLayers.measure.resultTooltip"));
     }
 
     rebuildLayerFolders() {

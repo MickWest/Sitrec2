@@ -1,5 +1,7 @@
 import {
+    BLUE_NOISE_SIZE,
     equalize,
+    generateBlueNoise,
     generateDetail,
     generateShapeSlices,
     generateWeather,
@@ -83,5 +85,27 @@ describe("cloud noise", () => {
         }
         const flat = equalize(new Float32Array([5, 1, 3, 2, 4]));
         expect(Array.from(flat).map(value => Math.round(value * 10))).toEqual([9, 1, 5, 3, 7]);
+    });
+
+    test("blue noise: deterministic, every value equally often, no low frequencies", () => {
+        const noise = generateBlueNoise(BLUE_NOISE_SIZE, 1);
+        expect(noise.length).toBe(BLUE_NOISE_SIZE * BLUE_NOISE_SIZE);
+        expect(hashBytes(noise)).toBe(hashBytes(generateBlueNoise(BLUE_NOISE_SIZE, 1)));
+        const histogram = new Array(256).fill(0);
+        for (const value of noise) histogram[value]++;
+        expect(Math.min(...histogram)).toBe(Math.max(...histogram));
+        // The means of 8 x 8 blocks of white noise vary by about 37^2 / 64 (variance 21);
+        // blue noise leaves almost nothing at that scale.
+        const means = [];
+        for (let blockY = 0; blockY < 8; blockY++) {
+            for (let blockX = 0; blockX < 8; blockX++) {
+                let sum = 0;
+                for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) sum += noise[(blockY * 8 + y) * 64 + blockX * 8 + x];
+                means.push(sum / 64);
+            }
+        }
+        const average = means.reduce((total, mean) => total + mean, 0) / means.length;
+        const variance = means.reduce((total, mean) => total + (mean - average) ** 2, 0) / means.length;
+        expect(variance).toBeLessThan(10);
     });
 });

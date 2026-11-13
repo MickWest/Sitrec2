@@ -2795,7 +2795,7 @@ const en = {
             mainTooltip: "Draw the cloud layers in the main view.",
             lookTooltip: "Draw the cloud layers in the look view (and its water reflections).",
         },
-        quality: { label: "Quality", tooltip: "Number of samples along each view ray. Higher is smoother and slower." },
+        quality: { label: "Quality", tooltip: "How much work the GPU does for the clouds. Every level shows the same clouds with the same brightness; a higher level adds detail and sharpness and takes more time.\nLow: a quarter of the view's resolution, no fine detail. Fastest, with soft, blocky edges.\nMedium: the default. Billows, and wisps near the cloud surfaces.\nHigh: half resolution. Finer detail and sharper shadows between billows.\nUltra: every pixel. Slowest; for stills and exported video.\nUse Measure to see what a level costs on this computer." },
         qualities: { Low: "Low", Medium: "Medium", High: "High", Ultra: "Ultra" },
         preset: { label: "Preset", tooltip: "Replace all the layers with a ready-made sky. You can undo it.", choose: "Choose a sky..." },
         presets: {
@@ -2812,6 +2812,19 @@ const en = {
         },
         presetConfirm: { title: "Replace Cloud Layers", message: "Replace all the cloud layers with the preset \"{{name}}\"?", undo: "Apply cloud preset" },
         addLayer: { label: "Add Layer", tooltip: "Add a cumulus layer. A sitch can have up to four layers." },
+        measure: {
+            label: "Measure",
+            tooltip: "Measure how much time the clouds add to a frame, in each view that shows them.\nThe view is drawn several times with the clouds and without them, and the middle difference is shown.\nPause the playback first. The measurement takes about a second.",
+            resultLabel: "Cost",
+            resultTooltip: "The result of the last Measure: the time the clouds add to one frame of each view. It changes with the view size, the quality, the clouds in view and the computer.",
+            none: "Not measured",
+            look: "Look view: {{ms}} ms",
+            main: "Main view: {{ms}} ms",
+            both: "Look view: {{look}} ms, main view: {{main}} ms",
+            paused: "Pause the playback first",
+            hidden: "Not measured: the window is hidden",
+            nothing: "No clouds to measure",
+        },
         status: {
             label: "Status",
             tooltip: "The state of the clouds: off (no view draws them), no layers, making the noise textures, or ready.",

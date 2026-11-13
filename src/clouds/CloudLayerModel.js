@@ -13,13 +13,36 @@ export const CLOUD_STATE_VERSION = 1;
 
 export const CLOUD_QUALITIES = ["Low", "Medium", "High", "Ultra"];
 
-// Primary steps and sun-light steps per quality. Phase 3 adds the resolution.
-export const CLOUD_QUALITY_STEPS = {
-    Low: {steps: 96, lightSteps: 3},
-    Medium: {steps: 160, lightSteps: 5},
-    High: {steps: 224, lightSteps: 6},
-    Ultra: {steps: 256, lightSteps: 6},
+// What each quality level costs and buys:
+//   resolution   fraction of the view's pixels per axis that the march renders
+//                (a depth-aware upsample fills in the rest; 1 = every pixel)
+//   steps        density samples per pixel (searching and inside clouds)
+//   skipSteps    cheap clear-air samples per pixel (one texture read each)
+//   lightSteps   samples toward the sun from each density sample
+//   fineStep     step inside a cloudy column, in march pixels at that distance
+//   opticalStep  the most optical depth one step inside a cloud may cross
+//   detailLevel  0: no fine detail texture; 1: fine detail near cloud surfaces;
+//                2: also in the first light sample (sharper self-shadowing)
+export const CLOUD_QUALITY_SETTINGS = {
+    Low: {resolution: 0.25, steps: 32, skipSteps: 48, lightSteps: 3, fineStep: 4, opticalStep: 1.5, detailLevel: 0},
+    Medium: {resolution: 0.375, steps: 48, skipSteps: 96, lightSteps: 3, fineStep: 4, opticalStep: 1.2, detailLevel: 1},
+    High: {resolution: 0.5, steps: 96, skipSteps: 160, lightSteps: 4, fineStep: 3, opticalStep: 0.8, detailLevel: 2},
+    Ultra: {resolution: 1, steps: 128, skipSteps: 256, lightSteps: 6, fineStep: 2, opticalStep: 0.5, detailLevel: 2},
 };
+
+export function cloudQualitySettings(quality) {
+    return CLOUD_QUALITY_SETTINGS[quality] ?? CLOUD_QUALITY_SETTINGS.Medium;
+}
+
+// The size of the march target for a view of width x height pixels: at least
+// one pixel, never more than the view.
+export function marchTargetSize(width, height, resolution) {
+    const scale = Math.min(1, Math.max(0.0625, resolution || 1));
+    return {
+        width: Math.max(1, Math.min(width, Math.ceil(width * scale))),
+        height: Math.max(1, Math.min(height, Math.ceil(height * scale))),
+    };
+}
 
 export const CLOUD_WIND_MODES = ["profile", "local", "target", "custom", "none"];
 export const CLOUD_EXTENT_MODES = ["global", "disc"];
@@ -38,7 +61,7 @@ export const CLOUD_EXTENT_MODES = ["global", "disc"];
 export const CLOUD_TYPES = {
     cumulus: {
         render: "volume", baseAltitude: 1500, thickness: 1500, coverage: 0.45, scale: 4000,
-        detail: 0.5, windSkew: 0.15, gradient: [0.0, 0.08, 0.55, 1.0], extinction: 0.05, domed: 1, anvil: 0,
+        detail: 0.5, windSkew: 0.15, gradient: [0.0, 0.15, 0.55, 1.0], extinction: 0.05, domed: 1, anvil: 0,
     },
     stratocumulus: {
         render: "volume", baseAltitude: 1200, thickness: 800, coverage: 0.75, scale: 3000,

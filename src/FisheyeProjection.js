@@ -348,6 +348,13 @@ export function installFisheyeOnMaterial(material) {
     material.needsUpdate = true;
 }
 
+// A material that applies the lens itself (a full-screen pass that builds its
+// own view rays from the atmosphere projection uniforms, like the volumetric
+// clouds): the sweep leaves its vertex shader alone and does not warn about it.
+export function markFisheyeNative(material) {
+    if (material) _installed.add(material);
+}
+
 const _asMaterials = m => (Array.isArray(m) ? m : [m]);
 
 // Frustum culling tests bounds against the camera's PINHOLE matrix, which at a

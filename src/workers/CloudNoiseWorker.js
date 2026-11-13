@@ -1,11 +1,11 @@
 // CloudNoiseWorker.js - generates the volumetric-cloud noise off the main thread.
 //
-// Message in:  {job: "shape", size, z0, z1, seed} | {job: "detail", size, seed} | {job: "weather", size, seed}
+// Message in:  {job: "shape", size, z0, z1, seed} | {job: "detail" | "weather" | "blueNoise", size, seed}
 // Message out: {job, z0, z1, bytes} with bytes transferred (no copy), or {error}.
 // The generators are the same module the main thread and Jest use (CloudNoise.js),
 // so a worker and a fallback main-thread run produce identical bytes.
 
-import {generateDetail, generateShapeSlices, generateWeather, shapeContext} from "../clouds/CloudNoise";
+import {generateBlueNoise, generateDetail, generateShapeSlices, generateWeather, shapeContext} from "../clouds/CloudNoise";
 
 let context = null;
 let contextSeed = null;
@@ -24,6 +24,8 @@ self.onmessage = (event) => {
             bytes = generateDetail(message.size, message.seed);
         } else if (message.job === "weather") {
             bytes = generateWeather(message.size, message.seed);
+        } else if (message.job === "blueNoise") {
+            bytes = generateBlueNoise(message.size, message.seed);
         } else {
             throw new Error("Unknown cloud noise job " + message.job);
         }

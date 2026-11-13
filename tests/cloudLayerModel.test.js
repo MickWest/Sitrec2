@@ -1,6 +1,10 @@
 import {
     applyTypeDefaults,
     CLOUD_PRESET_NAMES,
+    CLOUD_QUALITIES,
+    CLOUD_QUALITY_SETTINGS,
+    cloudQualitySettings,
+    marchTargetSize,
     CLOUD_TYPE_NAMES,
     CLOUD_TYPES,
     deserializeCloudState,
@@ -127,5 +131,35 @@ describe("cloud layer model", () => {
     test("layer titles", () => {
         expect(layerTitle(layerDefaultsFor("cirrus"), 1)).toBe("Layer 2: Cirrus");
         expect(layerTitle({...layerDefaultsFor("stratus"), name: "deck"}, 0)).toBe("Layer 1: Stratus (deck)");
+    });
+
+    test("quality levels: resolution falls and the work grows from Low to Ultra", () => {
+        expect(Object.keys(CLOUD_QUALITY_SETTINGS)).toEqual(CLOUD_QUALITIES);
+        const levels = CLOUD_QUALITIES.map(name => CLOUD_QUALITY_SETTINGS[name]);
+        for (const level of levels) {
+            for (const key of ["resolution", "steps", "skipSteps", "lightSteps", "fineStep", "opticalStep", "detailLevel"]) {
+                expect(Number.isFinite(level[key])).toBe(true);
+            }
+            expect(level.resolution).toBeGreaterThan(0);
+            expect(level.resolution).toBeLessThanOrEqual(1);
+            expect(level.lightSteps).toBeLessThanOrEqual(6);
+            expect(level.steps).toBeLessThanOrEqual(256);
+        }
+        for (let index = 1; index < levels.length; index++) {
+            expect(levels[index].resolution).toBeGreaterThanOrEqual(levels[index - 1].resolution);
+            expect(levels[index].steps).toBeGreaterThanOrEqual(levels[index - 1].steps);
+            expect(levels[index].lightSteps).toBeGreaterThanOrEqual(levels[index - 1].lightSteps);
+            expect(levels[index].opticalStep).toBeLessThanOrEqual(levels[index - 1].opticalStep);
+        }
+        expect(CLOUD_QUALITY_SETTINGS.Ultra.resolution).toBe(1);
+        expect(cloudQualitySettings("Nonsense")).toBe(CLOUD_QUALITY_SETTINGS.Medium);
+    });
+
+    test("march target size", () => {
+        expect(marchTargetSize(1920, 1080, 0.5)).toEqual({width: 960, height: 540});
+        expect(marchTargetSize(1361, 977, 0.5)).toEqual({width: 681, height: 489});
+        expect(marchTargetSize(1920, 1080, 1)).toEqual({width: 1920, height: 1080});
+        expect(marchTargetSize(3, 1, 0.25)).toEqual({width: 1, height: 1});
+        expect(marchTargetSize(100, 100, 0)).toEqual({width: 100, height: 100});
     });
 });

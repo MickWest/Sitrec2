@@ -82,6 +82,11 @@ export const ATMOSPHERE_HAZE_GLSL = /* glsl */`
             vec3 horizontal = direction - atmoUp * dot(direction, atmoUp);
             float alignment = max(0.0, dot(horizontal / max(length(horizontal), 1e-5), atmoSun));
             vec3 airlight = mix(atmoCool, atmoWarm, alignment * atmoWarmStrength);
+            #ifdef ATMOSPHERE_AIRLIGHT_SCALE
+                // A shader that is lit differently from the terrain at night (the
+                // volumetric clouds) scales the airlight; nothing else defines this.
+                airlight *= ATMOSPHERE_AIRLIGHT_SCALE;
+            #endif
             // HDR highlights are attenuated, never clamped to display white.
             return radiance * transmittance + airlight * (1.0 - transmittance);
         #endif

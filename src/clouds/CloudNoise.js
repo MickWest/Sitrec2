@@ -11,12 +11,17 @@
 //   weather  64^3 RGBA8  R = coverage (Perlin-Worley FBM), G = Perlin FBM, B = cells,
 //                        A = fine FBM; every channel histogram-equalized to uniform
 //                        [0, 1], so a coverage threshold of 1 - c covers a fraction c.
+// And one 2D texture:
+//   blue noise 64^2 R8   a rank-ordered blue-noise (void-and-cluster) pattern for
+//                        the march jitter: no low frequencies, so the grain it leaves
+//                        is fine and even, and a blur removes it.
 
-export const NOISE_VERSION = 1;
+export const NOISE_VERSION = 2;
 export const NOISE_SEED = 1;
 export const SHAPE_SIZE = 128;
 export const DETAIL_SIZE = 32;
 export const WEATHER_SIZE = 64;
+export const BLUE_NOISE_SIZE = 64;
 
 // Small deterministic PRNG (mulberry32).
 export function makeRandom(seed) {
@@ -268,5 +273,88 @@ export function generateWeather(size = WEATHER_SIZE, seed = NOISE_SEED) {
     for (let voxel = 0; voxel < count; voxel++) {
         for (let channel = 0; channel < 4; channel++) out[voxel * 4 + channel] = toByte(equalized[channel][voxel]);
     }
+    return out;
+}
+
+// Rank-ordered blue noise by void-and-cluster (Ulichney 1993) on a tileable
+// size^2 grid: bytes 0..255, each value used equally often, with neighbouring
+// ranks spread apart. Deterministic for a seed.
+export function generateBlueNoise(size = BLUE_NOISE_SIZE, seed = NOISE_SEED, sigma = 1.5) {
+    const count = size * size;
+    const radius = Math.ceil(sigma * 4);
+    const width = 2 * radius + 1;
+    const kernel = new Float64Array(width * width);
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            kernel[(dy + radius) * width + dx + radius] = Math.exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+        }
+    }
+    const splat = (energy, pixel, sign) => {
+        const x = pixel % size, y = (pixel - x) / size;
+        for (let dy = -radius; dy <= radius; dy++) {
+            const row = ((y + dy + size) % size) * size;
+            for (let dx = -radius; dx <= radius; dx++) {
+                energy[row + (x + dx + size) % size] += sign * kernel[(dy + radius) * width + dx + radius];
+            }
+        }
+    };
+    // The densest point of the pattern (a "cluster"), and the emptiest gap (a "void").
+    const tightestCluster = (bits, energy) => {
+        let best = -1, bestEnergy = -Infinity;
+        for (let pixel = 0; pixel < count; pixel++) {
+            if (bits[pixel] && energy[pixel] > bestEnergy) { bestEnergy = energy[pixel]; best = pixel; }
+        }
+        return best;
+    };
+    const largestVoid = (bits, energy) => {
+        let best = -1, bestEnergy = Infinity;
+        for (let pixel = 0; pixel < count; pixel++) {
+            if (!bits[pixel] && energy[pixel] < bestEnergy) { bestEnergy = energy[pixel]; best = pixel; }
+        }
+        return best;
+    };
+
+    // A random start pattern of a tenth of the pixels, relaxed until moving its
+    // tightest point into its largest void changes nothing.
+    const random = makeRandom(seed * 7121 + 41);
+    const bits = new Uint8Array(count);
+    const energy = new Float64Array(count);
+    const initial = Math.max(1, Math.floor(count / 10));
+    for (let placed = 0; placed < initial;) {
+        const pixel = Math.min(count - 1, Math.floor(random() * count));
+        if (bits[pixel]) continue;
+        bits[pixel] = 1;
+        splat(energy, pixel, 1);
+        placed++;
+    }
+    for (let pass = 0; pass < count; pass++) {
+        const cluster = tightestCluster(bits, energy);
+        bits[cluster] = 0;
+        splat(energy, cluster, -1);
+        const gap = largestVoid(bits, energy);
+        bits[gap] = 1;
+        splat(energy, gap, 1);
+        if (gap === cluster) break;
+    }
+
+    const rank = new Int32Array(count);
+    // Ranks below the start pattern: take its tightest points away one by one.
+    const workingBits = Uint8Array.from(bits);
+    const workingEnergy = Float64Array.from(energy);
+    for (let next = initial - 1; next >= 0; next--) {
+        const cluster = tightestCluster(workingBits, workingEnergy);
+        workingBits[cluster] = 0;
+        splat(workingEnergy, cluster, -1);
+        rank[cluster] = next;
+    }
+    // Ranks above it: fill the largest void one by one.
+    for (let next = initial; next < count; next++) {
+        const gap = largestVoid(bits, energy);
+        bits[gap] = 1;
+        splat(energy, gap, 1);
+        rank[gap] = next;
+    }
+    const out = new Uint8Array(count);
+    for (let pixel = 0; pixel < count; pixel++) out[pixel] = Math.floor(rank[pixel] * 256 / count);
     return out;
 }

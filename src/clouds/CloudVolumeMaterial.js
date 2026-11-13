@@ -1,21 +1,56 @@
-// CloudVolumeMaterial.js - the ShaderMaterial of the volumetric clouds, and the
-// per-camera uniform packer that runs in its onBeforeRender.
+// CloudVolumeMaterial.js - the ShaderMaterials of the volumetric clouds, and the
+// per-camera uniform packer.
 //
-// Every render of the world scene reaches onBeforeRender with ITS camera: the
-// main view, the look view, the water mirror, XR eyes and exports. The packer
-// forms every camera-relative constant in double precision (CloudMath.js) and
-// writes them into preallocated uniform values: no allocation per frame.
+// Two materials share ONE uniforms object (cloudShaders.js explains the two
+// programs): the scene material draws in the world scene (composite, or a
+// direct march), and the march material renders into a per-camera target at
+// the quality's resolution. Every render of the world scene reaches the scene
+// material's onBeforeRender with ITS camera: the main view, the look view,
+// the water mirror, XR eyes and exports. The packer forms every
+// camera-relative constant in double precision (CloudMath.js) and writes them
+// into preallocated uniform values: no allocation per frame.
 //
 // The haze uniforms are SHARED BY REFERENCE with materialAtmosphereUniforms,
 // whose values withMaterialAtmosphere sets for the draw in progress, so a
-// cloud takes exactly the haze the terrain under it gets in that view.
+// cloud takes the haze the terrain under it gets in that view (with its own
+// airlight scale at night, cloudAirlightScale). The refraction strength is
+// read from terrestrialRefractionUniforms, which the scene hook sets per camera.
 
-import {Color, CustomBlending, Matrix3, OneFactor, OneMinusSrcAlphaFactor, ShaderMaterial, Vector3, Vector4} from "three";
+import {
+    Color,
+    CustomBlending,
+    Matrix3,
+    NoBlending,
+    OneFactor,
+    OneMinusSrcAlphaFactor,
+    ShaderMaterial,
+    Vector2,
+    Vector3,
+    Vector4,
+} from "three";
 import {atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms} from "../atmosphere/MaterialAtmosphere";
-import {CLOUD_FRAGMENT_SHADER, CLOUD_MAX_LAYERS, CLOUD_MAX_STEPS, CLOUD_VERTEX_SHADER} from "./cloudShaders";
-import {CLOUD_QUALITY_STEPS, cloudTypeInfo} from "./CloudLayerModel";
-import {localFrameAt, noisePeriod, positiveModulo, shellConstant, sunBrightness, WGS84_A, WGS84_B} from "./CloudMath";
+import {terrestrialRefractionUniforms} from "../atmosphere/terrestrialRefraction";
+import {rayGeometryUniforms} from "../refraction/RayGeometryProjection";
+import {
+    CLOUD_FRAGMENT_SHADER,
+    CLOUD_MAX_LAYERS,
+    CLOUD_MAX_LIGHT_STEPS,
+    CLOUD_MAX_SKIP_STEPS,
+    CLOUD_MAX_STEPS,
+    CLOUD_VERTEX_SHADER,
+} from "./cloudShaders";
+import {cloudQualitySettings, cloudTypeInfo} from "./CloudLayerModel";
+import {
+    localFrameAt,
+    noisePeriod,
+    positiveModulo,
+    refractedRadius,
+    shellConstant,
+    sunBrightness,
+    WGS84_A,
+    WGS84_B,
+} from "./CloudMath";
 
 const HAZE_KEYS = ["atmoEnabled", "atmoBeta", "atmoAltitude", "atmoRadius", "atmoUp", "atmoSun",
     "atmoCool", "atmoWarm", "atmoWarmStrength", "atmoStartPlane"];
@@ -45,33 +80,52 @@ const GROUND_CAP = -200;
 // Per-layer noise offsets: a seed moves the pattern, never its statistics.
 const SEED_OFFSET = [1731.37, 2903.71, 1187.93];
 
+// The jitter pattern moves by the golden ratio each frame (a paused frame is stable).
+const GOLDEN_RATIO_FRACTION = 0.6180339887498949;
+
 function vec4Array() {
     return Array.from({length: CLOUD_MAX_LAYERS}, () => new Vector4());
 }
 
-export function createCloudVolumeMaterial() {
+function createUniforms() {
     const uniforms = {
         ...atmosphereProjectionUniforms(),
         cloudViewToWorld: {value: new Matrix3()},
         cloudUp: {value: new Vector3(0, 0, 1)},
         cloudR: {value: WGS84_A},
         cloudR0: {value: WGS84_A},
-        cloudC0: {value: 0},
+        cloudH0: {value: 0},
+        cloudGroundRadius: {value: WGS84_A},
         cloudCEarth: {value: 0},
         cloudNear: {value: 0.1},
-        cloudTMax: {value: 400000},
+        cloudTMax: {value: MARCH_RANGE},
         cloudSunDir: {value: new Vector3(0, 0, 1)},
         cloudSunIntensity: {value: 0},
         cloudSunGain: {value: CLOUD_SUN_GAIN},
         cloudAmbientTop: {value: new Color()},
         cloudAmbientBottom: {value: new Color()},
-        cloudFrame: {value: 0},
+        cloudAirlightScale: {value: 1},
         cloudLayerCount: {value: 0},
-        cloudSteps: {value: 72},
-        cloudLightSteps: {value: 5},
+        cloudSteps: {value: 64},
+        cloudSkipSteps: {value: 128},
+        cloudLightSteps: {value: 4},
+        cloudFineStep: {value: 2},
+        cloudOpticalStep: {value: 0.8},
+        cloudDetailLevel: {value: 2},
+        cloudDebug: {value: 0},
+        cloudLodBias: {value: 0},
+        cloudPixelAngle: {value: 1e-3},
+        cloudPixelSize: {value: 0},
+        cloudRefraction: {value: false},
         cloudShapeTex: {value: null},
         cloudDetailTex: {value: null},
         cloudWeatherTex: {value: null},
+        cloudBlueNoise: {value: null},
+        cloudJitterOffset: {value: 0},
+        cloudMarchSize: {value: new Vector2(1, 1)},
+        cloudComposite: {value: false},
+        cloudMarchColor: {value: null},
+        cloudMarchFront: {value: null},
         cloudShell: {value: vec4Array()},
         cloudParams: {value: vec4Array()},
         cloudGradient: {value: vec4Array()},
@@ -83,12 +137,21 @@ export function createCloudVolumeMaterial() {
         cloudCoverageB: {value: vec4Array()},
         cloudShapeA: {value: vec4Array()},
         cloudDetailA: {value: vec4Array()},
-        cloudStretch: {value: vec4Array()},
+        cloudLayerExtra: {value: vec4Array()},
     };
     // Shared by reference: the values are the current draw's haze.
     for (const key of HAZE_KEYS) uniforms[key] = materialAtmosphereUniforms[key];
+    return uniforms;
+}
 
-    const material = new ShaderMaterial({
+/**
+ * The two materials and their shared uniforms.
+ * scene: drawn in the world scene, premultiplied over the opaque image.
+ * march: renders into the march target (two outputs, no blending).
+ */
+export function createCloudMaterials() {
+    const uniforms = createUniforms();
+    const scene = new ShaderMaterial({
         name: "VolumetricClouds",
         uniforms,
         vertexShader: CLOUD_VERTEX_SHADER,
@@ -105,8 +168,21 @@ export function createCloudVolumeMaterial() {
         premultipliedAlpha: true,
     });
     // Not a surface: no material haze patch, no thermal radiance, no lift.
-    material.userData.atmosphere = false;
-    return material;
+    scene.userData.atmosphere = false;
+
+    const march = new ShaderMaterial({
+        name: "VolumetricCloudsMarch",
+        uniforms,
+        defines: {CLOUD_MRT: ""},
+        vertexShader: CLOUD_VERTEX_SHADER,
+        fragmentShader: CLOUD_FRAGMENT_SHADER,
+        transparent: false,
+        depthTest: false,
+        depthWrite: false,
+        blending: NoBlending,
+    });
+    march.userData.atmosphere = false;
+    return {scene, march, uniforms};
 }
 
 // Scratch state for the packer (module level, reused every call).
@@ -115,7 +191,6 @@ const scratch = {
     base: [0, 0, 0],
     stretched: [0, 0, 0],
     wind: [0, 0, 0],
-    sun: new Vector3(),
 };
 
 function setOffset(target, point, period) {
@@ -132,13 +207,33 @@ function stretchAlong(point, direction, stretch, out) {
 }
 
 /**
+ * The angular (perspective) or linear (orthographic) size of one march pixel.
+ * Written into cloudPixelAngle / cloudPixelSize; the march's steps follow it.
+ */
+export function setMarchPixelSize(uniforms, camera, marchHeight, lens) {
+    const projection = camera.projectionMatrix.elements;
+    const height = Math.max(1, marchHeight);
+    if (projection[15] === 1) {
+        uniforms.cloudPixelAngle.value = 0;
+        uniforms.cloudPixelSize.value = 2 / Math.max(projection[5], 1e-12) / height;
+    } else if (lens) {
+        // A fisheye images about its field across the circle; a pixel is that over its pixels.
+        uniforms.cloudPixelAngle.value = Math.max(1e-5, (lens.fovRadians ?? Math.PI) / height);
+        uniforms.cloudPixelSize.value = 0;
+    } else {
+        uniforms.cloudPixelAngle.value = Math.max(1e-6, 2 / Math.max(projection[5], 1e-12) / height);
+        uniforms.cloudPixelSize.value = 0;
+    }
+}
+
+/**
  * Fill the material uniforms for one camera.
- * @param {Object} uniforms - the material's uniforms
+ * @param {Object} uniforms - the shared uniforms
  * @param {Camera} camera - the camera of this draw (matrixWorld current)
  * @param {Object} state - from CNodeCloudLayers.renderState():
  *   {layers: [normalized layer], derived: [{windECEF:[3], windDir:[3], discECEF:[3]|null, discUp:[3]}],
- *    seconds, frame, quality, radii: {a, b}, sun: {dir: Vector3, intensity, angle}, ambient,
- *    lens: fisheye lens or null}
+ *    frame, quality, radii: {a, b}, sun: {dir: Vector3, intensity, angle}, ambient,
+ *    airlightScale, lens: fisheye lens or null}
  */
 export function updateCloudUniforms(uniforms, camera, state) {
     const elements = camera.matrixWorld.elements;
@@ -161,20 +256,36 @@ export function updateCloudUniforms(uniforms, camera, state) {
     uniforms.cloudUp.value.set(frame.up[0], frame.up[1], frame.up[2]);
     uniforms.cloudR.value = R;
     uniforms.cloudR0.value = R + h0;
-    uniforms.cloudC0.value = h0 * (2 * R + h0);
-    uniforms.cloudCEarth.value = shellConstant(h0, R, GROUND_CAP);
+    uniforms.cloudH0.value = h0;
     uniforms.cloudNear.value = camera.near ?? 0.1;
     // Far enough to reach the horizon of a high camera (an orbital main view).
     uniforms.cloudTMax.value = MARCH_RANGE + 4 * Math.max(0, h0);
-    uniforms.cloudFrame.value = Math.floor(state.frame ?? 0);
+    const wholeFrame = Math.floor(state.frame ?? 0);
+    uniforms.cloudJitterOffset.value = positiveModulo(wholeFrame * GOLDEN_RATIO_FRACTION, 1);
 
-    const steps = CLOUD_QUALITY_STEPS[state.quality] ?? CLOUD_QUALITY_STEPS.Medium;
-    uniforms.cloudSteps.value = Math.min(steps.steps, CLOUD_MAX_STEPS);
-    uniforms.cloudLightSteps.value = steps.lightSteps;
+    // Terrestrial refraction lifts the terrain by the scene's shared k for this
+    // camera; each layer then sits on a larger sphere (CloudMath.refractedRadius).
+    // The ray-traced model draws its view through a ray table the clouds do not follow.
+    const k = rayGeometryUniforms.uRayGeometry.value > 0.5 ? 0 : terrestrialRefractionUniforms.uTerrK.value;
+    const scaleHeight = 1 / terrestrialRefractionUniforms.uTerrInvH.value;
+    uniforms.cloudRefraction.value = k > 0;
+    const groundRadius = k > 0 ? refractedRadius(R, k, h0, 0, scaleHeight) : R;
+    uniforms.cloudGroundRadius.value = groundRadius;
+    uniforms.cloudCEarth.value = shellConstant(h0, groundRadius, GROUND_CAP);
 
-    // Sun and sky light.
+    const quality = cloudQualitySettings(state.quality);
+    uniforms.cloudSteps.value = Math.min(quality.steps, CLOUD_MAX_STEPS);
+    uniforms.cloudSkipSteps.value = Math.min(quality.skipSteps, CLOUD_MAX_SKIP_STEPS);
+    uniforms.cloudLightSteps.value = Math.min(quality.lightSteps, CLOUD_MAX_LIGHT_STEPS);
+    uniforms.cloudFineStep.value = quality.fineStep;
+    uniforms.cloudOpticalStep.value = quality.opticalStep;
+    uniforms.cloudDetailLevel.value = quality.detailLevel ?? 2;
+    uniforms.cloudLodBias.value = quality.lodBias ?? 0;
+
+    // Key light (the sun, or the moon at night) and sky light.
     uniforms.cloudSunDir.value.copy(state.sun.dir);
     uniforms.cloudSunIntensity.value = state.sun.intensity;
+    uniforms.cloudAirlightScale.value = state.airlightScale ?? 1;
     const ambient = state.ambient * CLOUD_AMBIENT_SHARE;
     uniforms.cloudAmbientTop.value.copy(SKY_TOP_HUE).multiplyScalar(ambient);
     const sunAngle = state.sun.angle ?? 90;
@@ -189,13 +300,14 @@ export function updateCloudUniforms(uniforms, camera, state) {
         const info = cloudTypeInfo(layer.type);
         const sheet = info.render === "sheet";
         const baseAltitude = layer.baseAltitude, thickness = layer.thickness;
+        const radius = k > 0 ? refractedRadius(R, k, h0, baseAltitude + 0.5 * thickness, scaleHeight) : R;
 
         if (sheet) {
-            const mid = shellConstant(h0, R, baseAltitude + 0.5 * thickness);
+            const mid = shellConstant(h0, radius, baseAltitude + 0.5 * thickness);
             uniforms.cloudShell.value[index].set(mid, mid, baseAltitude, thickness);
         } else {
-            uniforms.cloudShell.value[index].set(shellConstant(h0, R, baseAltitude),
-                shellConstant(h0, R, baseAltitude + thickness), baseAltitude, thickness);
+            uniforms.cloudShell.value[index].set(shellConstant(h0, radius, baseAltitude),
+                shellConstant(h0, radius, baseAltitude + thickness), baseAltitude, thickness);
         }
         uniforms.cloudParams.value[index].set(layer.coverage,
             sheet ? layer.density : info.extinction * layer.density, layer.detail, sheet ? 1 : 0);
@@ -207,7 +319,7 @@ export function updateCloudUniforms(uniforms, camera, state) {
         uniforms.cloudWind.value[index].set(windDir[0], windDir[1], windDir[2], layer.windSkew * thickness);
         const fibrous = sheet && info.pattern === 1;
         const stretch = fibrous ? FIBER_STRETCH : 1;
-        uniforms.cloudStretch.value[index].set(stretch, 0, 0, 0);
+        uniforms.cloudLayerExtra.value[index].set(stretch, 0, radius, 0);
 
         if (derived.discECEF) {
             const disc = derived.discECEF, windECEF = derived.windECEF;

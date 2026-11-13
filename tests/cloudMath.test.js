@@ -10,15 +10,28 @@ import {
     localFrameAt,
     positiveModulo,
     rayShellSegments,
+    refractedRadius,
+    straightLineDensityFactor,
     rayShellSegmentsBrute,
     shellConstant,
     stableQuadraticRoots,
     sunBrightness,
+    cloudNightLight,
+    moonLightFactor,
+    skyBrightnessForSunAngle,
     windDisplacement,
+    windDisplacementAt,
+    windDisplacementTable,
     windVelocityEN,
     WGS84_A,
     WGS84_B,
 } from "../src/clouds/CloudMath";
+import {Vector3} from "three";
+import {
+    liftCameraRelative,
+    straightLineDensityFactor as sceneDensityFactor,
+    TERRESTRIAL_REFRACTION_DEFAULTS,
+} from "../src/atmosphere/terrestrialRefraction";
 
 const R = 6371000;
 
@@ -162,5 +175,116 @@ describe("cloud lighting helpers", () => {
             expect(integral).toBeCloseTo(1, 3);
         }
         expect(dualLobePhase(1)).toBeGreaterThan(dualLobePhase(-1));
+    });
+});
+
+describe("cloud layers under terrestrial refraction", () => {
+    test("the density factor is the scene's own", () => {
+        for (const [hObs, hTarget] of [[0, 0], [2, 1500], [1000, 9000], [11000, 300], [0, 20000]]) {
+            expect(straightLineDensityFactor(hObs, hTarget)).toBeCloseTo(sceneDensityFactor(hObs, hTarget), 12);
+        }
+    });
+
+    test("no refraction leaves the sphere unchanged", () => {
+        expect(refractedRadius(R, 0, 10, 1500)).toBe(R);
+        expect(refractedRadius(R, -1, 10, 1500)).toBe(R);
+    });
+
+    test("a layer on the larger sphere sits where the scene's lift puts it", () => {
+        // A real point at height H, range d is lifted by the scene (liftCameraRelative,
+        // the CPU twin of the vertex chunk). On the layer's refracted sphere the lifted
+        // point must be back at height H: within 2% of the lift out to 100 km, and 7%
+        // at 250 km (the lift there is about 600 m; the scene's long-line sag is not modelled).
+        const k = 0.13;
+        for (const h0 of [2, 1000]) {
+            for (const H of [0, 1500, 9000]) {
+                for (const [d, share] of [[20000, 0.02], [100000, 0.02], [250000, 0.07]]) {
+                    const context = {k, zenith: new Vector3(0, 0, 1), observer: new Vector3(), obsAlt: h0, R,
+                        maxBendRad: TERRESTRIAL_REFRACTION_DEFAULTS.maxBendRad, scaleHeightM: 8500,
+                        maxLiftM: TERRESTRIAL_REFRACTION_DEFAULTS.maxLiftM};
+                    const angle = d / (R + H);
+                    const point = new Vector3((R + H) * Math.sin(angle), 0, (R + H) * Math.cos(angle) - (R + h0));
+                    const apparent = liftCameraRelative(context, point, new Vector3());
+                    const lift = apparent.z - point.z;
+                    expect(lift).toBeGreaterThan(0);
+                    const radius = refractedRadius(R, k, h0, H);
+                    const heightOnLayerSphere = Math.hypot(point.x, radius + h0 + apparent.z) - radius;
+                    expect(Math.abs(heightOnLayerSphere - H)).toBeLessThan(share * lift + 1);
+                }
+            }
+        }
+    });
+});
+
+describe("cloud wind over time", () => {
+    const knots = 1852 / 3600;
+
+    test("a constant wind integrates to velocity x time, at whole and fractional frames", () => {
+        const velocity = windVelocityEN(270, 60 * knots);
+        const table = windDisplacementTable((frame, out) => Object.assign(out, velocity), 900, 30);
+        for (const frame of [0, 1, 431.5, 899, 900, 1200, -10]) {
+            const expected = windDisplacement(velocity, frame, 30);
+            const got = windDisplacementAt(table, frame);
+            expect(got.east).toBeCloseTo(expected.east, 9);
+            expect(got.north).toBeCloseTo(expected.north, 9);
+        }
+        // The Phase 1 check: 60 kn from 270 for 899 frames at 30 fps (29.97 s) is 924.97 m east.
+        expect(windDisplacementAt(table, 899).east).toBeCloseTo(924.97, 2);
+    });
+
+    test("a wind that changes at a frame bends the drift instead of moving the whole pattern", () => {
+        const fps = 30;
+        const before = {east: 10, north: 0}, after = {east: 0, north: 20};
+        const table = windDisplacementTable((frame, out) => Object.assign(out, frame < 300 ? before : after), 900, fps);
+        // Before the change: unchanged by what comes later.
+        expect(windDisplacementAt(table, 300).east).toBeCloseTo(100, 9);
+        expect(windDisplacementAt(table, 300).north).toBeCloseTo(0, 9);
+        // After it: the old drift stays, the new one adds to it.
+        const later = windDisplacementAt(table, 600);
+        expect(later.east).toBeCloseTo(100, 9);
+        expect(later.north).toBeCloseTo(200, 9);
+        // Continuous across the change (velocity x current time would jump by 200 m).
+        const step = windDisplacementAt(table, 301);
+        expect(Math.hypot(step.east - 100, step.north)).toBeLessThan(1);
+    });
+
+    test("the table is reused when its size is unchanged", () => {
+        const first = windDisplacementTable((frame, out) => Object.assign(out, {east: 1, north: 0}), 10, 30);
+        const again = windDisplacementTable((frame, out) => Object.assign(out, {east: 2, north: 0}), 10, 30, first);
+        expect(again).toBe(first);
+        expect(windDisplacementAt(again, 10).east).toBeCloseTo(20 / 30, 12);
+    });
+});
+
+describe("cloud night light", () => {
+    test("sky brightness follows the scene's twilight curve", () => {
+        expect(skyBrightnessForSunAngle(10)).toBe(1);
+        expect(skyBrightnessForSunAngle(-20)).toBe(0);
+        expect(skyBrightnessForSunAngle(-9)).toBeCloseTo(0.5, 9);
+    });
+
+    test("by day nothing changes; at night the airlight follows the moon", () => {
+        const day = cloudNightLight(30, 0);
+        expect(day.nightFactor).toBe(0);
+        expect(day.airlightScale).toBeCloseTo(1, 12);
+        const moonless = cloudNightLight(-30, 0);
+        expect(moonless.nightFactor).toBe(1);
+        expect(moonless.airlightScale).toBeCloseTo(0.12, 9);
+        expect(moonless.ambientScale).toBeCloseTo(0.12, 9);
+        expect(day.ambientScale).toBe(1);
+        const fullMoon = cloudNightLight(-30, 1);
+        expect(fullMoon.airlightScale).toBeCloseTo(1, 9);
+        expect(fullMoon.ambientScale).toBeGreaterThan(moonless.ambientScale);
+        expect(cloudNightLight(-8, 0).nightFactor).toBeGreaterThan(0);
+        expect(cloudNightLight(-8, 0).nightFactor).toBeLessThan(1);
+    });
+
+    test("moon light: full and high is one, below the horizon is zero, a quarter moon is dimmer", () => {
+        expect(moonLightFactor(-12.7, 45)).toBeCloseTo(1, 9);
+        expect(moonLightFactor(-12.7, -5)).toBe(0);
+        const quarter = moonLightFactor(-10.0, 45);
+        expect(quarter).toBeGreaterThan(0.2);
+        expect(quarter).toBeLessThan(0.4);
+        expect(moonLightFactor(-12.7, 45, 0)).toBe(0);
     });
 });

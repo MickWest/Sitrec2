@@ -222,3 +222,143 @@ export const NOISE_PERIODS = {
 export function noisePeriod(scale, kind) {
     return scale * NOISE_PERIODS[kind];
 }
+
+// ---- terrestrial refraction ---------------------------------------------------
+//
+// The scene draws terrestrial refraction as a lift of every vertex along the
+// camera's zenith (terrestrialRefraction.js, applyTerrestrialRefraction_chunk):
+//     lift(d) = d * bend,   bend = kEff d / (2R)   (below its saturation)
+// with kEff = k times the air density along the sight line. A point of height H
+// at horizontal range d then APPEARS at a rise above the camera's tangent plane of
+//     H - h0 - d^2 / (2R) + kEff d^2 / (2R) = H - h0 - d^2 / (2 R / (1 - kEff)),
+// which is the same rise as on a sphere of radius R / (1 - kEff) (to the second
+// order in d, as the lift law itself is). So a layer at height H is drawn in the
+// lifted world by marching its shells on that larger sphere: the cloud base then
+// meets the lifted horizon as the terrain does. Not modelled, as in the first-order
+// plan: the sag of a long sight line into denser air and the bend saturation
+// (34 arcmin, reached only beyond about 800 km at k = 0.13).
+
+// 2 * integral from 0 to 1 of (1 - t) exp(-h(t) / H) dt along a straight line from
+// hObs to hTarget: the density factor of terrestrialRefraction.straightLineDensityFactor
+// (repeated so this file stays pure; the test keeps the two equal).
+export function straightLineDensityFactor(hObs, hTarget, scaleHeight = 8500) {
+    const a = Math.max(0, hObs) / scaleHeight;
+    const b = Math.max(0, hTarget) / scaleHeight - a;
+    if (Math.abs(b) < 0.1) return 2 * Math.exp(-a) * (0.5 + b * (-1 / 6 + b * (1 / 24 + b * (-1 / 120 + b / 720))));
+    return 2 * (Math.exp(-a) * (b - 1) + Math.exp(-a - b)) / (b * b);
+}
+
+// The sphere radius on which a layer at height H appears, seen from a camera at
+// h0 with refraction coefficient k (0 = no refraction: R itself).
+export function refractedRadius(R, k, h0, H, scaleHeight = 8500) {
+    if (!(k > 0)) return R;
+    const kEff = Math.min(0.9, k * straightLineDensityFactor(h0, H, scaleHeight));
+    return R / (1 - kEff);
+}
+
+// ---- wind over time ------------------------------------------------------------
+//
+// A layer's pattern is displaced by the integral of its wind velocity from frame 0,
+// so a wind that changes (a track-driven wind) bends the drift instead of moving
+// the whole pattern at once. The table holds the displacement at every whole
+// frame: D[0] = 0, D[i + 1] = D[i] + v(i) / fps (meters east, north). For a
+// constant wind D[f] = v f / fps exactly, the same as windDisplacement().
+
+// velocityAt(frame, out) fills out = {east, north} in m/s. Returns
+// {frames, fps, velocity: Float64Array(2 frames), displacement: Float64Array(2 (frames + 1))}.
+export function windDisplacementTable(velocityAt, frames, fps, out = null) {
+    const count = Math.max(1, Math.floor(frames));
+    const rate = fps > 0 ? fps : 30;
+    const table = out && out.velocity.length === 2 * count ? out : {
+        velocity: new Float64Array(2 * count),
+        displacement: new Float64Array(2 * (count + 1)),
+    };
+    table.frames = count;
+    table.fps = rate;
+    const velocity = {east: 0, north: 0};
+    let east = 0, north = 0;
+    table.displacement[0] = 0;
+    table.displacement[1] = 0;
+    for (let frame = 0; frame < count; frame++) {
+        velocityAt(frame, velocity);
+        table.velocity[2 * frame] = velocity.east;
+        table.velocity[2 * frame + 1] = velocity.north;
+        east += velocity.east / rate;
+        north += velocity.north / rate;
+        table.displacement[2 * frame + 2] = east;
+        table.displacement[2 * frame + 3] = north;
+    }
+    return table;
+}
+
+// The displacement at a frame, which may be fractional (linear between whole
+// frames, exact for a constant wind) or outside the table (carried on with the
+// first or last velocity).
+export function windDisplacementAt(table, frame, out = {east: 0, north: 0}) {
+    const f = Number.isFinite(frame) ? frame : 0;
+    const n = table.frames, rate = table.fps;
+    if (f <= 0) {
+        out.east = table.velocity[0] * f / rate;
+        out.north = table.velocity[1] * f / rate;
+        return out;
+    }
+    if (f >= n) {
+        out.east = table.displacement[2 * n] + table.velocity[2 * n - 2] * (f - n) / rate;
+        out.north = table.displacement[2 * n + 1] + table.velocity[2 * n - 1] * (f - n) / rate;
+        return out;
+    }
+    const whole = Math.floor(f), part = f - whole;
+    const d = table.displacement;
+    out.east = d[2 * whole] + (d[2 * whole + 2] - d[2 * whole]) * part;
+    out.north = d[2 * whole + 1] + (d[2 * whole + 3] - d[2 * whole + 1]) * part;
+    return out;
+}
+
+// ---- night ---------------------------------------------------------------------
+//
+// The scene lights the terrain at night with a fixed ambient, and its haze has a
+// floor (CNodeSunlight.calculateHazeColor: luminance 0.70 x sky + 0.15), so a
+// distant hill is always a little gray. Clouds take their own night light from
+// the moon instead: dark against the stars with no moon, gray in moonlight.
+
+// The scene's sky brightness against the sun's elevation (degrees): 1 by day, 0
+// after astronomical twilight, a smoothstep between (as calculateSkyBrightness,
+// without its eclipse and altitude terms).
+export function skyBrightnessForSunAngle(angleDeg) {
+    if (angleDeg <= -18) return 0;
+    if (angleDeg >= 0) return 1;
+    const t = (angleDeg + 18) / 18;
+    return t * t * (3 - 2 * t);
+}
+
+// The airlight left over a moonless night, as a share of the scene's floor.
+export const NIGHT_AIRLIGHT_SHARE = 0.12;
+
+// The moon's light for the clouds, relative to a full moon high in the sky:
+// its phase (from its magnitude, -12.7 when full) and its height. The phase
+// ratio is taken to the power 0.5: the eye adapts to the dark, so a quarter
+// moon (a twelfth of the full moon's light) still shows the clouds.
+export function moonLightFactor(moonMagnitude, moonAngleDeg, eclipseDimming = 1) {
+    const ratio = Math.pow(10, -0.4 * ((Number.isFinite(moonMagnitude) ? moonMagnitude : -12.7) + 12.7));
+    return Math.sqrt(Math.min(1.2, Math.max(0, ratio * eclipseDimming))) * sunBrightness(moonAngleDeg);
+}
+
+// What the clouds need at night, from the sun's elevation and the moon's light:
+// nightFactor (0 by day, 1 after civil twilight + 6 degrees), and airlightScale,
+// the factor on the scene's airlight (1 by day; the moonlit share of the floor
+// at night).
+export function cloudNightLight(sunAngleDeg, moonLight, out = {nightFactor: 0, airlightScale: 1, ambientScale: 1}) {
+    const angle = Number.isFinite(sunAngleDeg) ? sunAngleDeg : 90;
+    const t = Math.min(1, Math.max(0, (-6 - angle) / 6));
+    out.nightFactor = t * t * (3 - 2 * t);
+    const sky = skyBrightnessForSunAngle(angle);
+    const moon = Math.min(1, Math.max(0, moonLight));
+    const night = NIGHT_AIRLIGHT_SHARE + (1 - NIGHT_AIRLIGHT_SHARE) * moon;
+    const floor = 0.15;
+    out.airlightScale = (0.7 * sky + floor * (night + (1 - night) * sky)) / (0.7 * sky + floor);
+    // The scene's night ambient is a floor that keeps the terrain readable; the
+    // clouds keep only the moonlit share of it.
+    const nightAmbient = NIGHT_AIRLIGHT_SHARE + (1 - NIGHT_AIRLIGHT_SHARE) * 0.6 * moon;
+    out.ambientScale = 1 + (nightAmbient - 1) * out.nightFactor;
+    return out;
+}

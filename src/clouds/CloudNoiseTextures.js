@@ -10,9 +10,11 @@
 // No Worker (Jest, or a failed spawn): the same generator runs on the main
 // thread, so the result is identical, only slower.
 
-import {Data3DTexture, LinearFilter, RGBAFormat, RepeatWrapping, UnsignedByteType} from "three";
+import {Data3DTexture, DataTexture, LinearFilter, LinearMipmapLinearFilter, NearestFilter, RedFormat, RGBAFormat, RepeatWrapping, UnsignedByteType} from "three";
 import {
+    BLUE_NOISE_SIZE,
     DETAIL_SIZE,
+    generateBlueNoise,
     generateDetail,
     generateShapeSlices,
     generateWeather,
@@ -35,9 +37,22 @@ function make3DTexture(bytes, size, name) {
     texture.name = name;
     texture.format = RGBAFormat;
     texture.type = UnsignedByteType;
-    texture.minFilter = LinearFilter;
+    // Mipmapped: the march reads far samples from coarser levels (textureLod).
+    texture.minFilter = LinearMipmapLinearFilter;
     texture.magFilter = LinearFilter;
     texture.wrapS = texture.wrapT = texture.wrapR = RepeatWrapping;
+    texture.generateMipmaps = true;
+    texture.unpackAlignment = 1;
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function makeBlueNoiseTexture(bytes) {
+    const texture = new DataTexture(bytes, BLUE_NOISE_SIZE, BLUE_NOISE_SIZE, RedFormat, UnsignedByteType);
+    texture.name = "cloudBlueNoise";
+    texture.minFilter = NearestFilter;
+    texture.magFilter = NearestFilter;
+    texture.wrapS = texture.wrapT = RepeatWrapping;
     texture.generateMipmaps = false;
     texture.unpackAlignment = 1;
     texture.needsUpdate = true;
@@ -55,6 +70,7 @@ function runOnMainThread() {
         shape: generateShapeSlices(SHAPE_SIZE, 0, SHAPE_SIZE, NOISE_SEED, context),
         detail: generateDetail(DETAIL_SIZE, NOISE_SEED),
         weather: generateWeather(WEATHER_SIZE, NOISE_SEED),
+        blueNoise: generateBlueNoise(BLUE_NOISE_SIZE, NOISE_SEED),
     };
 }
 
@@ -63,9 +79,10 @@ function runInWorkers() {
         const count = workerCount();
         const workers = [];
         const shape = new Uint8Array(SHAPE_SIZE * SHAPE_SIZE * SHAPE_SIZE * 4);
-        const result = {shape, detail: null, weather: null};
+        const result = {shape, detail: null, weather: null, blueNoise: null};
         // Small jobs first in the queue, so they overlap the long shape slabs.
-        const jobs = [{job: "weather", size: WEATHER_SIZE, seed: NOISE_SEED}, {job: "detail", size: DETAIL_SIZE, seed: NOISE_SEED}];
+        const jobs = [{job: "weather", size: WEATHER_SIZE, seed: NOISE_SEED}, {job: "detail", size: DETAIL_SIZE, seed: NOISE_SEED},
+            {job: "blueNoise", size: BLUE_NOISE_SIZE, seed: NOISE_SEED}];
         const slab = Math.ceil(SHAPE_SIZE / (count * 2));
         for (let z0 = 0; z0 < SHAPE_SIZE; z0 += slab) {
             jobs.push({job: "shape", size: SHAPE_SIZE, z0, z1: Math.min(SHAPE_SIZE, z0 + slab), seed: NOISE_SEED});
@@ -116,7 +133,7 @@ function runInWorkers() {
     });
 }
 
-// The shared promise of {shape, detail, weather} Data3DTextures.
+// The shared promise of the {shape, detail, weather} Data3DTextures and the blue-noise DataTexture.
 export function requestCloudNoiseTextures() {
     if (texturesPromise) return texturesPromise;
     const started = (typeof performance !== "undefined" ? performance.now() : Date.now());
@@ -131,6 +148,7 @@ export function requestCloudNoiseTextures() {
             shape: make3DTexture(bytes.shape, SHAPE_SIZE, "cloudShapeNoise"),
             detail: make3DTexture(bytes.detail, DETAIL_SIZE, "cloudDetailNoise"),
             weather: make3DTexture(bytes.weather, WEATHER_SIZE, "cloudWeatherNoise"),
+            blueNoise: makeBlueNoiseTexture(bytes.blueNoise),
             version: NOISE_VERSION,
             milliseconds: (typeof performance !== "undefined" ? performance.now() : Date.now()) - started,
         };
