@@ -112,7 +112,9 @@ Green means only that the point did not move measurably. A planet is green, and 
 
 The catalog identification needs enough stars to find a pattern and then confirm it against the rest of the field. A twilight clip can show only a few bright points: planets and the brightest stars. When **Identify Stars (catalog)** fails, it then tries **Bright Triples**, which works on three points at a time. You can also press **Identify Bright Triples** yourself.
 
-Its catalog is made for the sitch: the planets, and the stars brighter than **Bright Triples: magnitude limit** (2.0 by default), at the date of the **In** frame. With **Bright Triples: above horizon only** on (the default), only the ones above the horizon at the sitch's place and time take part. Turn it off when the place or the time is not certain: the whole sky is then used, with the planets where they are on the sitch's date. The Moon is left out, because it is a disk and not a point.
+Its catalog is made for the sitch: the planets, and the stars brighter than **Bright Triples: magnitude limit** (3.0 by default), at the date of the **In** frame. By default the whole sky takes part, with the planets where they are on that date, so a wrong place or time does not throw out the right stars. When the place and time are certain, tick **Bright Triples: above horizon only**: only the objects above the horizon then take part, which is faster and gives fewer triangles that fit by chance. The Moon is left out, because it is a disk and not a point.
+
+It runs in the background, in a progress window with **Abort**. At the defaults it uses about 180 objects and 250,000 catalog triangles, takes a few tenths of a second, and uses about 5 MB.
 
 1. Set the sitch's date and time, and the camera position if you know it.
 2. Set the camera's FOV to at least the video's real field of view. Bright Triples does not try a triangle of objects that is wider than the camera's diagonal field of view.
@@ -122,9 +124,9 @@ Its catalog is made for the sitch: the planets, and the stars brighter than **Br
 
 **The result.** The names go on the circles, the camera is fitted to all of them, and with **Sync Camera to Star Field** ticked Sitrec's camera is pointed and zoomed to match. On the dawn clip of Regulus, Jupiter and Mars, the Status line read:
 
-`identify failed: too few stars to identify - Bright Triples: Jupiter, Alphard, Regulus, Mars - fitted to 4 named stars - vertical FOV 60.69 deg, rms 0.3 px, worst 0.5 px - Mars made a star circle - 19 other triples also fit; next: Mirzam, Adhara, Sirius: 3 matched, 2 missing, rms 1.16 px, field 58.7 deg`
+`identify failed: too few stars to identify - Bright Triples: Jupiter, Alphard, Regulus, Mars, HIP 47908 - fitted to 5 named stars - vertical FOV 60.64 deg, rms 0.5 px, worst 0.6 px - Mars made a star circle - 686 other triples also fit; next: HIP 61932, HIP 61585, HIP 59196, Acrux: 4 matched, 20 missing, rms 5.40 px, field 64.1 deg`
 
-It also named a fourth point, low in the frame, as Alphard. The search took about 15 ms with 33 objects above the horizon. With **Bright Triples: above horizon only** off it used 53 objects and gave the same answer.
+It also named a point low in the frame as Alphard, and one above the planets as HIP 47908 (ε Leonis, magnitude 3.0). The search used 181 objects and 246,614 catalog triangles, and took 0.3 s. The next answer names four points, but 20 objects that it puts in the frame have no circle, and it fits 10 times worse. At magnitude 2.0 over the whole sky, the search took about 0.1 s and named the first four points.
 
 - **Read the "next" answer.** It is the best answer that gives other names. Three points always fit some set of three objects, so an answer that names only three circles is the least certain. Check the names against what you know of the sky. If they are wrong, [name the points by hand](#naming-stars-by-hand).
 - **It replaces the names on the circles**, as one **Undo** step. After a failed catalog identification it runs only when no circle has a name that you gave.
@@ -243,8 +245,8 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 | **Min detections per track** | 3–40 | How many frames a point must appear in before it is judged at all. Below this it is `short` |
 | **Moving: significance** | 2–20 | How *confident* the drift must be — how many times larger than its own uncertainty. Raise it if slow-drifting stars are being called movers |
 | **Moving: min drift (sigma)** | 2–40 | How *far* it must actually move, in multiples of this clip's position noise. Raise it to ignore small real motions and only catch obvious ones |
-| **Bright Triples: magnitude limit** | −1.5–3 | The planets and the stars brighter than this take part in [Bright Triples](#bright-triples). 2.0 by default. A higher limit gives more triangles that fit by chance |
-| **Bright Triples: above horizon only** | — | On by default: only objects above the horizon at the sitch's place and time. Off: the whole sky, for a sitch whose place or time is not certain |
+| **Bright Triples: magnitude limit** | −1.5–3 | The planets and the stars brighter than this take part in [Bright Triples](#bright-triples). 3.0 by default. A higher limit can name fainter stars, and gives more triangles that fit by chance |
+| **Bright Triples: above horizon only** | — | Off by default: the whole sky, so a wrong place or time does not throw out the right stars. On: only objects above the horizon at the sitch's place and time |
 
 ## Optimize For Star Tracking
 

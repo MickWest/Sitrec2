@@ -26,7 +26,7 @@ import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator"
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
-import {identifyBrightTriples} from "./StarTriples";
+import {identifyBrightTriplesOffThread} from "./StarTriplesOffThread";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
@@ -167,10 +167,13 @@ const params = {
     driftSignificance: STAR_SOLVE_DEFAULTS.driftSignificance,
     driftMinSigmas: STAR_SOLVE_DEFAULTS.driftMinSigmas,
     // Identify Bright Triples uses the planets and the stars brighter than this (StarTriples.js).
-    tripleMagLimit: 2.0,
-    // ...and only those above the horizon at the sitch's place and time. Off when the place or
-    // the time is not certain: then the whole sky, with the planets where they are on the date.
-    tripleAboveHorizon: true,
+    // Magnitude 3 over the whole sky is about 180 objects and 255,000 triples in a 101 deg field:
+    // about two seconds, in a worker.
+    tripleMagLimit: 3.0,
+    // On: only those above the horizon at the sitch's place and time. Off by default, so a wrong
+    // place or time does not throw out the right objects; the planets are then where they are on
+    // the date.
+    tripleAboveHorizon: false,
     // Lens. On a wide-angle clip the 2D similarity sky model is biased at the frame edges - a
     // measured ~10-12 px on the reference clip, enough to report edge stars as movers. When this
     // is on, the lens is fitted from the star field and the classification is redone on the
@@ -3581,9 +3584,35 @@ export async function identifyByBrightTriples(opts = {}) {
     await yieldToBrowser();
     if (result !== r) return false;
 
+    // In a worker, behind the Star Tracker's progress window, which can stop it. Building the
+    // catalog triples is about a sixth of the time, matching the rest.
+    let aborted = false;
+    initProgress({title: "Bright Triples", filename: `${objects.length} objects, ${stars.length} candidate stars`,
+        showAbort: true, onAbort: () => { aborted = true; }});
     const t0 = performance.now();
-    const res = identifyBrightTriples({stars, objects, width: r.videoW, height: r.videoH, maxFovDeg});
+    let res;
+    try {
+        res = await identifyBrightTriplesOffThread(
+            {stars, objects, width: r.videoW, height: r.videoH, maxFovDeg},
+            {
+                onProgress: (stage, f) => updateProgress(stage === "catalog"
+                    ? {percent: 15 * f, status: "Making the triangles of bright objects"}
+                    : {percent: 15 + 85 * f, status: "Matching the triangles of candidate stars"}),
+                shouldAbort: () => aborted || result !== r,
+            });
+    } catch (e) {
+        params.status = `${lead}Bright Triples failed: ${e?.message ?? e}`;
+        setRenderOne();
+        return false;
+    } finally {
+        hideProgress();
+    }
     const ms = performance.now() - t0;
+    if (!res) {
+        if (result === r) params.status = `${lead}Bright Triples stopped`;
+        setRenderOne();
+        return false;
+    }
     const describe = (c) => `${c.matches.map((m) => m.object.label).join(", ")}: ${c.nMatched} matched, `
         + `${c.nMissing} missing, rms ${c.rmsPx.toFixed(2)} px, field ${c.fovDeg.toFixed(1)} deg`;
     // The inputs too, so a run that names the wrong objects can be checked from the console.
@@ -5160,13 +5189,14 @@ export function setupStarTrackerMenu() {
             + "counting as motion.");
     tweaks.add(params, "tripleMagLimit", -1.5, 3, 0.1).name("Bright Triples: magnitude limit")
         .tooltip("Identify Bright Triples uses the planets and the stars brighter than this magnitude. "
-            + "Smaller numbers are brighter: 2 gives about 35 to 45 objects above the horizon. A higher "
-            + "limit finds more triples and takes longer.");
+            + "Smaller numbers are brighter. 3, the default, gives about 180 objects over the whole sky "
+            + "and takes a few seconds; 2 gives about 50 and takes a fraction of a second. A higher "
+            + "limit can name fainter stars, and finds more triples that fit by chance.");
     tweaks.add(params, "tripleAboveHorizon").name("Bright Triples: above horizon only")
-        .tooltip("Use only the planets and stars above the horizon at the sitch's place and time. Turn it "
-            + "off when the place or the time is not certain: Identify Bright Triples then uses the whole "
-            + "sky, with the planets where they are on the sitch's date. More objects give more triples "
-            + "that fit by chance.");
+        .tooltip("Off by default: Identify Bright Triples uses the whole sky, with the planets where they "
+            + "are on the sitch's date, so a wrong place or time does not throw out the right stars. Turn "
+            + "it on when the place and time are certain: it then uses only the objects above the horizon, "
+            + "which is faster and gives fewer triples that fit by chance.");
 
 
     folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear")

@@ -1,10 +1,11 @@
 /**
- * Bright-triple identification, for a clip with too few stars for the quad solver.
+ * Bright-triple identification, for a clip with too few stars for the quad solver. It runs in a
+ * worker (StarTriplesOffThread.js, workers/BrightTriplesWorker.js).
  *
  * A twilight clip can show only a few bright dots: planets and the brightest stars. The quad
  * solver needs four stars per code and many codes to agree, and its catalog has no planets.
  * This works on THREE points, and its catalog is built for the sitch's time and place: the
- * planets and the stars brighter than a magnitude limit, above the horizon.
+ * planets and the stars brighter than a magnitude limit, over the whole sky or only above the horizon.
  *
  * The code of a triple: the two points farthest apart go to (0,0) and (1,1), and the third
  * point's position there is the code. A shift, a rotation and a change of scale leave it the
@@ -94,11 +95,27 @@ export function imageCodes(P, sideTol) {
 /**
  * The catalog triples no wider than maxSepDeg, each with its code on the tangent plane about
  * the triple's mean direction. objects: [{dir: unit vector}], in any order.
+ *
+ * Stored as typed arrays, one entry per triple: the code (codeX, codeY), the three objects in
+ * code order (ids, three per triple) and the widest angle (sepDeg). 18 bytes a triple, where an
+ * object with two small arrays took about 230: the whole sky to magnitude 3 within a 101 deg
+ * field is 255,000 triples, 4.6 MB rather than 56 MB.
+ *
+ * @param {function(number)} [onProgress] - the fraction done, 0 to 1
+ * @returns {{n: number, codeX: Float32Array, codeY: Float32Array, ids: Uint16Array, sepDeg: Float32Array}}
  */
-export function catalogTriples(objects, maxSepDeg) {
+export function catalogTriples(objects, maxSepDeg, onProgress = null) {
     const cosMax = Math.cos(maxSepDeg * D2R);
     const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-    const out = [];
+    let cap = 1024, count = 0;
+    let codeX = new Float32Array(cap), codeY = new Float32Array(cap);
+    let ids = new Uint16Array(3 * cap), sepDeg = new Float32Array(cap);
+    const grow = () => {
+        cap *= 2;
+        const more = (a, size) => { const b = new a.constructor(size); b.set(a); return b; };
+        codeX = more(codeX, cap); codeY = more(codeY, cap);
+        ids = more(ids, 3 * cap); sepDeg = more(sepDeg, cap);
+    };
     const n = objects.length;
     for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
@@ -107,22 +124,28 @@ export function catalogTriples(objects, maxSepDeg) {
             for (let k = j + 1; k < n; k++) {
                 const cik = dot(objects[i].dir, objects[k].dir), cjk = dot(objects[j].dir, objects[k].dir);
                 if (cik < cosMax || cjk < cosMax) continue;
-                const ids = [i, j, k];
+                const tri = [i, j, k];
                 const c = [0, 0, 0];
-                for (const id of ids) for (let a = 0; a < 3; a++) c[a] += objects[id].dir[a];
+                for (const id of tri) for (let a = 0; a < 3; a++) c[a] += objects[id].dir[a];
                 const len = Math.hypot(c[0], c[1], c[2]);
                 const centre = [c[0] / len, c[1] / len, c[2] / len];
                 const basis = tangentBasis(centre);
-                const Q = ids.map((id) => gnomonic(objects[id].dir, centre, basis));
+                const Q = tri.map((id) => gnomonic(objects[id].dir, centre, basis));
                 if (Q.some((q) => !q)) continue;
                 const t = canonicalTriple(Q);
                 if (!t) continue;
-                out.push({code: t.code, ids: t.order.map((m) => ids[m]),
-                    sepDeg: Math.acos(Math.min(cij, cik, cjk)) / D2R});
+                if (count === cap) grow();
+                codeX[count] = t.code[0];
+                codeY[count] = t.code[1];
+                for (let m = 0; m < 3; m++) ids[3 * count + m] = tri[t.order[m]];
+                sepDeg[count] = Math.acos(Math.min(cij, cik, cjk)) / D2R;
+                count++;
             }
         }
+        // The work left after object i goes as the cube of the objects left.
+        if (onProgress) onProgress(1 - ((n - 1 - i) / n) ** 3);
     }
-    return out;
+    return {n: count, codeX, codeY, ids, sepDeg};
 }
 
 /**
@@ -152,10 +175,13 @@ function projectObjects(model, objects) {
  * @param {number} args.height - frame height, px
  * @param {number} args.maxFovDeg - the camera's widest angle (its diagonal field of view)
  * @param {object} [args.options] - overrides of TRIPLE_DEFAULTS
+ * @param {function(string, number)} [args.onProgress] - stage "catalog" (building the catalog
+ *   triples) then "match", each with the fraction of that stage done
  * @returns {{ok: boolean, reason?: string, best?: object, candidates: object[], counts: object}}
- *   A candidate is {matches: [{star, object}], fit, rmsPx, nMatched, nMissing, codeDist, fovDeg}.
+ *   A candidate is {matches: [{star, object}], rmsPx, nMatched, nMissing, codeDist, fovDeg}:
+ *   plain data, so a worker can post it.
  */
-export function identifyBrightTriples({stars, objects, width, height, maxFovDeg, options = {}}) {
+export function identifyBrightTriples({stars, objects, width, height, maxFovDeg, options = {}, onProgress = null}) {
     const o = {...TRIPLE_DEFAULTS, ...options};
     const counts = {imageStars: 0, objects: objects.length, catalogTriples: 0, imageTriples: 0,
         codeMatches: 0, fitted: 0};
@@ -166,9 +192,10 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
     if (img.length < 3) return {ok: false, reason: `needs 3 candidate stars, found ${img.length}`, candidates: [], counts};
     const objs = objects.map((ob) => ({...ob, dir: raDecToVec(ob.raDeg * D2R, ob.decDeg * D2R)}));
     if (objs.length < 3) return {ok: false, reason: `only ${objs.length} bright objects above the horizon`, candidates: [], counts};
-    const cat = catalogTriples(objs, maxFovDeg);
-    counts.catalogTriples = cat.length;
-    if (!cat.length) return {ok: false, reason: "no three bright objects fit in the camera's field", candidates: [], counts};
+    const cat = catalogTriples(objs, maxFovDeg, onProgress && ((f) => onProgress("catalog", f)));
+    counts.catalogTriples = cat.n;
+    if (!cat.n) return {ok: false, reason: "no three bright objects fit in the camera's field", candidates: [], counts};
+    const nImageTriples = img.length * (img.length - 1) * (img.length - 2) / 6;
 
     const diagPx = Math.hypot(width, height);
     const center = [width / 2, height / 2];
@@ -182,8 +209,8 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
                 const tri = [img[a], img[b], img[c]];
                 const P = tri.map((s) => [s.x, s.y]);
                 for (const ic of imageCodes(P, o.sideTol)) {
-                    for (const t of cat) {
-                        const codeDist = Math.hypot(ic.code[0] - t.code[0], ic.code[1] - t.code[1]);
+                    for (let t = 0; t < cat.n; t++) {
+                        const codeDist = Math.hypot(ic.code[0] - cat.codeX[t], ic.code[1] - cat.codeY[t]);
                         if (codeDist > o.codeTol) continue;
                         // The field this pairing implies. A pinhole lens maps angle by its tangent,
                         // so the focal length is the far pair's length over 2 tan(half its angle) -
@@ -192,10 +219,10 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
                         // pair. Pixels in proportion to angle saw the 61 deg Jupiter clip as
                         // 138 deg wide. Wider than the camera can see contradicts the limit the
                         // triples were chosen by.
-                        const focalPx = ic.len / (2 * Math.tan(t.sepDeg * D2R / 2));
+                        const focalPx = ic.len / (2 * Math.tan(cat.sepDeg[t] * D2R / 2));
                         if (2 * Math.atan(diagPx / 2 / focalPx) / D2R > maxFovDeg * o.fovMargin) continue;
                         counts.codeMatches++;
-                        const pairs = ic.order.map((m, q) => ({star: tri[m], object: objs[t.ids[q]]}));
+                        const pairs = ic.order.map((m, q) => ({star: tri[m], object: objs[cat.ids[3 * t + q]]}));
                         const key = pairs.map((p) => `${p.star.index}:${p.object.label}`).sort().join("|");
                         if (tried.has(key)) continue;
                         tried.add(key);
@@ -206,6 +233,7 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
                         candidates.push({...verify(fit, pairs, stars, objs, width, height, matchTol), codeDist});
                     }
                 }
+                if (onProgress) onProgress("match", counts.imageTriples / nImageTriples);
             }
         }
     }
@@ -254,6 +282,37 @@ function verify(fit, pairs, stars, objs, width, height, matchTol) {
         matches.push({star: m.star, object: m.object});
     }
     const extra = matches.length - pairs.length;
-    return {matches, fit, rmsPx: fit.rmsPx, nMatched: matches.length, nMissing: inFrame - extra,
+    // Not the fit itself: it carries a function (refToSky), which a worker cannot post. The
+    // names are what is used; applyManualLabels fits the camera to them again.
+    return {matches, rmsPx: fit.rmsPx, nMatched: matches.length, nMissing: inFrame - extra,
         fovDeg: fit.fovDeg};
+}
+
+// ---------------------------------------------------------------------------------------------
+// Worker job
+// ---------------------------------------------------------------------------------------------
+
+const PROGRESS_INTERVAL_MS = 100;
+
+/**
+ * The worker's message handler, here so the tests can drive it without a Worker. In:
+ * {type: "run", args} with identifyBrightTriples's arguments (plain data). Out: any number of
+ * {type: "progress", stage, fraction}, at most one per stage every 100 ms, then one
+ * {type: "done", result} or {type: "error", message}.
+ */
+export function handleBrightTriplesMessage(msg, post) {
+    if (msg?.type !== "run") return;
+    try {
+        let last = -Infinity, lastStage = null;
+        const onProgress = (stage, fraction) => {
+            const now = Date.now();
+            if (stage === lastStage && fraction < 1 && now - last < PROGRESS_INTERVAL_MS) return;
+            last = now;
+            lastStage = stage;
+            post({type: "progress", stage, fraction});
+        };
+        post({type: "done", result: identifyBrightTriples({...msg.args, onProgress})});
+    } catch (e) {
+        post({type: "error", message: e?.message ?? String(e)});
+    }
 }

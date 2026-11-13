@@ -3,8 +3,9 @@
 // A synthetic sky is seen through a known pinhole camera, and the dots that land in the frame
 // are the candidate stars. The triples must name them.
 
-import {TRIPLE_DEFAULTS, canonicalTriple, catalogTriples, identifyBrightTriples, imageCodes, tripleCode}
-    from "../src/starTrack/StarTriples";
+import {TRIPLE_DEFAULTS, canonicalTriple, catalogTriples, handleBrightTriplesMessage, identifyBrightTriples, imageCodes,
+    tripleCode} from "../src/starTrack/StarTriples";
+import {identifyBrightTriplesOffThread} from "../src/starTrack/StarTriplesOffThread";
 import {gnomonic, raDecToVec, tangentBasis} from "../src/starTrack/StarIdentify";
 
 const D2R = Math.PI / 180;
@@ -101,8 +102,8 @@ describe("triple codes", () => {
     test("catalog triples wider than the camera's field are left out", () => {
         const objs = [{raDeg: 0, decDeg: 0}, {raDeg: 10, decDeg: 0}, {raDeg: 0, decDeg: 10}, {raDeg: 80, decDeg: 0}]
             .map((o) => ({dir: raDecToVec(o.raDeg * D2R, o.decDeg * D2R)}));
-        expect(catalogTriples(objs, 20)).toHaveLength(1);
-        expect(catalogTriples(objs, 90)).toHaveLength(4);
+        expect(catalogTriples(objs, 20).n).toBe(1);
+        expect(catalogTriples(objs, 90).n).toBe(4);
     });
 });
 
@@ -161,5 +162,61 @@ describe("identifyBrightTriples", () => {
         expect(identifyBrightTriples({stars: [{x: 1, y: 1, mag: 1, index: 0}, {x: 5, y: 9, mag: 1, index: 1}, {x: 40, y: 2, mag: 1, index: 2}],
             objects: objects.slice(0, 2), width: W, height: H, maxFovDeg: 90}).reason).toMatch(/only 2 bright objects/);
         expect(TRIPLE_DEFAULTS.maxImageStars).toBeGreaterThanOrEqual(3);
+    });
+});
+
+describe("running Bright Triples off the main thread", () => {
+    const objects = sky(7, 40, 150, 20, 70);
+    const vfov = 40;
+    const stars = seen(objects, camera(150, 20, 12, vfov, W, H), W, H, 3);
+    const args = {stars, objects, width: W, height: H, maxFovDeg: diagFov(vfov)};
+
+    test("the catalog triples keep their codes and objects in typed arrays", () => {
+        const objs = objects.map((o) => ({dir: raDecToVec(o.raDeg * D2R, o.decDeg * D2R)}));
+        const cat = catalogTriples(objs, 60);
+        expect(cat.codeX).toBeInstanceOf(Float32Array);
+        expect(cat.ids.length).toBeGreaterThanOrEqual(3 * cat.n);
+        for (let t = 0; t < cat.n; t++) {
+            expect(cat.codeX[t] + cat.codeY[t]).toBeLessThanOrEqual(1 + 1e-6);
+            expect(cat.sepDeg[t]).toBeLessThanOrEqual(60 + 1e-4);
+        }
+    });
+
+    test("progress goes through both stages, in order, to the end", () => {
+        const seenStages = [];
+        identifyBrightTriples({...args, onProgress: (stage, f) => seenStages.push([stage, f])});
+        const catalog = seenStages.filter(([s]) => s === "catalog").map(([, f]) => f);
+        const match = seenStages.filter(([s]) => s === "match").map(([, f]) => f);
+        expect(seenStages.findIndex(([s]) => s === "match")).toBeGreaterThan(seenStages.findLastIndex(([s]) => s === "catalog"));
+        for (const list of [catalog, match]) {
+            for (let k = 1; k < list.length; k++) expect(list[k]).toBeGreaterThanOrEqual(list[k - 1]);
+            expect(list[list.length - 1]).toBeCloseTo(1, 9);
+        }
+    });
+
+    test("the worker's handler posts progress, then the same answer as a direct call", () => {
+        const posted = [];
+        handleBrightTriplesMessage({type: "run", args}, (msg) => posted.push(msg));
+        const done = posted[posted.length - 1];
+        expect(done.type).toBe("done");
+        expect(posted.slice(0, -1).every((m) => m.type === "progress")).toBe(true);
+        // A worker posts by structured clone: the result must be plain data.
+        expect(() => structuredClone(done.result)).not.toThrow();
+        const direct = identifyBrightTriples(args);
+        expect(done.result.best.matches.map((m) => m.object.label)).toEqual(direct.best.matches.map((m) => m.object.label));
+    });
+
+    test("an error is posted, not thrown", () => {
+        const posted = [];
+        handleBrightTriplesMessage({type: "run", args: {...args, stars: null}}, (msg) => posted.push(msg));
+        expect(posted).toEqual([expect.objectContaining({type: "error"})]);
+    });
+
+    test("with no Worker, the off-thread call runs here and gives the same answer", async () => {
+        expect(typeof Worker).toBe("undefined");
+        const stages = new Set();
+        const res = await identifyBrightTriplesOffThread(args, {onProgress: (stage) => stages.add(stage)});
+        expect(res.best.matches.map((m) => m.object.label)).toEqual(identifyBrightTriples(args).best.matches.map((m) => m.object.label));
+        expect([...stages]).toEqual(["catalog", "match"]);
     });
 });
