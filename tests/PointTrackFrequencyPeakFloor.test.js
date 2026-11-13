@@ -24,6 +24,7 @@ import {
     addPointTrackFrequencyMenu, clampPeakFloor, FREQUENCY_DEFAULTS, MAX_PEAK_FLOOR_HZ, resetPointTrackFrequencyGraph,
 } from "../src/PointTrackFrequencyGraph";
 import {CNodePointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePointTrackFrequencyGraphView";
+import {pointTracks} from '../src/PointTrackRegistry';
 
 function menuCalls() {
     const calls = [], controller = {};
@@ -55,8 +56,75 @@ function analyzedView(options = {}) {
 }
 
 beforeEach(() => {
+    pointTracks.length = 0;
     NodeMan.get.mockReset().mockReturnValue(null);
     resetPointTrackFrequencyGraph();
+});
+afterEach(() => { pointTracks.length = 0; });
+
+function comparisonViews() {
+    const views = [2, 8, 4].map((amplitude, i) => {
+        const view = analyzedView({minPeakHz: 1.5, percent: false});
+        view.trackId = `track${i + 1}`;
+        view.id = i ? `pointTrackFrequencyGraph_${view.trackId}` : 'pointTrackFrequencyGraph';
+        view.visible = true;
+        view.job.result.flux = indices.map(n => 100 + amplitude * Math.sin(2 * Math.PI * 10 * n / 30));
+        view.updateSpectrum();
+        return view;
+    });
+    pointTracks.push(...views.map(view => ({trackId: view.trackId})));
+    NodeMan.get.mockImplementation(id => views.find(view => view.id === id));
+    return views;
+}
+
+test('all visible graphs use the largest needed Y range and update when the dominant graph changes', () => {
+    const views = comparisonViews();
+    const rescale = () => views.filter(v => v.visible).map(v => { v.autoScale(); return v.maxY; });
+    const largest = Math.max(...views.map(v => v.requiredMaxY()));
+    expect(rescale()).toEqual([largest, largest, largest]);
+    expect(rescale()).toEqual([largest, largest, largest]); // no feedback from shared maxY
+    views[1].visible = false;
+    const reduced = Math.max(views[0].requiredMaxY(), views[2].requiredMaxY());
+    expect(reduced).toBeLessThan(largest);
+    expect(rescale()).toEqual([reduced, reduced]);
+    views[1].visible = true;
+    views[1].job.result.flux = indices.map(n => 100 + 30 * Math.sin(2 * Math.PI * 10 * n / 30));
+    views[1].updateSpectrum();
+    const increased = views[1].requiredMaxY();
+    expect(increased).toBeGreaterThan(largest);
+    expect(rescale()).toEqual([increased, increased, increased]);
+});
+
+test('shared Y range includes the shown background, percent conversion and warning headroom', () => {
+    const views = comparisonViews();
+    const dominant = views[2];
+    dominant.job.result.background = indices.map(n => 20 + 5 * Math.sin(2 * Math.PI * 10 * n / 30));
+    dominant.updateSpectrum();
+    const baseline = dominant.requiredMaxY();
+    expect(baseline).toBeGreaterThan(200);
+    dominant.ctx = {measureText: text => ({width: text.length * 7})};
+    dominant.widthPx = 500; dominant.heightPx = 200;
+    dominant.job.result.clippedFraction[0] = .1;
+    const withWarning = dominant.requiredMaxY();
+    expect(withWarning).toBeGreaterThan(baseline);
+    for (const view of views) {
+        view.autoScale();
+        expect(view.maxY).toBe(withWarning);
+    }
+    for (const view of views) view.options.showBackground = false;
+    const noBackground = Math.max(...views.map(v => v.requiredMaxY()));
+    expect(noBackground).toBeLessThan(baseline);
+    for (const view of views) {
+        view.options.percent = true;
+        // A different mean changes the percent amplitude, even with equal DN amplitude.
+        view.spectrum.mean = view === views[0] ? 2 : 100;
+    }
+    const percentRange = Math.max(...views.map(v => v.requiredMaxY()));
+    for (const view of views) {
+        view.autoScale();
+        expect(view.maxY).toBe(percentRange);
+    }
+    expect(views[0].requiredMaxY()).toBe(percentRange);
 });
 
 test('the floor defaults to 0.5 Hz and is clamped to 0–30 Hz', () => {

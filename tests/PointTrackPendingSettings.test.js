@@ -24,6 +24,8 @@ jest.mock('../src/configUtils', () => ({isLocal: false}));
 jest.mock('../src/i18n', () => ({t: v => v}));
 jest.mock('../src/PointTrackFrequencyGraph', () => ({
     addPointTrackFrequencyMenu: jest.fn(),
+    clampFrequencyRadiusOverride: value => Number(value) > 0 ? Math.max(2, Number(value)) : 0,
+    showNewPointTrackFrequencyGraph: jest.fn(),
     getPointTrackFrequencyAperture: jest.fn(() => null),
     removePointTrackFrequencyGraph: jest.fn(),
 }));
@@ -198,6 +200,7 @@ test('three tracks keep independent points, settings, visibility and edit select
     set('trackRadius', 7);
     const second = tracking.addPointTrack();
     second.trackName = 'Second object';
+    second.frequencyRadius = 9;
     second.trackedPositions.set(3, {x: 300, y: 210});
     second.trackedPositions.unmeasuredFrames = new Set([4]);
     set('trackRadius', 12);
@@ -219,6 +222,8 @@ test('three tracks keep independent points, settings, visibility and edit select
     expect(tracks.map(t => t.enabled)).toEqual([true, false, true]);
     expect(tracks[0].trackedPositions.get(2)).toEqual({x: 100, y: 200});
     expect(tracks[0].manualKeyframes.has(2)).toBe(true);
+    expect(tracks[1].frequencyRadius).toBe(9);
+    expect(tracks[0].frequencyRadius).toBe(0);
     expect(tracks[1].trackedPositions.get(3)).toEqual({x: 300, y: 210});
     expect(tracks[1].trackedPositions.unmeasuredFrames.has(4)).toBe(true);
     expect(tracks[2]).toMatchObject({trackName: 'Empty seed', trackX: 50, trackY: 60});

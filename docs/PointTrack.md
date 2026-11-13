@@ -30,10 +30,13 @@ Open **Track List** to control each track's **Display Track** and **Frequency An
 independently. Several tracks and frequency graphs can stay visible together. Each graph
 shows its track name and stays with that track when you change the edit selection.
 Use **Arrange Frequency Graphs** to place the visible graphs side by side below the video.
-The frequency settings apply to the selected track. All graphs use the timeline's In/Out
-range, so they compare the same interval.
+The main **Frequency Analysis** checkbox shows or hides all graphs. **Frequency Analysis
+Settings** applies to every track. In each Track List entry, **Frequency Radius** overrides
+the shared aperture radius when it is nonzero; **0** uses the shared radius. Nonzero
+radii are at least 2 pixels. All visible graphs share the largest Y-axis range any of
+them needs, and use the timeline's In/Out range to compare the same interval.
 
-Each track keeps its own points, tracking settings, smoothing and frequency settings.
+Each track keeps its own points, tracking settings, smoothing and radius override.
 Saving the sitch preserves the tracks, edit selection, display choices and graph windows.
 An older single-track sitch opens as **Track 1**. **Delete Selected Track** removes only
 the selected track and its graph, after confirmation.

@@ -34,7 +34,7 @@ const saved = {visible: true, left: 0.55, top: 0.20, width: 0.45, height: 0.53, 
 let graph;
 
 function makeGraph(id) {
-    graph = {id, in: {}, visible: true, ...saved,
+    graph = {id, in: {}, visible: true, ...saved, refreshAnalysis() {}, updateSpectrum() {},
         modDeserialize(state) {
             for (const key of Object.keys(saved)) if (state[key] !== undefined) this[key] = state[key];
         },

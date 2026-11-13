@@ -11,7 +11,7 @@ import {createPointTrackFrequencyGraphView} from '../src/pointFrequency/CNodePoi
 import {
     showPointTrackFrequencyGraph, serializePointTrackFrequencyGraph, deserializePointTrackFrequencyGraph,
     resetPointTrackFrequencyGraph, removePointTrackFrequencyGraph, getPointTrackFrequencyView,
-    addPointTrackFrequencyMenu,
+    addPointTrackFrequencyMenu, setPointTrackFrequencyRadius, showNewPointTrackFrequencyGraph,
 } from '../src/PointTrackFrequencyGraph';
 
 let views;
@@ -43,16 +43,27 @@ function frequencyControls() {
     return calls;
 }
 
-test('three graphs stay attached to their tracks when editing changes, and settings stay independent', async () => {
+test('frequency settings apply to all tracks regardless of edit selection, with per-track radius overrides', async () => {
     for (const track of pointTracks) await showPointTrackFrequencyGraph(true, null, track.trackId);
     expect(views.size).toBe(3);
     const controls = frequencyControls();
     controls.radius.radius = 3;
+    setPointTrackFrequencyRadius('track2', 6);
+    const overridden = getPointTrackFrequencyView('track2');
+    overridden.refreshAnalysis.mockClear();
     pointTracks[0].editable = false;
     pointTracks[1].editable = true;
     controls.radius.radius = 8;
     expect([...views.values()].map(v => v.trackId)).toEqual(['track1', 'track2', 'track3']);
-    expect([...views.values()].map(v => v.options.radius)).toEqual([3, 8, 4]);
+    expect([...views.values()].map(v => v.options.radius)).toEqual([8, 6, 8]);
+    expect(overridden.refreshAnalysis).not.toHaveBeenCalled();
+    controls.minPeakHz.minPeakHz = 2;
+    controls.percent.percent = false;
+    controls.showBackground.showBackground = false;
+    controls.perMinute.perMinute = true;
+    for (const view of views.values()) expect(view.options).toMatchObject({minPeakHz: 2, percent: false, showBackground: false, perMinute: true});
+    setPointTrackFrequencyRadius('track2', 0);
+    expect(overridden.options.radius).toBe(8);
     expect([...views.values()].every(v => v.visible)).toBe(true);
     await showPointTrackFrequencyGraph(false);
     expect([...views.values()].map(v => v.visible)).toEqual([true, false, true]);
@@ -60,10 +71,13 @@ test('three graphs stay attached to their tracks when editing changes, and setti
 
 test('save/load preserves all windows, including a hidden graph and its aperture and position', async () => {
     for (const track of pointTracks) await showPointTrackFrequencyGraph(true, null, track.trackId);
-    getPointTrackFrequencyView('track2').options.radius = 7;
+    setPointTrackFrequencyRadius('track2', 7);
+    frequencyControls().minPeakHz.minPeakHz = 2;
     getPointTrackFrequencyView('track2').left = .6;
     await showPointTrackFrequencyGraph(false, null, 'track2');
     const saved = serializePointTrackFrequencyGraph();
+    expect(saved.settings.minPeakHz).toBe(2);
+    expect(saved.tracks.track2.frequencyOptions).toBeUndefined();
     views.clear(); resetPointTrackFrequencyGraph();
     await deserializePointTrackFrequencyGraph(saved);
     expect([...views.values()].map(v => v.visible)).toEqual([true, false, true]);
@@ -85,4 +99,33 @@ test('hiding during lazy loading does not reopen the window', async () => {
     await showPointTrackFrequencyGraph(false, null, 'track3');
     await opening;
     expect(views.size).toBe(0);
+});
+
+
+test('the main checkbox controls all graphs and new tracks inherit the common settings', async () => {
+    const controls = frequencyControls();
+    controls.radius.radius = 9;
+    controls.show.show = true;
+    await Promise.resolve(); await Promise.resolve();
+    expect([...views.values()].map(v => v.visible)).toEqual([true, true, true]);
+    pointTracks.push({trackId: 'track4', frequencyRadius: 0});
+    await showNewPointTrackFrequencyGraph('track4');
+    expect(getPointTrackFrequencyView('track4').options.radius).toBe(9);
+    controls.show.show = false;
+    expect([...views.values()].every(v => !v.visible)).toBe(true);
+});
+
+test('legacy per-track apertures migrate to overrides and the selected graph supplies common settings', async () => {
+    pointTracks[0].editable = false; pointTracks[1].editable = true;
+    await deserializePointTrackFrequencyGraph({version: 2, tracks: {
+        track1: {visible: true, frequencyOptions: {radius: 12, minPeakHz: 0}},
+        track2: {visible: true, frequencyOptions: {radius: 4, minPeakHz: 1.5}},
+        track3: {visible: true, frequencyOptions: {radius: 4, minPeakHz: 0.5}},
+    }});
+    expect([...views.values()].map(v => v.options.radius)).toEqual([12, 4, 4]);
+    expect(pointTracks[0].frequencyRadius).toBe(12);
+    expect([...views.values()].map(v => v.options.minPeakHz)).toEqual([1.5, 1.5, 1.5]);
+    const controls = frequencyControls();
+    controls.radius.radius = 5;
+    expect([...views.values()].map(v => v.options.radius)).toEqual([12, 5, 5]);
 });

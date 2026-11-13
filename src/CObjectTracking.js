@@ -27,7 +27,8 @@ import {
 import {showViewMessage} from './ViewMessage';
 import {registerFrameRemap, remapFrameEntries} from './VFRTimeline';
 import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture, getPointTrackFrequencyView,
-    showPointTrackFrequencyGraph, removePointTrackFrequencyGraph} from './PointTrackFrequencyGraph';
+    showPointTrackFrequencyGraph, removePointTrackFrequencyGraph, clampFrequencyRadiusOverride,
+    setPointTrackFrequencyRadius, showNewPointTrackFrequencyGraph} from './PointTrackFrequencyGraph';
 import {maxOf, minOf} from "./SafeArrays";
 import {pointTracks} from './PointTrackRegistry';
 
@@ -3120,6 +3121,7 @@ function createPointTracker(videoView, data = {}) {
     tracker.trackId = data.trackId || `track${nextTrackId++}`;
     tracker.trackName = data.trackName || `Track ${pointTracks.length + 1}`;
     tracker.displayColor = data.displayColor || TRACK_COLORS[pointTracks.length % TRACK_COLORS.length];
+    tracker.frequencyRadius = clampFrequencyRadiusOverride(data.frequencyRadius);
     pointTracks.push(tracker);
     hookTrackRendering(videoView);
     return tracker;
@@ -3172,6 +3174,7 @@ export function addPointTrack() {
     const tracker = createPointTracker(videoView);
     selectPointTrack(tracker.trackId);
     tracker.enable();
+    showNewPointTrackFrequencyGraph(tracker.trackId);
     refreshPointTrackList();
     syncTrackControls();
     return tracker;
@@ -3227,10 +3230,14 @@ function refreshPointTrackList() {
             },
             get graph() { return getPointTrackFrequencyView(tracker.trackId)?.visible ?? false; },
             set graph(value) { showPointTrackFrequencyGraph(value, null, tracker.trackId); },
+            get objectRadius() { return tracker.frequencyRadius; },
+            set objectRadius(value) { setPointTrackFrequencyRadius(tracker.trackId, value); },
             edit() { selectPointTrack(tracker.trackId); },
         };
         folder.add(proxy, 'display').name('Display Track').listen();
         folder.add(proxy, 'graph').name('Frequency Analysis').listen();
+        folder.add(proxy, 'objectRadius', 0, 100, 1).name('Frequency Radius').listen()
+            .tooltip('Frequency-analysis aperture radius in original video pixels. 0 uses the common Frequency Radius in Frequency Analysis Settings. A nonzero override is at least 2 pixels.');
         folder.add(proxy, 'edit').name('Edit This Track');
     }
 }
@@ -4274,6 +4281,7 @@ function serializePointTracker(objectTracker) {
         trackId: objectTracker.trackId,
         trackName: objectTracker.trackName,
         displayColor: objectTracker.displayColor,
+        frequencyRadius: objectTracker.frequencyRadius,
         // Whether the tracker is switched on. Disabling leaves the tracker and its
         // trackedPositions intact, so without this flag a disabled tracker serializes
         // identically to an enabled one and always comes back enabled.

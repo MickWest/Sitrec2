@@ -280,7 +280,7 @@ export const helpDocs = [
     {
         file: "docs/FrequencyAnalysis", labelKey: "menus.help.documentation.frequencyAnalysis",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "Frequency Analysis (Video → Point Track): finding repeated brightness changes such as wing flapping or flashing lights. Covers comparing multiple point tracks in separate graph windows, arranging the graphs, per-track settings, frame-rate, exposure, duration and pixel limits; aperture, background, percent amplitude, peak search floor, Hz versus flashes per minute and CSV export; simple DFT/FFT explanations with diagrams; source timing, nonuniform FFT, Hann window, zero padding, harmonics and aliasing; and why tiny objects, tracking errors and noisy backgrounds can hide a signal or create a false peak.",
+        chatDesc: "Frequency Analysis (Video → Point Track): finding repeated brightness changes such as wing flapping or flashing lights. Covers comparing multiple point tracks in separate graph windows, arranging the graphs, shared settings and Y-axis range, per-track Frequency Radius overrides, frame-rate, exposure, duration and pixel limits; aperture, background, percent amplitude, peak search floor, Hz versus flashes per minute and CSV export; simple DFT/FFT explanations with diagrams; source timing, nonuniform FFT, Hann window, zero padding, harmonics and aliasing; and why tiny objects, tracking errors and noisy backgrounds can hide a signal or create a false peak.",
     },
     {
         file: "docs/MotionAnalysis", labelKey: "menus.help.documentation.motionAnalysis",
