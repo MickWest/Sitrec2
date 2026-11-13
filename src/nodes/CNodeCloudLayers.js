@@ -66,7 +66,13 @@ const WIND_NODE_IDS = {local: "localWind", target: "targetWind"};
 const MOON_KEY_LIGHT = 0.06;
 
 // The Measure button: frames rendered with and without the clouds, per view.
-const MEASURE_REPEATS = 7;
+const MEASURE_REPEATS = 9;
+// Measure warms up before it samples: at least this long, and until this many
+// with/without pairs in a row are within MEASURE_STEADY_RATIO of the fastest pair.
+const MEASURE_WARMUP_MIN_MS = 600;
+const MEASURE_WARMUP_LIMIT_MS = 2000;
+const MEASURE_STEADY_PAIRS = 4;
+const MEASURE_STEADY_RATIO = 1.15;
 
 export class CNodeCloudLayers extends CNode {
     constructor(v) {
@@ -386,8 +392,9 @@ export class CNodeCloudLayers extends CNode {
     }
 
     // Measure what the clouds cost, on demand only: each view that draws them is
-    // rendered with and without the clouds, interleaved, MEASURE_REPEATS times,
-    // each frame waited for (a one-pixel read), and the median difference shown.
+    // warmed up, then rendered with and without the clouds, interleaved,
+    // MEASURE_REPEATS times, each frame waited for (a one-pixel read), and the
+    // median difference shown.
     // This times what a user waits for (CPU and GPU together) on any GPU; timer
     // queries do not (Apple GPUs count earlier work in them). Everything it
     // touches is restored; it refuses to run during playback or an export.
@@ -420,17 +427,36 @@ export class CNodeCloudLayers extends CNode {
                     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
                     return performance.now() - start;
                 };
-                // One frame each way first: lazy targets and programs are made then.
-                this.volume.setVisible(true);
-                frame();
-                this.volume.setVisible(false);
-                frame();
+                const pair = cloudsFirst => {
+                    this.volume.setVisible(cloudsFirst);
+                    const first = frame();
+                    this.volume.setVisible(!cloudsFirst);
+                    const second = frame();
+                    return cloudsFirst ? {on: first, off: second} : {on: second, off: first};
+                };
+                // Warm up first. Lazy targets and programs are made in the first frames.
+                // Also, after an idle period the first few hundred milliseconds of frames
+                // ran several times slower (on an Apple GPU; probably the GPU clock), and a
+                // measurement taken then read several times too high. So render for a
+                // minimum time, and then until the pairs stop getting faster.
+                const warmStart = performance.now();
+                let fastest = Infinity;
+                let steadyPairs = 0;
+                for (;;) {
+                    const warm = pair(true);
+                    const total = warm.on + warm.off;
+                    const steady = total <= fastest * MEASURE_STEADY_RATIO && total * MEASURE_STEADY_RATIO >= fastest;
+                    steadyPairs = steady ? steadyPairs + 1 : 0;
+                    fastest = Math.min(fastest, total);
+                    const elapsed = performance.now() - warmStart;
+                    if (elapsed >= MEASURE_WARMUP_LIMIT_MS) break;
+                    if (elapsed >= MEASURE_WARMUP_MIN_MS && steadyPairs >= MEASURE_STEADY_PAIRS) break;
+                }
+                // Alternate which frame of a pair comes first, so a slow drift cancels.
                 const differences = [];
                 for (let repeat = 0; repeat < MEASURE_REPEATS; repeat++) {
-                    this.volume.setVisible(true);
-                    const on = frame();
-                    this.volume.setVisible(false);
-                    differences.push(on - frame());
+                    const sample = pair(repeat % 2 === 0);
+                    differences.push(sample.on - sample.off);
                 }
                 differences.sort((first, second) => first - second);
                 result[key] = Math.max(0, differences[differences.length >> 1]);
