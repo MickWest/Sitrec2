@@ -348,6 +348,13 @@ export function installFisheyeOnMaterial(material) {
     material.needsUpdate = true;
 }
 
+// A material that applies the lens itself (a full-screen pass that builds its
+// own view rays from the atmosphere projection uniforms, like the volumetric
+// clouds): the sweep leaves its vertex shader alone and does not warn about it.
+export function markFisheyeNative(material) {
+    if (material) _installed.add(material);
+}
+
 const _asMaterials = m => (Array.isArray(m) ? m : [m]);
 
 // Frustum culling tests bounds against the camera's PINHOLE matrix, which at a
@@ -532,6 +539,19 @@ export function isFisheyeCamera(camera) {
     if (!camNode) return false;
     const live = camera._fisheyeProxyFor ?? camera;
     return camNode.camera === live;
+}
+
+// The fisheye lens as setAtmosphereProjection (AtmosphereProjection.js) takes
+// it, or null when this camera renders with the pinhole projection. Shared by
+// the view's sky/haze rays and the volumetric clouds, so both invert the same lens.
+export function atmosphereFisheyeLens(camera) {
+    if (!isFisheyeCamera(camera)) return null;
+    fisheyeStarLens([1, 1]); // Refresh the shared lens parameters.
+    return {
+        type: FISHEYE_TYPE_INDEX[fisheye.lensType], rho: fisheyeUniforms.uFishRhoEdge.value,
+        scale: fisheye.circlePct / 100, centerX: fisheye.centerX / 100,
+        centerY: fisheye.centerY / 100, roll: fisheye.roll * Math.PI / 180,
+    };
 }
 
 // Per-render uniform update, called from the scene hooks. Aspect and depth

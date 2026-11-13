@@ -15,13 +15,11 @@ export const materialAtmosphereUniforms = {
     atmoStartPlane: {value: new Vector4()},
 };
 
-// Integrate only the part of the ray inside the atmosphere. Quadratic sample
-// spacing resolves the dense air near a ground endpoint without spending
-// samples on the vacuum between an orbital observer and the atmosphere.
-export const MATERIAL_ATMOSPHERE_GLSL = /* glsl */`
+// The haze uniforms, without the two projection flags (atmoOrthographic,
+// atmoFishOn) that ATMOSPHERE_PROJECTION_GLSL also declares. A shader that
+// includes the projection GLSL (the volumetric clouds) uses this block.
+export const MATERIAL_ATMOSPHERE_UNIFORMS_GLSL = /* glsl */`
     uniform bool atmoEnabled;
-    uniform bool atmoOrthographic;
-    uniform bool atmoFishOn;
     uniform float atmoBeta;
     uniform float atmoAltitude;
     uniform float atmoRadius;
@@ -31,12 +29,17 @@ export const MATERIAL_ATMOSPHERE_GLSL = /* glsl */`
     uniform vec3 atmoWarm;
     uniform float atmoWarmStrength;
     uniform vec4 atmoStartPlane;
-    varying vec3 vAtmospherePosition;
+`;
 
-    vec3 applyMaterialAtmosphere(vec3 radiance) {
+// Integrate only the part of the ray inside the atmosphere. Quadratic sample
+// spacing resolves the dense air near a ground endpoint without spending
+// samples on the vacuum between an orbital observer and the atmosphere.
+// viewPosition is the displayed surface position in view space.
+export const ATMOSPHERE_HAZE_GLSL = /* glsl */`
+    vec3 atmosphereHaze(vec3 viewPosition, vec3 radiance) {
         if (!atmoEnabled) return radiance;
-        vec3 origin = atmoOrthographic && !atmoFishOn ? vec3(vAtmospherePosition.xy, 0.0) : vec3(0.0);
-        vec3 path = vAtmospherePosition - origin;
+        vec3 origin = atmoOrthographic && !atmoFishOn ? vec3(viewPosition.xy, 0.0) : vec3(0.0);
+        vec3 path = viewPosition - origin;
         float distanceM = length(path);
         if (distanceM < 0.001) return radiance;
         vec3 direction = path / distanceM;
@@ -79,9 +82,26 @@ export const MATERIAL_ATMOSPHERE_GLSL = /* glsl */`
             vec3 horizontal = direction - atmoUp * dot(direction, atmoUp);
             float alignment = max(0.0, dot(horizontal / max(length(horizontal), 1e-5), atmoSun));
             vec3 airlight = mix(atmoCool, atmoWarm, alignment * atmoWarmStrength);
+            #ifdef ATMOSPHERE_AIRLIGHT_SCALE
+                // A shader that is lit differently from the terrain at night (the
+                // volumetric clouds) scales the airlight; nothing else defines this.
+                airlight *= ATMOSPHERE_AIRLIGHT_SCALE;
+            #endif
             // HDR highlights are attenuated, never clamped to display white.
             return radiance * transmittance + airlight * (1.0 - transmittance);
         #endif
+    }
+`;
+
+// The per-material form: the haze at the position the vertex shader passed on.
+export const MATERIAL_ATMOSPHERE_GLSL = /* glsl */`
+    uniform bool atmoOrthographic;
+    uniform bool atmoFishOn;
+` + MATERIAL_ATMOSPHERE_UNIFORMS_GLSL + /* glsl */`
+    varying vec3 vAtmospherePosition;
+` + ATMOSPHERE_HAZE_GLSL + /* glsl */`
+    vec3 applyMaterialAtmosphere(vec3 radiance) {
+        return atmosphereHaze(vAtmospherePosition, radiance);
     }
 `;
 

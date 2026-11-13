@@ -40,7 +40,7 @@ import {
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
 import {ATMOSPHERE_PROJECTION_GLSL, atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms, withMaterialAtmosphere} from "../atmosphere/MaterialAtmosphere";
-import {renderFisheyeMask, fisheye, fisheyeUniforms, fisheyeStarLens, isFisheyeCamera, FISHEYE_TYPE_INDEX} from "../FisheyeProjection";
+import {renderFisheyeMask, isFisheyeCamera, atmosphereFisheyeLens} from "../FisheyeProjection";
 import {getPanoramaFrame, isPanoramicCamera, PanoramicRenderer} from "../PanoramicCamera";
 import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
@@ -1351,16 +1351,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     populateAtmosphereProjection(uniforms, camera) {
-        let lens = null;
-        if (isFisheyeCamera(camera)) {
-            fisheyeStarLens([1, 1]); // Refresh the shared lens parameters.
-            lens = {
-                type: FISHEYE_TYPE_INDEX[fisheye.lensType], rho: fisheyeUniforms.uFishRhoEdge.value,
-                scale: fisheye.circlePct / 100, centerX: fisheye.centerX / 100,
-                centerY: fisheye.centerY / 100, roll: fisheye.roll * Math.PI / 180,
-            };
-        }
-        setAtmosphereProjection(uniforms, camera, lens);
+        setAtmosphereProjection(uniforms, camera, atmosphereFisheyeLens(camera));
     }
 
     renderAtmosphereScene(scene, camera = this.camera, {reflectionPlane} = {}) {

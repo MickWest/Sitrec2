@@ -86,6 +86,7 @@ import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
 import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
+import {CNodeCloudLayers} from "./nodes/CNodeCloudLayers";
 import {makeBespoke3DView} from "./BespokeView";
 import {DebugArrow} from "./threeExt";
 import {getCelestialDirection} from "./CelestialMath";
@@ -410,6 +411,14 @@ export const setupMethods = {
         // immediately, and it only appears in the camera dropdowns once it has one.
         if (Sit.isCustom && NodeMan.exists("lookCamera") && !NodeMan.exists("starTrackCameraController")) {
             makeStarTrackCameraController("starTrackCameraController");
+        }
+
+        // Volumetric cloud layers (Lighting > Clouds). Created here rather than in
+        // SitCustom.js so every custom sitch, old saves included, gets the folder.
+        // With no layers it draws nothing, allocates nothing on the GPU and saves
+        // nothing, so a sitch without clouds is unchanged.
+        if (Sit.isCustom && guiMenus.lighting && !NodeMan.exists("cloudLayers")) {
+            new CNodeCloudLayers({id: "cloudLayers"});
         }
 
         // Lens-ghost (sun-reflection) simulator overlay on the video. Hidden until the
