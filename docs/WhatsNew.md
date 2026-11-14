@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.196.1 (2026-11-13)
+
+### Improvements
+- **Date and time editor** (Time menu; also *Time & playback* in Satellite Controls): a click on a date or time number now selects the whole number, so that a value you type replaces it, and the click no longer subtracts or adds one (ten with Shift); a drag still changes the time, and the Up and Down arrow keys still step by one.
+
 ## Version 2.196.0 (2026-11-13)
 
 ### New Features
