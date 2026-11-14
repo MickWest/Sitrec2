@@ -58,7 +58,6 @@ export class CNodeWind extends CNode {
                     if (wf.source === "manual" && wf.windU) {
                         wf.fetchWindForAltitude(wf.windAltFt);
                     }
-                    wf.noteWindChanged?.();
                 }
             };
             // Target and Local Wind say what they are for; any other wind
@@ -85,7 +84,6 @@ export class CNodeWind extends CNode {
                     .onChange(() => {
                         this._syncLiveGUI();
                         this.recalculateCascade();
-                        NodeMan.get("windField", false)?.noteWindChanged?.();
                     });
                 this.guiOverride.hide();
             }

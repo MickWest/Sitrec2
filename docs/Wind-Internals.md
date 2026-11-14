@@ -64,8 +64,6 @@ Every wind speed on the Wind panel is in one unit: `windSpeedUnit(Units, wn.wind
 
 The readout boxes are placed by `placeReadoutBoxes()` (`WindHelpers.js`): each goes to the first corner around its point that covers no other box and no menu (`_menuRects()`, the root lil-gui panels on the screen), else to the corner that covers least, then down past a box it still covers. They are at z-index 8000, under the menu bar (9000).
 
-**Show Wind at** turns on by itself the first time the user changes the wind in a sitch, if it was never on there (`noteWindChanged()`, called from the source rows, Override, the Target and Local Wind values and Local from Constant Camera; `showAtEverOn` is saved).
-
 ## Per-source pipelines
 
 Each entry in `WIND_SOURCES` (`src/nodes/WindSources.js`) maps to one branch inside `CNodeDisplayWindField.fetchWindForAltitude(altFt)`:

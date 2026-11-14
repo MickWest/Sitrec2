@@ -2386,7 +2386,6 @@ const en = {
             showAtTraverse: { tooltip: "Show the wind at the traverse path, where the traverse object is, at its altitude.\nThis is the Target Wind that the target would get there on this frame.\nThe traverse path is not always the target track (Target > Target Track)." },
             showAtCursor: { tooltip: "Show the wind at the mouse cursor in the main view, at Altitude.\nShift-click to add a point that stays. Alt-click to remove the nearest point.\nThe added points show only while this is on." },
             showAtObject: { tooltip: "Show the wind at this object, at the altitude of the object." },
-            showAtAutoOn: { message: "Show Wind at is on: the wind at the camera and the target shows in this view. Turn it off in Physics > Wind > Show Wind at." },
             status: { tooltip: "Where the wind comes from: the source, the time of the data, the distance from the target to the nearest data, and the heights that the data covers.\nWhile data loads, or after an error, it shows a message. You cannot edit it." },
             compass: { tooltip: "Compass. The arrow points north.\nYellow triangle: the direction that Target Wind comes FROM.\nGreen triangle: the direction that Local Wind (at the camera) comes FROM.\nWind: the Wind Source (with Separate Wind Sources: target / local)." },
             windInKnots: { tooltip: "Show every wind speed on this panel, and in the Show Wind at readouts, in knots.\nWhen off, wind speeds use the speed unit of Units (Physics > Units).\nHeights always use the height unit of Units." },

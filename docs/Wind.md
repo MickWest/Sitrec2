@@ -15,7 +15,7 @@ The **Wind** folder in the **Physics** menu sets the wind at the camera platform
 3. From **Wind Source**, pick **GFS (NOAA)** for any date from 22 March 2021 to today, or **UWYO Soundings** / **IGRA2 Soundings** for earlier dates.
 4. Set **Altitude** to the height where you want to see the wind. It sets the level of the streamlines and arrows. Target Wind and Local Wind do not use this slider: they read the source on every frame, at the position and height of the target and the camera.
 5. **Show Wind Lines** is auto-toggled on the first time you pick one of the sources in step 3 — the streamlines appear once the data has loaded (allow up to a minute the first time; after that it's cached). [**Status**](#status) then says where the wind comes from, for example `GFS 2023-06-15 18Z, 1° grid. Heights 33 ft above the ground to 101,000 ft.`
-6. To read the wind at the target or the camera, use [**Show Wind at**](#show-wind-at). The first change that you make to the wind in a sitch turns it on, if it was never on in that sitch. **Target Wind From** and **Target Wind Speed** show the same value at the target.
+6. To read the wind at the target or the camera, use [**Show Wind at**](#show-wind-at). **Target Wind From** and **Target Wind Speed** show the same value at the target.
 
 That's the common path. The rest of this doc fills in everything around it.
 
@@ -94,7 +94,7 @@ The four sliders show Target Wind and Local Wind. What you can do with them depe
 
 A folder of places where Sitrec shows the wind. At each place there is a readout, with the speed, the direction that the wind blows from and the altitude used, and an arrow in the main view that points the way the wind blows. The folder is directly under the Target and Local Wind rows.
 
-The checkbox at the right of the folder title turns all the readouts on or off. It is off in a new sitch, and the rows in the folder are gray while it is off. The first time that you change the wind in a sitch (you pick a source, import a profile, turn on an Override, or set a Target or Local Wind value), Sitrec turns it on and says so in the main view, if it was never on in that sitch. After that it stays as you set it. Each row turns one place on or off:
+The checkbox at the right of the folder title turns all the readouts on or off. It is off in a new sitch, and the rows in the folder are gray while it is off. Each row turns one place on or off:
 
 | Row | Shows the wind at | Default |
 |---|---|---|

@@ -2,10 +2,9 @@ import {registerSurfaceInteraction} from "../SurfaceInteraction";
 // Wind field visualization with animated streamlines on the globe.
 // Uses GPU-efficient shader animation: a frame counter offsets a dash pattern
 // along each streamline, creating a flowing effect without per-frame geometry updates.
-
 import {CNode3DGroup} from "./CNode3DGroup";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {DebugArrowAB, elevationAtLL, removeDebugArrow} from "../threeExt";
+import {DebugArrowAB, removeDebugArrow} from "../threeExt";
 import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 import {FileManager, GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {LoadingManager} from "../CLoadingManager";
@@ -23,13 +22,12 @@ import {escapeXML} from "../utils";
 import {par} from "../par";
 import {
     bracketingLevels,
+    columnWindAt,
     compassFromDeg,
+    dataTimeText,
     fromDirSpeedKnotsToUV,
     fromDirSpeedToUV,
     fromUVToDirKnots,
-    columnWindAt,
-    dataTimeText,
-    heightText,
     GFS_SURFACE_AGL_M,
     gfsCycleFor,
     greatCircleDistanceDeg,
@@ -37,6 +35,7 @@ import {
     gridColumn,
     gridColumnBracket,
     gridTimesAround,
+    heightText,
     knotsFromMISBWindSpeed,
     levelToAltFeet,
     placeReadoutBoxes,
@@ -336,10 +335,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // The pointer listeners are installed only while the master AND the
         // cursor switch are on, so we don't pay the cost otherwise.
         this.inspect = false;
-        // True once Show Wind at has been on in this sitch (saved). Until then,
-        // the first change to the wind turns it on (noteWindChanged; decision
-        // D2, 2026-11-02), so a new user finds where to read the wind.
-        this.showAtEverOn = false;
         // Show every wind speed on the Wind panel in knots, not in the speed
         // unit of Units (decision D4).
         this.windInKnots = v.windInKnots ?? false;
@@ -1020,7 +1015,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // mouse navigation; right-click is left alone for the OS / page menu.
     setInspect(enabled) {
         this.inspect = !!enabled;
-        if (this.inspect) this.showAtEverOn = true;
         this._syncInspectCursor();
 
         if (!this.inspect) {
@@ -1032,19 +1026,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             }
             this._removeAllInspectArrows();
         }
-    }
-
-    // Decision D2 (2026-11-02): the first time the user changes the wind (the
-    // source, an Override, a Target or Local Wind value), turn Show Wind at on,
-    // if it has never been on in this sitch, so that the user sees where the
-    // wind is read. Not while a sitch loads. Returns true when it turned it on.
-    noteWindChanged() {
-        if (this.showAtEverOn || this.inspect || Globals.deserializing) return false;
-        this.setInspect(true);
-        this.showAtAutoOnAt = Date.now();
-        this.onShowAtAutoOn?.();   // the menu shows the change (CustomManagerSetup)
-        setRenderOne(true);
-        return true;
     }
 
     // The Mouse Cursor switch under Show Wind at. The readout sweep in
@@ -3004,7 +2985,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             nearbyRadiusKm: this.nearbyRadiusKm,
             showArrows: this.showArrows,
             inspect: this.inspect,
-            showAtEverOn: this.showAtEverOn || this.inspect,
             windInKnots: this.windInKnots,
             // Show Wind at switches. Object ids are kept only for objects
             // that still exist, so a deleted object does not stay in saves.
@@ -3063,9 +3043,6 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // leaves the checkbox showing checked but the cursor produces no
         // readout and shift-click does nothing until the user toggles it.
         if (typeof v.inspect === "boolean") this.setInspect(v.inspect);
-        // A save from before 2026-11-03 has no showAtEverOn: Show Wind at was
-        // on if it is on now.
-        this.showAtEverOn = !!v.showAtEverOn || this.inspect;
         if (typeof v.windInKnots === "boolean") this.windInKnots = v.windInKnots;
         if (typeof v.visible === "boolean") this.visible = v.visible;
         // Pre-split saves only stored `visible`, which back then drove the

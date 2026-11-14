@@ -9,7 +9,6 @@ import {getOffsetFromDateTimeString} from "./DateTimeUtils";
  */
 import {
     FileManager,
-    getEffectiveUserID,
     GlobalDateTimeNode,
     Globals,
     guiMenus,
@@ -17,17 +16,12 @@ import {
     infoDiv,
     NodeFactory,
     NodeMan,
-    setNewSitchObject,
     setRenderOne,
     setSitchEstablished,
     Sit,
-    Synth3DManager,
-    TrackManager,
-    UndoManager,
-    Units,
-    withTestUser
+    TrackManager
 } from "./Globals";
-import {isKeyHeld, toggler} from "./KeyBoardHandler";
+import {toggler} from "./KeyBoardHandler";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {importADSBTraceDialog} from "./ADSBTraceFetch";
 import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
@@ -40,41 +34,23 @@ import {setupPanoramicCamera} from "./PanoramicCamera";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {MeasurementManager} from "./CMeasurementManager";
-import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
-import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
-import {assert} from "./assert";
-import {getShortURL} from "./urlUtils";
-import {CNode3DObject, ModelAliases} from "./nodes/CNode3DObject";
-import {UpdateHUD} from "./JetStuff";
-import {degrees, getDateTimeFilename} from "./utils";
+import {CNode3DObject} from "./nodes/CNode3DObject";
+import {getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
 import {DISPLAY_NAME_CHANGED} from "./DisplayName";
-import {isAdmin, isSecureBuild, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
-import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
-import {DebugArrowAB, elevationAtLL} from "./threeExt";
-import {FeatureManager} from "./CFeatureManager";
-import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
-import {forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {isAdmin, isSecureBuild, isServerless, SITREC_SHARE_APP} from "./configUtils";
+import {DebugArrow, DebugArrowAB} from "./threeExt";
 import {configParams} from "./runtimeConfig";
 import {showError} from "./showError";
-import {showPostLoadFilterDialog} from "./TrackFilterDialog";
-import {textSitchToObject} from "./RegisterSitches";
-import {waitForExportFrameSettled} from "./ExportFrameSettler";
-import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
-import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
 import {CNodeStarlinkUI} from "./nodes/CNodeStarlinkUI";
 import {CNodeViewThermalReadout} from "./nodes/CNodeViewThermalReadout";
-import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFileToHandle} from "./FileUtils";
-import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
-import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
-import {getCursorPositionFromTopView} from "./mouseMoveView";
-import {addMenuToLeftSidebar, addMenuToRightSidebar, isInLeftSidebar, isInRightSidebar} from "./PageStructure";
 import {CNodeControllerCelestial, CNodeControllerHorizonFlareRegion} from "./nodes/CNodeControllerVarious";
 import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobble";
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
@@ -88,22 +64,16 @@ import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
 import {CNodeLensGhost} from "./nodes/CNodeLensGhost";
 import {CNodeCloudLayers} from "./nodes/CNodeCloudLayers";
 import {makeBespoke3DView} from "./BespokeView";
-import {DebugArrow} from "./threeExt";
 import {getCelestialDirection} from "./CelestialMath";
 import * as LAYER from "./LayerMasks";
-import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
-import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
-import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {extractFOV} from "./FOVUtils";
-import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from "./trackSourceUtils";
-import {encodeShareParam, resolveURLForFetch, toShareableCustomValue} from "./SitrecObjectResolver";
+import {encodeShareParam, toShareableCustomValue} from "./SitrecObjectResolver";
 import {getEnvBool} from "./envUtils";
 import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, haversineKm, importSoundingDialog, loadStationList} from "./SondeFetch";
 import {
-    WIND_SOURCES,
     altitudeProfileForSourceKey,
     isTrackSourceKey,
     trackDataIdFromSourceKey,
@@ -115,25 +85,11 @@ import {
 import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
 import {dataTimeText, greatCircleDistanceDeg, heightText, windSpeedText} from "./nodes/WindHelpers";
 import {showViewMessage} from "./ViewMessage";
-import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
+import {t} from "./i18n";
 import {installTrackObjectLinks, scheduleTrackObjectLinksRefresh} from "./TrackObjectLinks";
 import {BUILT_IN_OBJECT_IDS} from "./UserObjects";
-import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {sharedMenuKey, viewMenuKey} from "./ViewUIBarMenus";
-import {
-    gimbalStepAirTrack,
-    gimbalStepAirTrackDisplay,
-    gimbalStepClouds,
-    gimbalStepCommonViews,
-    gimbalStepCore,
-    gimbalStepFleet,
-    gimbalStepGraphs,
-    gimbalStepSAHAFU,
-    gimbalStepTargetModel,
-    gimbalStepTrackLOSNodes,
-    gimbalStepTraverse,
-} from "./GimbalCustomSetup";
-import {Color, Vector3} from "three";
+import {Vector3} from "three";
 
 import {connectTraverseOutput} from "./TraverseOutput";
 
@@ -788,11 +744,6 @@ export const setupMethods = {
                 if (hours != null && hours > PROFILE_FAR_HOURS) warnings.push(`${timeGap(hours)} from the sitch time`);
             }
             sentences.push(`Wind Source is now ${name}.`);
-            // The import was the first change to the wind: Show Wind at came on
-            // (D2). This message replaces that one, so it says it too.
-            if (Date.now() - (wn.showAtAutoOnAt ?? 0) < 10000) {
-                sentences.push("Show Wind at is now on: the readouts give the wind at the camera and the target.");
-            }
             for (const [id, word] of [["targetWind", "Target Wind"], ["localWind", "Local Wind"]]) {
                 const node = NodeMan.get(id, false);
                 if (typeof node?.windStateAt !== "function") continue;
@@ -1137,14 +1088,6 @@ export const setupMethods = {
         EventManager.addEventListener("objectsChanged", queueShowAtRebuild);
         EventManager.addEventListener(DISPLAY_NAME_CHANGED, queueShowAtRebuild);
 
-        // Decision D2: the first change to the wind turns Show Wind at on, if it
-        // was never on in this sitch (wn.noteWindChanged). Say so where the user
-        // is looking; the title checkbox follows by itself (it listens).
-        wn.onShowAtAutoOn = () => {
-            const mainView = ViewMan.get("mainView", false);
-            if (mainView) showViewMessage(mainView, t("custom.wind.showAtAutoOn.message"), {hold: 6000, wrap: true});
-        };
-
         // ── Source selectors ──────────────────────────────────────────
         //
         // Default mode (this._windNode.sourceSeparate === false): a single
@@ -1194,7 +1137,6 @@ export const setupMethods = {
         // toggled-Separate mid-fetch can't expose a stale local value.
         const onTargetSourceChange = async () => {
             const sourceKey = wn.source;
-            wn.noteWindChanged();
             // a balloon's or kite's Wind Source row, and the "Wind source" use of a track
             scheduleTrackObjectLinksRefresh();
             const targetWind = NodeMan.exists("targetWind")
@@ -1244,7 +1186,6 @@ export const setupMethods = {
         // loaded here, as for the target source.
         const onLocalSourceChange = async () => {
             if (!wn.sourceSeparate) return;
-            wn.noteWindChanged();
             scheduleTrackObjectLinksRefresh();
             applyLocalSource(wn.sourceLocal);
             const ok = await this._ensureSoundingsForWind(wn.sourceLocal);
@@ -1820,7 +1761,6 @@ export const setupMethods = {
             const unit = this._windNode?.windSpeedUnit?.() ?? {abbrev: "kt", fromKnots: 1};
             par.windStatus = `Local wind: ${localWind.from}° / ${windSpeedText(localWind.knots, unit)}`
                 + ` (σ=${(result.finalCostKnots * unit.fromKnots).toFixed(1)} ${unit.abbrev}, ${trackId})`;
-            this._windNode?.noteWindChanged?.();
         };
         windFolder.add({fitLocalFromConstantCamera}, "fitLocalFromConstantCamera")
             .name("Local from Constant Camera")
