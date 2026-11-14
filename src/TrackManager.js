@@ -4089,7 +4089,9 @@ class CTrackManager extends CManager {
                     altitudeLock: trackOb.altitudeLock,
                     altitudeLockAGL: trackOb.altitudeLockAGL,
                     color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffff00,
-                    lineWidth: trackOb.displayTrack?.width || 1,
+                    // CNodeDisplayTrack keeps the width in its "width" input, and the Line
+                    // Width slider sets that input. Read it as the other track saves do.
+                    lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
                     positions: positions,
                     objectData: objectData,
                     elevationCache: elevationCacheData,
