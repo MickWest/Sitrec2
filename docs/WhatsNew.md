@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.197.0 (2026-11-14)
+
+### New Features
+- **Links between tracks and objects** (Contents and Objects menus): each track folder and each object folder now shows its links in rows below *Name*. An object has *On Track* with the name of its track. A track has an *Object* row for each object on it, and a *Used For* row that says what uses the track now (the camera position, FOV or heading, the target, the orbit center, a balloon or kite finder, or the wind source); its tooltip names the menu where you change each one. The Camera Track shows its *Camera Position*, the Traverse Track its *Traverse Method*, and a balloon or a kite its *Wind Source*. Click a name to open the menu of that track or object. The *On Track* and *Object* rows replace the *Show Track Menu* and *Show Object Menu* buttons (Help → Documentation → Data and Tracks → *Adding Objects and Tracks*, section *Tracks and objects*).
+- **Link tags on folder titles** (Contents and Objects menus): a small tag at the right end of a folder title shows the main link without opening the folder. *Camera* or *Target* marks the track or object that the camera or the target uses. *on Track 3* marks an object that is on a track with a different name. On the Camera Track, *follows* and a name shows what the camera is on, or the tag says *Manual*, *Flight Sim* or *Orbit*. The folder's tooltip gives the same information in full.
+
+### Improvements
+- **Names in place of internal ids** (Contents and Objects menus): the folders that showed internal ids now have the titles *Camera Track*, *Traverse Track*, *Satellite* and *Satellite 2* in Contents, and *Camera Object* and *Traverse Object* in Objects. Each has a tooltip that says what it is. A saved sitch keeps its menu state for these folders, and a name that you gave the Camera Object or the Traverse Object stays.
+- **One name for a balloon or a kite and its object** (right-click the ground → *Add Balloon* or *Add Kite*): the sphere of a new balloon and the object of a new kite now have the name of their track, for example *Balloon* in both Contents and Objects, and a rename of one renames the other. A sitch saved with two names, such as *Balloon* and *Object 1*, keeps them.
+- **Track names in the Camera FOV list** (Camera → FOV (Zoom) → Camera FOV): a track now shows by its name, not by its internal id, and the list follows a rename. A saved choice still works.
+- The menu of an object that opens beside the view now has the title *Object:* and the object's name, as the menu of a track has *Track:* and its name.
+
+### Bug Fixes
+- Fixed the line width of a hand-drawn track, which went back to 1 when you saved the sitch and loaded it again. A save now keeps the *Line Width* of the track.
+- Fixed two empty satellite folders in the Contents menu of a new sitch. *Satellite* and *Satellite 2* now show only when their satellite is in the loaded satellite data, as they already did in a saved sitch.
+- Fixed a rename, in the Objects menu, of the marker of a loaded track to the name of another track, which gave two tracks the same name. When you finish typing, Sitrec now adds *-1* (or the next free number), as the track's own *Name* does.
+- Fixed the *Delete Track* question of a renamed balloon or kite, which showed its first name.
+
 ## Version 2.196.1 (2026-11-13)
 
 ### Improvements

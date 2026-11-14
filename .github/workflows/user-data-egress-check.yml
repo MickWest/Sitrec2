@@ -124,7 +124,24 @@ jobs:
 
       - name: install Copilot CLI
         if: steps.scan.outputs.in_scope != '0'
-        run: npm install -g @github/copilot
+        # npm can report success and still leave out the platform package that the CLI
+        # needs. The CLI then stops at once with "no platform package found" (2.196.1, on a
+        # CLI release less than an hour old). So check that the CLI starts, and when it does
+        # not, wait longer each time and install it again. `--version` calls no model, so a
+        # retry spends no AI credits. If the CLI still does not start, the review step runs
+        # anyway, and its error goes on the record as INCOMPLETE.
+        run: |
+          set -uo pipefail
+          for WAIT in 30 60 120 240 0; do
+            if npm install -g --prefer-online @github/copilot && copilot --version; then
+              exit 0
+            fi
+            if [ "$WAIT" = 0 ]; then break; fi
+            echo "Copilot CLI does not start. Installing it again in $WAIT s."
+            sleep "$WAIT"
+          done
+          echo "::warning::Copilot CLI did not start after 5 installs; the review will be INCOMPLETE."
+          exit 0
 
       - name: LLM review
         if: steps.scan.outputs.in_scope != '0'
