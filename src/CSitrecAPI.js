@@ -42,6 +42,7 @@ import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {TimelineMarkers} from "./TimelineMarkers";
 import {editTimelineMarkers, resetInOut} from "./TimelineMenu";
 import {t} from "./i18n";
+import {trackLinkSummaries} from "./TrackObjectLinks";
 
 // A timeline marker as it goes back to a caller, which can be the chat model. A label can
 // come from a shared sitch, so it is returned as a label only (one line, limited length), as
@@ -2251,16 +2252,21 @@ class CSitrecAPI {
             },
 
             listTracks: {
-                doc: "List all tracks currently loaded in the TrackManager.",
+                doc: "List all tracks currently loaded in the TrackManager: id, displayName (the name in the menus), kind (loaded, handDrawn, balloon or kite; handDrawn is a track of control points, from Add Moving Object, Add Flight Path or createWalker), objects (the names of the 3D objects on the track) and usedFor (what selects it now, e.g. Camera position, Target).",
                 fn: () => {
                     if (!TrackManager) return { error: "TrackManager not available" };
                     const tracks = [];
+                    // What each track is, the objects on it and what uses it, as the menus
+                    // show them (TrackObjectLinks.js).
+                    const links = trackLinkSummaries();
                     TrackManager.iterate((key, trackOb) => {
                         tracks.push({
                             id: key,
                             menuText: trackOb.menuText,
                             trackID: trackOb.trackID,
                             isSynthetic: !!trackOb.isSynthetic,
+                            displayName: trackOb.displayName ?? trackOb.menuText,
+                            ...links.get(trackOb),
                         });
                     });
                     return { count: tracks.length, tracks };
@@ -2644,7 +2650,7 @@ class CSitrecAPI {
             if (child instanceof GUI) {
                 const title = sanitizeLabelForPrompt(child._title);
                 controls.push(...this._getControlSummary(child, prefix + title + '/'));
-            } else {
+            } else if (!child._displayOnly) {    // a display row is not a control
                 const type = child.constructor.name.replace('Controller', '').toLowerCase();
                 let info = `${prefix}${sanitizeLabelForPrompt(child._name)} (${type})`;
                 if (child._min !== undefined && child._max !== undefined) {
@@ -2676,27 +2682,30 @@ class CSitrecAPI {
 
     _matchController(current, name, allowPartial = true) {
         const nameLower = name.toLowerCase();
+        // A display row (MenuRowLooks.js) only shows a text. It is not a control: left out, so
+        // a read-only "Traverse Method" does not take the name from "LOS Traverse Method".
+        const controllers = current.controllers.filter(c => !c._displayOnly);
 
         // Try exact match first
-        let controller = current.controllers.find(c => c._name === name);
+        let controller = controllers.find(c => c._name === name);
         if (controller) return controller;
 
         // Try case-insensitive match on display name
-        controller = current.controllers.find(c => c._name.toLowerCase() === nameLower);
+        controller = controllers.find(c => c._name.toLowerCase() === nameLower);
         if (controller) return controller;
 
         // Try match on property name
-        controller = current.controllers.find(c => c.property === name);
+        controller = controllers.find(c => c.property === name);
         if (controller) return controller;
 
         // Try case-insensitive match on property
-        controller = current.controllers.find(c => c.property && c.property.toLowerCase() === nameLower);
+        controller = controllers.find(c => c.property && c.property.toLowerCase() === nameLower);
         if (controller) return controller;
 
         if (!allowPartial) return null;
 
         // Try partial match (name contains search term)
-        controller = current.controllers.find(c =>
+        controller = controllers.find(c =>
             c._name.toLowerCase().includes(nameLower) ||
             (c.property && c.property.toLowerCase().includes(nameLower))
         );
@@ -2712,6 +2721,12 @@ class CSitrecAPI {
         if (folder) return { folder, consumedParts: 1 };
 
         folder = folders.find(c => c._title.toLowerCase() === nameLower);
+        if (folder) return { folder, consumedParts: 1 };
+
+        // By the folder's id. A folder that has a name now ("Camera Track") was titled with
+        // its node id before ("cameraDisplayTrack"), and a saved script can have that id in a
+        // path. After the titles, so a folder that is titled with the text still comes first.
+        folder = folders.find(c => typeof c._lookupId === "string" && c._lookupId.toLowerCase() === nameLower);
         if (folder) return { folder, consumedParts: 1 };
 
         const slashFolder = folders
@@ -2805,6 +2820,7 @@ class CSitrecAPI {
         const scored = [];
         const walk = (gui, menuId, trail) => {
             for (const c of gui.controllers) {
+                if (c._displayOnly) continue;    // a display row is not a control
                 const address = `${menuId}:${trail}${c._name ?? c.property ?? ""}`;
                 const words = tokenizeControlAddress(address);
                 const score = wanted.filter(t => words.some(w => nearWord(t, w))).length;

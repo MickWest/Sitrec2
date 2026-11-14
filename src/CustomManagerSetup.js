@@ -116,6 +116,8 @@ import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
 import {dataTimeText, greatCircleDistanceDeg, heightText, windSpeedText} from "./nodes/WindHelpers";
 import {showViewMessage} from "./ViewMessage";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
+import {installTrackObjectLinks, scheduleTrackObjectLinksRefresh} from "./TrackObjectLinks";
+import {BUILT_IN_OBJECT_IDS} from "./UserObjects";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {sharedMenuKey, viewMenuKey} from "./ViewUIBarMenus";
 import {
@@ -1193,6 +1195,8 @@ export const setupMethods = {
         const onTargetSourceChange = async () => {
             const sourceKey = wn.source;
             wn.noteWindChanged();
+            // a balloon's or kite's Wind Source row, and the "Wind source" use of a track
+            scheduleTrackObjectLinksRefresh();
             const targetWind = NodeMan.exists("targetWind")
                 ? NodeMan.get("targetWind") : null;
 
@@ -1241,6 +1245,7 @@ export const setupMethods = {
         const onLocalSourceChange = async () => {
             if (!wn.sourceSeparate) return;
             wn.noteWindChanged();
+            scheduleTrackObjectLinksRefresh();
             applyLocalSource(wn.sourceLocal);
             const ok = await this._ensureSoundingsForWind(wn.sourceLocal);
             if (ok && this._windNode) await this._windNode.propagateToWindNodes();
@@ -2914,6 +2919,39 @@ export const setupMethods = {
         const targetTrackSwitch = NodeMan.get("targetTrackSwitch", false);
         targetTrackSwitch?.setOptionLabel?.("fixedTarget", "Manual");
         targetTrackSwitch?.setOptionLabel?.("fixedTarget + Wind", "Manual + Wind");
+
+        // The tracks and objects that the sitch defines have names in the menus, where they
+        // were titled with their node ids ("cameraDisplayTrack"). Display only: each folder is
+        // still found by the id, and a script target is the id. Here and not in SitCustom.js,
+        // for the reason above. setup() also runs for the other sitches, which can have some
+        // of these nodes or none.
+        const builtInTracks = {
+            cameraDisplayTrack: "cameraTrack",
+            traverseDisplayTrack: "traverseTrack",
+            satelliteDisplayTrack: "satelliteTrack",
+            satelliteDisplayTrack2: "satelliteTrack2",
+        };
+        for (const [id, key] of Object.entries(builtInTracks)) {
+            NodeMan.get(id, false)?.setMenuTitle?.(t(`links.builtIn.${key}.title`), t(`links.builtIn.${key}.tooltip`, {id}));
+        }
+        // A satellite track has no satellite until satellite data is loaded and it finds its
+        // satellite in the data. Its node hides its Contents folder then, but it asks when it
+        // is made, and the folder is made after it. So it asks again here, where the folder
+        // exists. A sitch that is loaded from a save already had the two folders hidden.
+        for (const id of ["satelliteTrack", "satelliteTrack2"]) NodeMan.get(id, false)?.updateUI?.();
+        for (const id of BUILT_IN_OBJECT_IDS) {
+            const object = NodeMan.get(id, false);
+            // Only while it has the name it was made with. A sitch can define its own name,
+            // and the user's name comes back with the mods (see savedObjectName).
+            if (typeof object?.setDisplayName !== "function" || object.displayName !== id) continue;
+            object.folderDescription = t(`links.builtIn.${id}.tooltip`, {id});
+            object.setDisplayName(t(`links.builtIn.${id}.title`), {linked: false});
+        }
+
+        // The rows and title notes that say which object is on which track, and what each
+        // track is used for. After every node above, and on each load: the event manager is
+        // cleared when the sitch changes.
+        installTrackObjectLinks();
 
         // FloodSim is now a Scenario (Physics → Scenarios → Flood Sim) and is
         // only created when the user enables it — see scenarios/FloodSimScenario.

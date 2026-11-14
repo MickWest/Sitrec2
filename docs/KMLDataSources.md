@@ -103,7 +103,7 @@ a file with timestamps from the provider.
 
 Both lines are one flight, from the FlightAware file named above. The green line is that file as
 exported: a track, with the name N494SA at its start and a folder in both **Contents** and
-**Objects**. The short white piece at its start is the camera's track, in the `cameraDisplayTrack`
+**Objects**. The short white piece at its start is the camera's track, in the **Camera Track**
 folder. Sitrec put the camera on N494SA, and this piece covers the sitch's time range: 900 frames at
 30 frames per second, which is 30 seconds of the flight. The gray wall is a copy of the same points
 with the times removed, moved north so that the lines do not overlap. It has only the `Route-display`

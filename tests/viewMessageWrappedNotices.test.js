@@ -71,6 +71,8 @@ describe('the notice for a sitch that did not fully load', () => {
             showViewMessage: jest.fn(),
             t,
             setSitchEstablished: jest.fn(),
+            // the end of a load asks for the link rows of tracks and objects (TrackObjectLinks.js)
+            scheduleTrackObjectLinksRefresh: jest.fn(),
             setRenderOne: jest.fn(),
         };
         vm.createContext(context);

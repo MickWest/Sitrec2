@@ -48,7 +48,8 @@ VISIBILITY CONTROLS:
 - Use setObjectModel to set a specific object to use a 3D model
 - Use setObjectGeometry to use procedural shapes (sphere, box, superegg, etc.)
 - Use listAvailableGeometries to see geometry types and their dimension parameters
-- Objects are organized in the "objects" menu with folders like "cameraObject", "targetObject"
+- Objects are organized in the "objects" menu, one folder per object. The folder title is the object's name (for example "Camera Object", "Traverse Object"); a path can also use the object's node id ("cameraObject", "traverseObject")
+- listTracks gives, for each track, its displayName, its kind, the objects on it and what it is used for (camera position, target)
 
 LIGHTING:
 - The "lighting" menu controls scene lighting (ambient, directional, sun position)

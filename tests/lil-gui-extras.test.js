@@ -710,6 +710,71 @@ describe('CGuiMenuBar Z-Index Management', () => {
     });
 });
 
+// The open and closed state of a menu's folders is saved under each folder's TITLE. A folder
+// that was titled with its node id ("cameraDisplayTrack") and has a name now ("Camera Track")
+// must still get the state that a sitch saved for it.
+describe('CGuiMenuBar folder state of a folder that got a name', () => {
+    let menuBar;
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        require('../src/Globals').Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        menuBar.destroy();
+        document.body.innerHTML = '';
+    });
+
+    // A Contents menu with one folder, closed, as a display track makes it.
+    function contentsWith(title, lookupId) {
+        const contents = menuBar.addFolder('Contents');
+        const folder = contents.addFolder(title).close();
+        if (lookupId !== undefined) folder._lookupId = lookupId;
+        return {contents, folder};
+    }
+
+    test('a sitch saved with the id as the title opens the folder that has that id', () => {
+        const saved = contentsWith('cameraDisplayTrack');
+        saved.folder.open();
+        const serialized = menuBar.modSerialize();
+        expect(serialized.Contents.folders.cameraDisplayTrack.closed).toBe(false);
+        menuBar.destroy();
+
+        menuBar = new CGuiMenuBar();
+        require('../src/Globals').Globals.menuBar = menuBar;
+        const now = contentsWith('Camera Track', 'cameraDisplayTrack');
+        expect(now.folder._closed).toBe(true);
+        menuBar.modDeserialize(serialized);
+        expect(now.folder._closed).toBe(false);
+    });
+
+    test('a sitch saved with the name finds the folder by the name', () => {
+        const saved = contentsWith('Camera Track', 'cameraDisplayTrack');
+        saved.folder.open();
+        const serialized = menuBar.modSerialize();
+        expect(serialized.Contents.folders['Camera Track'].closed).toBe(false);
+        menuBar.destroy();
+
+        menuBar = new CGuiMenuBar();
+        require('../src/Globals').Globals.menuBar = menuBar;
+        const now = contentsWith('Camera Track', 'cameraDisplayTrack');
+        menuBar.modDeserialize(serialized);
+        expect(now.folder._closed).toBe(false);
+    });
+
+    test('the title comes first: a state saved under a title is not taken by another folder\'s id', () => {
+        const contents = menuBar.addFolder('Contents');
+        const titled = contents.addFolder('Kite').close();
+        const other = contents.addFolder('My Kite').close();
+        other._lookupId = 'kiteTrack_1';
+        menuBar.modDeserialize({Contents: {folders: {Kite: {closed: false, folders: {}}}}});
+        expect(titled._closed).toBe(false);
+        expect(other._closed).toBe(true);
+    });
+});
+
 // placeMenuBesidePoint moves an object's right-click menu clear of the object it edits.
 // jsdom gives every element a zero-size getBoundingClientRect, so the method falls back
 // to the container's inline width — which is exactly the 240px createStandaloneMenu sets.

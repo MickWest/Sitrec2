@@ -142,6 +142,7 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
 - **Center camera** on a track using the **Go to Track** button
 - **Create Spline** makes an editable hand-drawn copy of the track, with 10 control points, named `<name>_sp`
+- **See what a track is used for**: its folder has an **Object** row for the marker on the track, and a **Used For** row when the camera or the target uses the track. The folder title then has the tag `Camera` or `Target`. See [How the menus show the links](SceneObjects.md#how-the-menus-show-the-links)
 
 ### Limiting Tracks to In/Out
 
@@ -158,7 +159,7 @@ Each track has a folder in the Contents menu. The sections below list its contro
 
 **Name**, at the top of the folder, is the name shown for the track: the folder title, the track's menus, the camera and target track lists, graphs and measurements. You can change it at any time, and it is saved with the sitch. Renaming changes only what you see. The track's short name (such as `synth_01_d`) stays the same underneath, so choices saved in the sitch, such as which track is the target, keep working.
 
-Every track has its own name. A track you make in Sitrec is named **Track 1**, **Track 2** and so on, and an object is named **Object 1**, **Object 2** and so on. A track made with an object, and that object, get the same number: one more than the highest track or object number in use, so a number can be skipped (with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* and *Object 3*). Each can be renamed on its own. The object's **Name** is at the top of its folder in the Objects menu. An imported track and its sphere share one name, so renaming one renames the other. A track from a KLV stream in a TS file is named by its stream number, its tag 65 (the "local set" number) and its tail number, for example `S1 LS7 AF00371`, or `S0 LS5 Platform` when the stream has no tail number. A track derived from that stream has its kind in place of the tail number, for example `S1 LS7 Frame Center` (where the line of sight through the image center meets the ground) and `S1 LS7 Target Location` (where the platform says the target is). The [Timing Analysis](TimeAndSync.md#tracks) report explains each part. A sitch saved with the older names, such as `Center_AF00371`, keeps them. If you give a track a name that another track has, Sitrec adds `-1` (or the next free number) when you finish typing. A sitch saved with two tracks of one name loads with the later one renamed in the same way.
+Every track has its own name. A track you make in Sitrec is named **Track 1**, **Track 2** and so on, and an object is named **Object 1**, **Object 2** and so on. A track made with an object, and that object, get the same number: one more than the highest track or object number in use, so a number can be skipped (with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* and *Object 3*). Each can be renamed on its own. The object's **Name** is at the top of its folder in the Objects menu. An imported track and its sphere share one name, so renaming one renames the other. A balloon and its sphere, and a kite and its kite object, share one name in the same way. See [Names](SceneObjects.md#names). A track from a KLV stream in a TS file is named by its stream number, its tag 65 (the "local set" number) and its tail number, for example `S1 LS7 AF00371`, or `S0 LS5 Platform` when the stream has no tail number. A track derived from that stream has its kind in place of the tail number, for example `S1 LS7 Frame Center` (where the line of sight through the image center meets the ground) and `S1 LS7 Target Location` (where the platform says the target is). The [Timing Analysis](TimeAndSync.md#tracks) report explains each part. A sitch saved with the older names, such as `Center_AF00371`, keeps them. If you give a track a name that another track has, Sitrec adds `-1` (or the next free number) when you finish typing. A sitch saved with two tracks of one name loads with the later one renamed in the same way.
 
 ### Visibility and Appearance
 
@@ -227,9 +228,9 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 
 To make a hand-drawn track, right-click the ground and choose **Add Flight Path** or **Add Moving Object**. See [Adding Objects and Tracks](SceneObjects.md).
 
-A hand-drawn track's folder puts its controls in groups. At the top are **Name**, **Edit Track**,
-**Show Object Menu** (when an object rides the track), **Go to Track**, **Focus Camera Here**
-and **Follow Camera Here**. Then come three groups: **Path** (Constant Speed, Extrapolate Track,
+A hand-drawn track's folder puts its controls in groups. At the top are **Name**, an **Object**
+row for each object on the track (its button opens the menu of that object), **Edit Track**,
+**Go to Track**, **Focus Camera Here** and **Follow Camera Here**. Then come three groups: **Path** (Constant Speed, Extrapolate Track,
 Curve Type and the altitude controls; open), **Smoothing** (Smoothing Method first, then its
 values; closed) and **Display** (the line, wall, contrail and look-view controls; closed). At
 the end are **Add Custom Graph**, **Export Spline** and **Delete Track**. When the track has an

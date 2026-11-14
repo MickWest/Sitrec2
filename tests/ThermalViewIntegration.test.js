@@ -4,6 +4,7 @@ import path from "node:path";
 import {parse} from "@babel/parser";
 import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector3} from "three";
 import {thermalRenderMode, thermalUnavailable, objectThermalState, setupObjectThermalMenu, setupThermalMenu} from "../src/rendering/ThermalLoader";
+import {savedObjectName} from "../src/UserObjects";
 import {effectiveRenderMode} from "../src/rendering/ViewRenderMode";
 import {createThermalViewAdapter, lensStepValidated, saveThermalSettings, setupThermalVehicleControls, thermalFieldMapping, thermalGeometry,
     thermalSettings, thermalSettingsForCameraState, thermalSettingsForViewField, thermalSolarGeometry, THERMAL_LOOK_HIDDEN} from "../src/rendering/ThermalViewAdapter";
@@ -248,7 +249,7 @@ test("refraction leaves physical range in the shader and restores shared uniform
 
 test("object mods retain thermal overrides through rebuild and old mods restore inheritance", () => {
     const ObjectNode=methods("src/nodes/CNode3DObject.js","CNode3DObject",["modSerialize","modDeserialize"],
-        {objectThermalState,resolveModelAlias:x=>x,copyProceduralModel:x=>x},class {modSerialize(){return {};}modDeserialize(){}});
+        {objectThermalState,resolveModelAlias:x=>x,copyProceduralModel:x=>x,savedObjectName,TrackManager:null},class {modSerialize(){return {};}modDeserialize(){}});
     const node=Object.assign(new ObjectNode(),{common:{},geometryParams:{},materialParams:{},thermal:objectThermalState(),
         flock:{isDefault:()=>true,deserialize(){},setEnabled(){}},rebuild:jest.fn(),rebuildMaterial(){},show(){},syncForceAboveSurfaceGUI(){}});
     const binding=node.thermal;

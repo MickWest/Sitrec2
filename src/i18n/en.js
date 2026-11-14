@@ -796,7 +796,7 @@ const en = {
         },
         objects: {
             title: "Objects",
-            tooltip: "3D objects and their settings. Each folder is one object.\ntraverseObject is the object that moves along the lines of sight (LOS). The Traverse menu sets its path.",
+            tooltip: "3D objects and their settings. Each folder is one object: a model or a shape that is drawn at a position.\nAn object that is on a track has an On Track row with the name of that track.\nTraverse Object is the object that moves along the lines of sight (LOS). The Traverse menu sets its path.",
             addObject: {
                 label: "Add Object",
                 tooltip: "Create a new object at specified coordinates",
@@ -866,7 +866,7 @@ const en = {
         },
         contents: {
             title: "Contents",
-            tooltip: "The tracks and other loaded data in the scene. Each track has a folder of display settings.\nAlso holds the live data feeds and the switches for all tracks.",
+            tooltip: "The tracks and other loaded data in the scene. A track is a path: a position for each frame. Each track has a folder of display settings.\nA folder names the objects on its track, and a tag on its title says when the camera or the target uses it.\nAlso holds the live data feeds and the switches for all tracks.",
         },
         help: {
             title: "Help",
@@ -1395,10 +1395,6 @@ const en = {
             + "Chordal: smooth, with round turns. The default.\n"
             + "Centripetal: smooth, and never makes a loop or a sharp point between points.\n"
             + "Catmull-Rom: smooth, but can overshoot or loop where points are unevenly spaced.",
-        showObjectMenu: {
-            label: "Show Object Menu",
-            tooltip: "Open the menu of the object that moves along this track",
-        },
         // Asked when one file with two or more tracks, and no camera or target of its own,
         // goes into a new sitch. See TrackManager.shouldAskLoadOrderPairing.
         pairTracks: {
@@ -4042,10 +4038,6 @@ const en = {
             tooltip: "Remove this object from the sitch. Its track, if it has one, stays",
             confirm: "Delete object \"{{name}}\"?",
         },
-        showTrackMenu: {
-            label: "Show Track Menu",
-            tooltip: "Open the menu of the track this object moves along",
-        },
         location: {
             label: "Location",
             tooltip: "Where this object is: at a position that you set, or on a track",
@@ -4466,6 +4458,129 @@ const en = {
     displayName: {
         label: "Name",
         tooltip: "The name shown for this in menus, labels and lists. Changing it does not change anything else",
+    },
+
+    // The links between tracks and objects, shown in their two folders (TrackObjectLinks.js).
+    links: {
+        onTrack: {
+            label: "On Track",
+            tooltip: "This object is on the track \"{{name}}\".\nClick to open the menu of that track",
+            note: "on {{name}}",
+        },
+        object: {
+            label: "Object",
+            tooltip: "The object \"{{name}}\" is on this track.\nClick to open the menu of that object",
+        },
+        usedFor: {
+            label: "Used For",
+            tooltip: "What uses this now, and where to change it:",
+            note: "Used for: {{roles}}",
+        },
+        // name: in a list. short: after "Camera position" in the same list. note: the tag on
+        // the folder's title. where: a line of the Used For tooltip.
+        roles: {
+            cameraPosition: {
+                name: "Camera position",
+                short: "Camera position",
+                note: "Camera",
+                where: "Camera position: Camera > Location > Position",
+            },
+            cameraFOV: {
+                name: "Camera FOV",
+                short: "FOV",
+                where: "Camera FOV: Camera > FOV (Zoom) > Camera FOV",
+            },
+            cameraHeading: {
+                name: "Camera heading",
+                short: "heading",
+                where: "Camera heading: Camera > Heading > Camera Heading",
+            },
+            target: {
+                name: "Target",
+                short: "Target",
+                note: "Target",
+                where: "Target: Target > Target Track",
+            },
+            orbitCenter: {
+                name: "Orbit center",
+                short: "Orbit center",
+                where: "Orbit center: Camera > Camera Tweaks > Orbit Target",
+            },
+            balloonLaunchFinder: {
+                name: "Balloon launch finder",
+                short: "Balloon launch finder",
+                where: "Balloon launch finder: Traverse > Reverse Balloon Launch Finder > Start From",
+            },
+            kiteAnchorFinder: {
+                name: "Kite anchor finder",
+                short: "Kite anchor finder",
+                where: "Kite anchor finder: Traverse > Kite Anchor Finder",
+            },
+            windSource: {
+                name: "Wind source",
+                short: "Wind source",
+                where: "Wind source: Physics > Wind > Wind Source",
+            },
+        },
+        cameraPosition: {
+            label: "Camera Position",
+            follows: "The camera is at \"{{name}}\".\nTo change it: Camera > Location > Position",
+            followsNote: "follows {{name}}",
+            orbit: "Orbit around {{name}}",
+            // by the option key of Camera > Location > Position
+            kinds: {
+                fixedCamera: "The camera is at a position that you set, in Camera > Location.\nTo put it on a track: Camera > Location > Position",
+                flightSimCamera: "The camera flies a simulated path. It starts at the Manual position and moves with the Local Wind.\nIts controls are in Physics > Simple Flight Sim.\nTo change it: Camera > Location > Position",
+                orbitCamera: "The camera goes in a circle around the Orbit Target.\nIts controls are in Camera > Camera Tweaks.\nTo change it: Camera > Location > Position",
+            },
+        },
+        traverseMethod: {
+            label: "Traverse Method",
+            tooltip: "The traverse track is a path for the object in the video. Sitrec calculates it from the camera's lines of sight, with this method.\nTo change it: Traverse > LOS Traverse Method",
+            sameAsTarget: "Same as Target Track",
+            sameAsTargetTooltip: "The traverse track is the Target Track: no path is calculated (the method is \"Target Object\").\nTo change it: Traverse > LOS Traverse Method",
+        },
+        windSource: {
+            label: "Wind Source",
+            targetWind: "Target Wind",
+            balloonTooltip: "The wind that moves this balloon: the wind of the scene.\nTo change it: Physics > Wind > Wind Source",
+            kiteTooltip: "The wind that flies this kite: the wind of the scene.\nTo change it: Physics > Wind > Wind Source",
+        },
+        notDrawn: {
+            label: "Not Drawn",
+            text: "Same track as {{name}}",
+            tooltip: "Sitrec does not draw this object while it is on the same track as another object, because the two would be at one place",
+        },
+        // The tracks and objects that a custom sitch always has. They were titled with their
+        // node ids, which each tooltip still gives for a script that uses one.
+        builtIn: {
+            cameraTrack: {
+                title: "Camera Track",
+                tooltip: "The path of the camera. Camera > Location > Position selects what sets it.\nThe rows here change how its line is drawn.\n(Node id: {{id}})",
+            },
+            traverseTrack: {
+                title: "Traverse Track",
+                tooltip: "A calculated path for the object in the video, along the camera's lines of sight. Traverse > LOS Traverse Method selects how it is calculated.\nThe rows here change how its line is drawn.\n(Node id: {{id}})",
+            },
+            // The titles are the names that these two tracks have in the track lists
+            // (Camera > Location > Position, Target > Target Track).
+            satelliteTrack: {
+                title: "Satellite",
+                tooltip: "The path of the satellite in Satellites > Tracks & Guides > Satellite to Track. It is \"Satellite\" in the track lists.\nThe rows here change how its line is drawn.\n(Node id: {{id}})",
+            },
+            satelliteTrack2: {
+                title: "Satellite 2",
+                tooltip: "The path of the second satellite in Satellites > Tracks & Guides. It is \"Satellite 2\" in the track lists.\nThe rows here change how its line is drawn.\n(Node id: {{id}})",
+            },
+            cameraObject: {
+                title: "Camera Object",
+                tooltip: "The model or shape that is drawn at the camera. It is on the Camera Track.\nThe camera's own settings are in the Camera menu.\n(Node id: {{id}})",
+            },
+            traverseObject: {
+                title: "Traverse Object",
+                tooltip: "The model or shape that is drawn on the Traverse Track: the calculated path for the object in the video.\n(Node id: {{id}})",
+            },
+        },
     },
 
     measurements: {

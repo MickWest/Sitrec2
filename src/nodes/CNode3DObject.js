@@ -61,7 +61,7 @@ import {
     WireframeGeometry
 } from "three";
 import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, markSitchDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
-import {isUserMadeObjectId} from "../UserObjects";
+import {isUserMadeObjectId, savedObjectName} from "../UserObjects";
 import {addNameControl, notifyDisplayNameChanged} from "../DisplayName";
 import {EventManager} from "../CEventManager";
 import {assert} from "../assert";
@@ -230,8 +230,8 @@ function paramLabel(key) {
 
 // The object folder's tooltip: the full name (the title may be shortened), then what the
 // folder holds. One folder per object, all made here, so the second line stays generic.
-function objectFolderTooltip(name) {
-    return `${name}\n${t("nodes3dObject.folder.tooltip")}`;
+function objectFolderTooltip(name, description) {
+    return `${name}\n${description ?? t("nodes3dObject.folder.tooltip")}`;
 }
 
 export class CNode3DObject extends CNode3DGroup {
@@ -424,6 +424,16 @@ export class CNode3DObject extends CNode3DGroup {
             property: "displayName",
             first: true,
             onRename: (name) => this.setDisplayName(name, {fromControl: true}),
+            // An object that has one name with its track (a loaded track's marker, a balloon,
+            // a kite) gives the track that name. Track names are unique, so the finished name
+            // is checked as the track's own Name control checks it (not on each key: "Kite 1"
+            // is typed through "Kite ", which another track can have).
+            onFinishChange: (name) => {
+                const trackOb = TrackManager?.trackForObject?.(this.id);
+                if (!trackOb || !TrackManager.sharesNameWithObject(trackOb)) return;
+                const unique = TrackManager.uniqueTrackName(name, trackOb);
+                if (unique !== name) this.setDisplayName(unique);
+            },
         });
         this.nameController.isCommon = true;
         // Renaming a hidden object is still useful, so Name is not greyed out with the rest.
@@ -548,7 +558,9 @@ export class CNode3DObject extends CNode3DGroup {
         this.menuName = shortObjectName(name);
         // The Name control sets the folder title itself; a rename from elsewhere does not.
         this.gui.title(this.menuName);
-        this.gui.tooltip(objectFolderTooltip(name));
+        // folderDescription: what this object is, for one that the sitch defines (the camera
+        // object, the traverse object). CCustomManager.setup gives it.
+        this.gui.tooltip(objectFolderTooltip(name, this.folderDescription));
         if (!fromControl) this.nameController?.updateDisplay();
         // The 3D label follows only when it showed the name, not a label chosen for it.
         if (this.label && this.label.text === oldMenuName) this.label.changeText(this.menuName);
@@ -1201,10 +1213,14 @@ ${trackPlacemark}    </Document>
         super.modDeserialize(v)
         Object.assign(this.thermal, objectThermalState(v.thermal));
         if (this.solarSurface) this.restoreSolarSurface(v.solarSurface);
-        // Not linked: the track restores its own saved name.
-        if (typeof v.displayName === "string" && v.displayName !== this.displayName) {
-            this.setDisplayName(v.displayName, {linked: false});
+        // Not linked: the track restores its own saved name. A name that the user never
+        // chose is not restored (savedObjectName).
+        const savedName = savedObjectName(this.id, v.displayName);
+        if (savedName !== null && savedName !== this.displayName) {
+            this.setDisplayName(savedName, {linked: false});
         }
+        // A balloon or a kite and its object have one name while the two are equal.
+        TrackManager?.noteObjectNameRestored?.(this);
         this.color = v.color;
         this.modelOrGeometry = v.modelOrGeometry;
         this.selectModel = resolveModelAlias(v.model);

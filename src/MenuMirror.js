@@ -119,6 +119,9 @@ function buildTwin(source, targetGui, opts = {}) {
     if (source._keepLiveWhenFolderOff && typeof twin.keepLiveWhenFolderOff === "function") twin.keepLiveWhenFolderOff();
     if (source._fadeWhenFolderOff && typeof twin.fadeWhenFolderOff === "function") twin.fadeWhenFolderOff();
     if (source.domElement.classList.contains("lil-list-checkbox")) twin.asListCheckbox?.();
+    // The two row looks of MenuRowLooks.js: a label with a button, and a display-only text.
+    if (source._linkRowLabel !== undefined) twin.asLinkRow?.(source._linkRowLabel, source._signatureName);
+    if (source._displayOnly) twin.asDisplayRow?.();
     twin.show(!source._hidden);
 
     // Unit metadata is COPIED rather than re-applied through setUnitType(): the name already

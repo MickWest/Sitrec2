@@ -141,6 +141,7 @@ import {clearMenuMirrors} from "./MenuMirror";
 import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
+import {cancelTrackObjectLinksRefresh} from "./TrackObjectLinks";
 import {CNodeView3D} from "./nodes/CNodeView3D";
 import {renderCadence, shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
 import {getApproximateLocationFromIP} from "./GeoLocation";
@@ -3580,6 +3581,9 @@ function disposeEverything() {
 
     // timeline markers belong to the sitch being left
     TimelineMarkers.clear();
+
+    // a refresh of the track and object link rows that is waiting is for the sitch being left
+    cancelTrackObjectLinksRefresh();
 
     // forget the user measurements (their nodes went with NodeMan.disposeAll above)
     MeasurementManager.disposeAll();

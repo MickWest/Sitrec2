@@ -4,7 +4,7 @@
  * Extracted from CustomSupport.js as a mixin. Methods are merged into
  * CCustomManager.prototype so `this` references the CCustomManager instance.
  */
-import {titleFollowsDisplayName} from "./DisplayName";
+import {displayTitle, titleFollowsDisplayName} from "./DisplayName";
 import {
     addGUIFolder,
     FileManager,
@@ -164,16 +164,21 @@ export const mirrorMethods = {
             return null;
         }
 
-        const menuTitle = node.menuName || guiToMirror._title || node.id;
+        // "Object: name" for a 3D object, as a track's panel is "Track: name". Other nodes
+        // that open here keep their own title.
+        const menuTitle = () => {
+            const name = node.menuName || guiToMirror._title || node.id;
+            return node instanceof CNode3DObject ? displayTitle(name, t("links.object.label")) : name;
+        };
 
         // dismissOnOutsideClick=false: interacting with the scene — which is the whole
         // point while the move widget is up — must not close the menu. The "object" slot lets
         // it stay open beside a track's panel.
-        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, false, false, "object");
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle(), clientX, clientY, false, false, "object");
         if (!standaloneMenu) return null;    // blocked by an open persistent menu
 
         this.setupDynamicMirroring(guiToMirror, standaloneMenu);
-        titleFollowsDisplayName(standaloneMenu, node.id, () => node.menuName || node.id);
+        titleFollowsDisplayName(standaloneMenu, node.id, menuTitle);
         if (node instanceof CNode3DObject) {
             // Registering the editing object is also what attaches CObjectMoveWidget, so
             // this is what makes the object draggable without holding Option.
@@ -227,7 +232,10 @@ export const mirrorMethods = {
             smoothedNode._updateParameterVisibility();
         }
 
-        const trackMenuTitle = () => `Track: ${trackOb?.displayName || trackOb?.menuText || track.trackID}`;
+        // A track that TrackManager does not have (the camera track, the traverse track) has
+        // its name as the title of its folder.
+        const trackMenuTitle = () => `Track: ${trackOb?.displayName || trackOb?.menuText
+            || track.guiFolder._title || track.trackID}`;
 
         // dismissOnOutsideClick=false so dragging control points doesn't close the menu. The
         // "track" slot lets it stay open beside an object's panel.
@@ -521,7 +529,10 @@ export const mirrorMethods = {
 
         // Add controller signatures
         folder.controllers.forEach(controller => {
-            const name = controller._name || 'unnamed';
+            // A link row's text is the NAME of another thing, and changes with it. Its
+            // _signatureName does not (MenuRowLooks.js), so a rename does not rebuild the
+            // panel under the field that the user is typing in.
+            const name = controller._signatureName || controller._name || 'unnamed';
             const type = controller.constructor.name;
             const visible = controller._hidden ? 'hidden' : 'visible';
             parts.push(`ctrl:${name}:${type}:${visible}`);

@@ -96,6 +96,7 @@ import {CNodeOrbitTrack} from "./nodes/CNodeOrbitTrack";
 import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, importSoundingDialog} from "./SondeFetch";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
+import {scheduleTrackObjectLinksRefresh} from "./TrackObjectLinks";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {
     gimbalStepAirTrack,
@@ -1472,6 +1473,7 @@ export const serializeMethods = {
             }
             Globals.deserializing = false;
             Globals.sitchDirty = false;
+            scheduleTrackObjectLinksRefresh();
             setRenderOne(3);
             // What did load looks complete, and a save now would write the skipped parts out of
             // the sitch, so say so. Over the main view, and gone by itself: the app carries on.
@@ -2064,6 +2066,9 @@ export const serializeMethods = {
         this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
+        // Every track, object and selector has its saved state now. The changes of the load
+        // itself asked for nothing (TrackObjectLinks.js).
+        scheduleTrackObjectLinksRefresh();
         // A sitch that came back from a temporary save (StaleBuildRecovery.js) had changes
         // that were not saved, and it still has them: keep the "Leave site?" protection.
         if (Globals.restoreDirtyAfterLoad) {

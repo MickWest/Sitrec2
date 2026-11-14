@@ -1177,6 +1177,62 @@ describe('CSitrecAPI menu control resolution', () => {
         expect(r.success).toBe(false);
         expect(r.error).toContain('view, video');
     });
+
+    describe('display rows and folders that got a name', () => {
+        afterEach(() => {
+            delete mockGuiMenus.traverse;
+            delete mockGuiMenus.contents;
+        });
+
+        test('a display row does not take the name of a real control', () => {
+            // A script says `set "Traverse Method" ...`, which finds "LOS Traverse Method " by a
+            // partial match. The read-only row of the Traverse Track folder has EXACTLY that
+            // name, and an exact name anywhere wins: it must not be a candidate.
+            const real = control('LOS Traverse Method ', 'Constant Altitude');
+            const display = {...control('Traverse Method', 'Constant Altitude'), _displayOnly: true};
+            // the display row's menu comes first, where an exact match would be found first
+            mockGuiMenus.contents = menu('contents', [], [menu('Traverse Track', [display])]);
+            mockGuiMenus.traverse = menu('traverse', [real]);
+
+            const r = sitrecAPI._setMenuValue(null, 'Traverse Method', 'Straight Line');
+
+            expect(r.success).toBe(true);
+            expect(real.getValue()).toBe('Straight Line');
+            expect(display.getValue()).toBe('Constant Altitude');
+            // and it is not offered as a control: not in the summary, not as a suggestion
+            expect(sitrecAPI.getMenuSummary().contents).toBeUndefined();
+            expect(sitrecAPI._setMenuValue('contents', 'Traverse Track/Traverse Methd', 'x').suggestions ?? [])
+                .not.toContain('contents:Traverse Track/Traverse Method');
+        });
+
+        test('a folder that has a name now is still found by the node id it was titled with', () => {
+            const width = control('Line Width', 1);
+            const cameraTrack = menu('Camera Track', [width]);
+            cameraTrack._lookupId = 'cameraDisplayTrack';
+            mockGuiMenus.contents = menu('contents', [], [cameraTrack]);
+
+            // the path of a script that was written before the folder had a name, in any case
+            expect(sitrecAPI._setMenuValue('contents', 'cameraDisplayTrack/Line Width', 3).success).toBe(true);
+            expect(width.getValue()).toBe(3);
+            expect(sitrecAPI._setMenuValue('contents', 'cameradisplaytrack/Line Width', 4).success).toBe(true);
+            // and by its name
+            expect(sitrecAPI._setMenuValue('contents', 'Camera Track/Line Width', 5).success).toBe(true);
+            expect(width.getValue()).toBe(5);
+        });
+
+        test('a folder that is titled with the text comes before a folder that has it as its id', () => {
+            const byTitle = control('Line Width', 1), byId = control('Line Width', 1);
+            const titled = menu('Kite', [byTitle]);
+            const other = menu('My Kite', [byId]);
+            other._lookupId = 'Kite';
+            mockGuiMenus.contents = menu('contents', [], [other, titled]);
+
+            sitrecAPI._setMenuValue('contents', 'Kite/Line Width', 2);
+
+            expect(byTitle.getValue()).toBe(2);
+            expect(byId.getValue()).toBe(1);
+        });
+    });
 });
 
 describe('CSitrecAPI timeline markers', () => {

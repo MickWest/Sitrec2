@@ -1,6 +1,6 @@
 // Which 3D objects the user made, and which nodes such an object owns (src/UserObjects.js).
 
-import {isUserMadeObjectId, ownedSubNodeIds} from "../src/UserObjects";
+import {BUILT_IN_OBJECT_IDS, isUserMadeObjectId, ownedSubNodeIds, savedObjectName} from "../src/UserObjects";
 
 test("objects made in Sitrec are deletable; objects a sitch defines, and a balloon's sphere, are not", () => {
     expect(isUserMadeObjectId("syntheticObject_1791557242602")).toBe(true);
@@ -30,4 +30,23 @@ test("an object owns its <id>_<name> nodes, but not another object made in the s
         "syntheticObject_100_color_colorInput",
     ]);
     expect(ownedSubNodeIds("syntheticObject_100_1", ids)).toEqual(["syntheticObject_100_1_size"]);
+});
+
+test("a built-in object does not take back the node id that an old save has as its name", () => {
+    expect(BUILT_IN_OBJECT_IDS).toEqual(["cameraObject", "traverseObject"]);
+    // A sitch saved before these two objects had names: the id was shown, and so it was saved.
+    expect(savedObjectName("cameraObject", "cameraObject")).toBeNull();
+    expect(savedObjectName("traverseObject", "traverseObject")).toBeNull();
+    // a name that the user typed comes back, also for these two
+    expect(savedObjectName("traverseObject", "The orb")).toBe("The orb");
+    expect(savedObjectName("cameraObject", "traverseObject")).toBe("traverseObject");
+});
+
+test("every other object takes back its saved name, also when that is its id", () => {
+    // An object that the API made with a name has that name as its id.
+    expect(savedObjectName("Viewer", "Viewer")).toBe("Viewer");
+    expect(savedObjectName("syntheticObject_100", "Object 1")).toBe("Object 1");
+    expect(savedObjectName("balloonObject_100", "Object 1")).toBe("Object 1");
+    // a save with no name for the object
+    expect(savedObjectName("syntheticObject_100", undefined)).toBeNull();
 });

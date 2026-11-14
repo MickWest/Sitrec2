@@ -32,6 +32,8 @@ import "./MenuMirror";      // installs Controller.shareAs/mirrorTo + GUI.addMir
 import "./FolderToggle";    // installs Controller.asFolderToggle (a folder's title-bar checkbox)
 import "./CheckboxPair";    // installs GUI.addCheckboxPair (independent Main/Look boxes on one row)
 import "./CheckboxDragPaint"; // press a checkbox and drag over others to set them the same way
+import "./MenuRowLooks";    // installs Controller.asLinkRow and asDisplayRow
+import "./FolderTitleNote"; // installs GUI.setTitleNote (a tag at the right of a folder's title)
 
 // Issue with lil-gui, the OptionController options() method adds a
 // _names array to the controller object, and a _values array
@@ -554,8 +556,15 @@ GUI.prototype.setLabelColor = function (color, min = 0) {
 // Folder tooltip. Target the title bar ($title) rather than the whole folder
 // domElement so the native tooltip appears when hovering the folder's title —
 // not over every child row in the (open) folder.
+//
+// The folder's own text is kept in _tooltip. A title note (FolderTitleNote.js) adds one line,
+// _titleNoteTip, that says what the folder's thing is linked to. They are joined here, the one
+// place that writes the attribute, so a later tooltip() call (a rename sets it again) keeps
+// the line.
 GUI.prototype.tooltip = function (tooltip) {
-    (this.$title ?? this.domElement).title = tooltip;
+    this._tooltip = tooltip;
+    const note = this._titleNoteTip;
+    (this.$title ?? this.domElement).title = note ? (tooltip ? `${tooltip}\n${note}` : note) : tooltip;
     return this; // Return the GUI to allow method chaining
 }
 
@@ -2763,7 +2772,10 @@ export class CGuiMenuBar {
         for (const f of gui.folders) {
             const key = f.$title?.innerHTML;
             if (!key) continue;
-            const entry = data[key];
+            // By title, as it was saved. Else by the folder's id: a folder that was titled
+            // with its node id when the sitch was saved ("cameraDisplayTrack") and has a
+            // name now ("Camera Track") keeps its _lookupId, and so its saved state.
+            const entry = data[key] ?? (f._lookupId !== undefined ? data[f._lookupId] : undefined);
             if (!entry) continue;
             if (entry.detached) {
                 // Re-tear-out this folder. Sidebar placements are collected and

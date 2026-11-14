@@ -413,6 +413,10 @@ class CNodeSwitch extends CNode {
         // interactive changes — listeners that want THE moment-of-truth on
         // choice want this one.
         EventManager.dispatchEvent("Switch.choiceChanged." + this.id, this.choice);
+        // The same for a listener that wants every switch, and so cannot know the ids:
+        // TrackObjectLinks.js shows what each selector has, and an object's Position
+        // selector is made with the object.
+        EventManager.dispatchEvent("Switch.choiceChanged", {id: this.id, choice: this.choice});
     }
 
 

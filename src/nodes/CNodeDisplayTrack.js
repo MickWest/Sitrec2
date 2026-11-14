@@ -142,6 +142,11 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             if (!this.guiFolder) {
                 this.guiFolder = guiMenus[this.gui].addFolder(this.id).close()
                     .tooltip(t("displayTrack.folder.tooltip"));
+                // The folder is this node's own: the track is not one that TrackManager has
+                // (the camera track, the traverse track, a satellite). TrackObjectLinks.js
+                // finds such a track by this flag. Found by id whatever the title says.
+                this.ownsGuiFolder = true;
+                this.guiFolder._lookupId = this.id;
             }
             assert(this.guiFolder !== undefined, "CNodeDisplayTrack: guiFolder is undefined for track "+this.id);
 
@@ -464,6 +469,22 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.recalculate()
         // A track built while the global gate is OFF must not appear just because it is new.
         this.applyVisibility()
+    }
+
+    /**
+     * Give this node's OWN folder a name, in place of the node id that it is titled with:
+     * "Camera Track" for cameraDisplayTrack. Display only. The folder is still found by the id
+     * (_lookupId, set where the folder is made), and a sitch that was saved with the id as the
+     * title still gets its open or closed state (GUI menu bar, _applyFolderStates).
+     * Nothing happens for a track that TrackManager has: its folder has the track's name.
+     * @param {string} title
+     * @param {string} [tooltip]
+     */
+    setMenuTitle(title, tooltip) {
+        if (!this.ownsGuiFolder || !this.guiFolder) return;
+        this.menuTitle = title;
+        this.guiFolder.title(title);
+        if (tooltip !== undefined) this.guiFolder.tooltip(tooltip);
     }
 
     // Whether this track is drawn, from this track's own `visible` checkbox and "Limit Tracks

@@ -13,6 +13,91 @@ This page has four parts:
 - **C. [The editors](#c-the-editors)**: buildings, clouds, ground overlays and ground grids
 - **D. [Finding, saving and removing](#d-finding-saving-and-removing)**
 
+Read [Tracks and objects](#tracks-and-objects) first if you are not sure what the difference is,
+or which object is on which track.
+
+---
+
+## Tracks and objects
+
+A **track** is a path: it gives a position for each frame. An **object** is a model or a shape
+that Sitrec draws at a position. Tracks are in the **Contents** menu, and objects are in the
+**Objects** menu. An object is at a fixed position, or it is on a track and moves along it. One
+track can have several objects on it, or none.
+
+### The kinds of track
+
+| Track | Where it comes from | What sets its positions |
+|---|---|---|
+| Loaded track | A file that you load. See [Loading and Filtering Tracks](Tracks.md) | The file |
+| Hand-drawn track | **Add Moving Object**, **Add Flight Path** | Control points that you place |
+| Balloon, kite | **Add Balloon**, **Add Kite** | The launch point or the anchor, and the wind: **Physics → Wind → Wind Source** |
+| **Camera Track** | Every Custom sitch has it | **Camera → Location → Position**: a manual position, the flight simulator, an orbit, a track, or an object. See [Camera and Target](CameraAndTarget.md) |
+| **Traverse Track** | Every Custom sitch has it | The camera's lines of sight, and **Traverse → LOS Traverse Method**. See [Traverse Analysis and the Verdict](TraverseAnalysis.md) |
+| **Satellite**, **Satellite 2** | Shown when the satellite is in the loaded data | The orbit of the satellite. See [Satellites](Satellites.md) |
+
+The target is not a track of its own. It is the track or the position that you select in
+**Target → Target Track**, and it has no folder.
+
+### The kinds of object
+
+| Object | The track it is on | Can you put it on a different track? |
+|---|---|---|
+| **Camera Object** | The Camera Track | No |
+| **Traverse Object** | The Traverse Track | No |
+| The marker of a loaded track | That track | No |
+| A balloon's sphere, a kite | Its balloon or kite track | No |
+| An object from **Add 3D Object** or **Add Moving Object** | What its **Location → Position** selects: **Manual** (no track) or a track | Yes. See [Location](#location-a-manual-position-or-a-track) |
+
+### How the menus show the links
+
+![The Contents menu and the Objects menu of one sitch, side by side. In Contents: Camera Track with the tag "follows Kite", Traverse Track, Balloon with the tag "Target", and Kite with the tag "Camera". The Kite folder is open, with the rows Name, Object (a button "Kite"), Used For "Camera position" and Wind Source "Manual". In Objects: Traverse Object, Camera Object, Balloon, Kite, and Object 1 with the tag "on Balloon". The Object 1 folder is open, with the rows Name and On Track (a button "Balloon"), and the Location group](docimages/scene-objects-links.jpg)
+
+The **Contents** menu (left) and the **Objects** menu (right) of one sitch. The camera is on the
+kite's track, and the target is the balloon. *Object 1*, from **Add 3D Object**, is on the
+balloon's track.
+
+Each folder says what it is linked to, in rows directly below **Name**:
+
+| Row | In the folder of | What it shows |
+|---|---|---|
+| **On Track** | An object | A button with the name of the track that the object is on. Click it to open the menu of that track. No row when the object is on no track |
+| **Object** | A track | One button for each object on the track, with the name of the object. Click it to open the menu of that object |
+| **Used For** | A track, or an object whose **Position** is **Manual** | What uses it now: the camera position, the camera FOV, the camera heading, the target, the orbit center, a finder, or the wind source. Its tooltip gives the menu where you change each one. No row when nothing uses it |
+| **Camera Position** | The **Camera Track** | The choice of **Camera → Location → Position**. With **Orbit**, it also names the Orbit Target |
+| **Traverse Method** | The **Traverse Track** | The choice of **Traverse → LOS Traverse Method**. *Same as Target Track* is the method **Target Object**, which calculates no path |
+| **Wind Source** | A balloon or a kite | The wind source that moves it: the choice of **Physics → Wind → Wind Source** |
+| **Not Drawn** | The **Traverse Object** | Shown only while Sitrec does not draw the traverse object, because it is on the same track as another object. It names that object |
+
+These rows show what the sitch has now. You cannot edit them, and they are not saved.
+
+A folder's title also has a small tag at its right end, where it says something you cannot see
+from the names:
+
+| Tag | On | Meaning |
+|---|---|---|
+| `Camera` | A track or an object | The camera's position is this track or object |
+| `Target` | A track or an object | The target is this track or object |
+| `follows N97826` | The **Camera Track** | The camera's position is the track or object with that name. Else the tag is `Manual`, `Flight Sim` or `Orbit` |
+| `on Track 3` | An object | The object is on the track with that name. Not shown when the two have the same name, or for the Camera Object and the Traverse Object |
+
+A tag is not shown when the name of the folder leaves no room for it. The tooltip of the folder
+title has the same text in full.
+
+### Names
+
+Things with **one name** are one thing in two menus: the object cannot leave its track. A loaded
+track and its marker have one name, and so do a balloon and its sphere, and a kite and its kite
+object. When you give one a new name, the other gets it too.
+
+Things with **different names** are two things. A hand-drawn track and the object made with it
+are *Track 3* and *Object 3*, and each has its own name: you can put the object on a different
+track. The Camera Track and the Camera Object are two things too, as are the Traverse Track and
+the Traverse Object.
+
+A sitch that was saved before balloons and kites had one name keeps its two names, for example
+*Balloon* and *Object 1*. The tag `on Balloon` on the object then shows where it is.
+
 ---
 
 ## A. The ground menu
@@ -42,8 +127,8 @@ You can select and copy this text.
 | **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
 | **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
-| **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, as *Object N* |
-| **Add Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, as *Object N* |
+| **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, with the same name |
+| **Add Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, with the same name |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
@@ -102,13 +187,15 @@ hand. It starts in edit mode. To add, move and delete control points, and to lea
 [Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks) in
 [Loading and Filtering Tracks](Tracks.md).
 
-A hand-drawn track's folder in **Contents** starts with **Name**, **Edit Track** and, when an
-object rides the track, **Show Object Menu**. Next come **Go to Track**, **Focus Camera Here** and
+A hand-drawn track's folder in **Contents** starts with **Name**, then an **Object** row for each
+object on the track, then **Edit Track**. Next come **Go to Track**, **Focus Camera Here** and
 **Follow Camera Here**, then the **Path**, **Smoothing** and **Display** groups.
 **Add Custom Graph**, **Export Spline** and **Delete Track** are at the end.
-See [Track Display Controls](Tracks.md#track-display-controls). The object's folder in
-**Objects** has **Show Track Menu**. The track's menu and the object's menu can be open at the
-same time.
+See [Track Display Controls](Tracks.md#track-display-controls). The button of an **Object** row
+opens the menu of that object, and the object's folder in **Objects** has an **On Track** row
+whose button opens the menu of the track: see
+[How the menus show the links](#how-the-menus-show-the-links). The track's menu and the object's
+menu can be open at the same time.
 
 ### Balloons
 
@@ -119,14 +206,18 @@ balloon the wind at its altitude. So does a sounding wind source, which uses win
 weather balloons. The **Manual** wind source gives it one wind at every altitude. The balloon is
 added to the camera and target track lists, so the camera can follow or look at it.
 
-Its folder in **Contents** has these launch settings:
+The balloon and its sphere have one name. The balloon's folder in **Contents** has an **Object**
+row, whose button opens the menu of the sphere, and a **Wind Source** row, which shows the wind
+source that moves the balloon. To change the wind, use **Physics → Wind → Wind Source**.
+
+The folder also has these launch settings:
 
 | Control | Default | What it does |
 |---|---|---|
 | **Start Altitude (m MSL)** | ground at the clicked point | Launch altitude above mean sea level |
 | **Launch Delay (s)** | 0 | Seconds after the start of the sitch before the balloon lifts off |
 | **Buoyancy (m/s)** | 5 | Steady ascent rate once launched. A negative value makes it descend |
-| **Wind Variability (%)** | 20 | Random gustiness, as a percentage of the local wind speed |
+| **Wind Variability (%)** | 20 | Random gustiness, as a percentage of the wind speed at the balloon |
 | **Random Seed** | 1 | Change it for a different, but repeatable, flight path |
 
 It also has **Show in look view** and **Delete Track**, which asks before it deletes the balloon.
@@ -219,6 +310,7 @@ The kite's folder in **Contents** has these settings:
 | **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
 | **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
 | **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |
+| **Wind Source** (read only) | | The wind source that flies the kite: the choice of **Physics → Wind → Wind Source**. It is at the top of the folder, below the **Object** row, whose button opens the menu of the kite object |
 
 It also has the track display controls, **Show in look view** (for the track and the flying
 line) and **Delete Track**, which asks before it deletes the kite and its object. To move the
@@ -478,13 +570,14 @@ When you put the object on a track, the object goes out of these lists, because 
 them. A list that had the object selected then changes to that track, so it stays with the
 object. When you delete the object, a list that had it selected goes back to its first choice.
 
-![The Location group of an object in two states. Left: Position on Manual, with the Lat, Lon and Alt values. Right: Position on Track 1, with those values hidden](docimages/scene-objects-location.jpg)
+![The menu of an object, Object 1, in two states. Left: Position on Manual, with the Lat, Lon and Alt values in the Location group. Right: Position on Track 1, with those values hidden, and an On Track row above the Location group with a button "Track 1"](docimages/scene-objects-location.jpg)
 
 The **Banking** control of the object sets how it points on the track. With **Position** on
 **Manual** the object does not move, so it keeps the heading that it has: north for a new object.
 Select **Fixed Heading** in **Banking** to turn it.
 
-A balloon's sphere and a kite stay with their own track, and have no **Location** group.
+A balloon's sphere and a kite stay with their own track, and have no **Location** group. The
+**On Track** row of their folder names that track.
 
 In the folder, the size of a generated shape (for example **Radius (m)**) is just below
 **Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in
@@ -771,8 +864,11 @@ off. The rotation is not restored.
 | Thing | Menu folder | How to remove it |
 |---|---|---|
 | Hand-drawn track | **Contents → *track name*** | **Delete Track** (asks first) |
-| Balloon | **Contents → *Balloon*** | **Delete Track** (asks first) |
-| 3D object, including the object on a track | **Objects → *object name*** | **Delete Object** (asks first). **Delete Track** on the object's track asks whether to delete the object too. A balloon's sphere has no **Delete Object**: **Delete Track** on the balloon removes both |
+| Balloon | **Contents → *Balloon***, and its sphere in **Objects** with the same name | **Delete Track** (asks first) removes both |
+| Kite | **Contents → *Kite***, and the kite object in **Objects** with the same name | **Delete Track** (asks first) removes both |
+| 3D object, including the object on a track | **Objects → *object name*** | **Delete Object** (asks first). **Delete Track** on the object's track asks whether to delete the object too. A balloon's sphere and a kite object have no **Delete Object** |
+| Camera Track, Traverse Track | **Contents → Camera Track**, **Contents → Traverse Track** | A Custom sitch always has them. To hide a line, clear its **Show Track Line** title checkbox |
+| Camera Object, Traverse Object | **Objects → Camera Object**, **Objects → Traverse Object** | A Custom sitch always has them. To hide one, clear its **Visible** title checkbox |
 | Building | **Objects → Building: *name*** | **Delete Building**, or **Delete** / **Backspace** in edit mode. **Objects → Remove all Buildings** removes them all |
 | Cloud layer | **Objects → Clouds: *name*** | **Delete Clouds**, or **Delete** / **Backspace** in edit mode |
 | Ground overlay | **Objects → Overlay: *name*** | **Delete Overlay**, or **Delete** / **Backspace** in edit mode |

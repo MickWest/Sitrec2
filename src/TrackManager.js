@@ -7,6 +7,7 @@ import {addCustomGraphControl} from "./CustomGraphUI";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {addManualObjectsToSelector, trackSelectors} from "./TrackSelectors";
+import {scheduleTrackObjectLinksRefresh} from "./TrackObjectLinks";
 import {showConfirm, showChoice} from "./showError";
 import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
@@ -266,17 +267,6 @@ function setTimeZoneFromTrackStart(trackDataID) {
         .then(zone => console.log(`Track time zone from its start position (${lat}, ${lon}): `
             + `${zone ?? "not set"} (${GlobalDateTimeNode.timeZoneName})`))
         .catch(error => console.warn("Track time zone lookup failed:", error));
-}
-
-// The x on screen of the menu button just clicked: a lil-gui button keeps focus after a click.
-// A panel opened from a button in a folder goes beside it. The middle of the window otherwise.
-function clickedButtonX() {
-    const element = document.activeElement;
-    if (element?.closest?.(".lil-gui")) {
-        const rect = element.getBoundingClientRect();
-        return rect.left + rect.width / 2;
-    }
-    return window.innerWidth / 2;
 }
 
 class CMetaTrack {
@@ -2344,7 +2334,14 @@ class CTrackManager extends CManager {
                 if (NodeMan.exists(dropTargetSwitch)) {
                     const switchNode = NodeMan.get(dropTargetSwitch);
                     switchNode.removeOption(trackID)
-                    switchNode.addOption(trackID, NodeMan.get(trackID))
+                    // Camera FOV shows the track's name, not its id ("Track_N97826"). The key
+                    // is still the id, so a saved choice matches. Two options of a menu must
+                    // not have the same text (a row is found by its text), so a name that
+                    // another option has is not used.
+                    const fovName = trackOb?.displayName ?? shortName;
+                    const fovNameTaken = Object.keys(switchNode.inputs ?? {})
+                        .some(key => (switchNode.guiLabels?.[key] ?? key) === fovName);
+                    switchNode.addOption(trackID, NodeMan.get(trackID), fovNameTaken ? undefined : fovName)
                     if (!Globals.sitchEstablished) {
                         switchNode.selectOption(trackID)
                     }
@@ -3092,8 +3089,6 @@ class CTrackManager extends CManager {
                     : first ? new Vector3(first[1], first[2], first[3]) : null;
                 CustomManager.addObjectLocation(objectNode, {ecef: start, track: shortName});
 
-                this.linkTrackAndObject(trackOb, objectNode);
-
                 console.log(`Associated object ${options.objectID} with track ${trackID} and added controllers`);
             } else {
                 console.warn(`Object ${options.objectID} not found`);
@@ -3105,11 +3100,12 @@ class CTrackManager extends CManager {
             splineEditor.setEnable(true);
         }
 
-        // The order on screen. The main action and the links come first, as in an object's
-        // folder; the groups in the middle; Export and Delete last.
+        // The order on screen. The main action comes first, as in an object's folder; the
+        // groups in the middle; Export and Delete last. The link to each object on the track
+        // ("Object") is added below Name by TrackObjectLinks.js, as for every kind of track.
         const topLevel = (property) => guiFolder.controllers.find(c => c.property === property);
         for (const item of [
-            topLevel("displayName"), editModeController, trackOb.showObjectController,
+            topLevel("displayName"), editModeController,
             topLevel("gotoTrack"), topLevel("focusCameraHere"), topLevel("followCameraHere"),
             pathFolder, smoothingFolder, displayFolder,
             topLevel("addCustomGraph"), topLevel("exportSpline"), deleteController,
@@ -3122,6 +3118,10 @@ class CTrackManager extends CManager {
         // Recalculate and render
         NodeMan.recalculateAllRootFirst();
         setRenderOne(true);
+
+        // The link rows of the track and of its object. A hand-drawn track sends no
+        // tracksChanged when it is made, so it asks by itself.
+        scheduleTrackObjectLinksRefresh();
         
         return trackOb;
     }
@@ -3171,7 +3171,7 @@ class CTrackManager extends CManager {
 
         this.usedShortNames.delete(trackOb.menuText);
 
-        // An object kept by "Delete Track Only" loses its Show Track Menu button.
+        // An object kept by "Delete Track Only" is no longer this track's object.
         if (trackOb.objectID) this.detachObject(trackOb);
 
         disposeDirectTrackDependentControllers(trackOb.smoothedTrackNode ?? NodeMan.get(trackID, false));
@@ -3235,6 +3235,9 @@ class CTrackManager extends CManager {
         if (!Globals.disposing) {
             NodeMan.recalculateAllRootFirst();
             setRenderOne(true);
+            // The link rows of an object that was on the track, as for the add: a hand-drawn
+            // track sends no tracksChanged.
+            scheduleTrackObjectLinksRefresh();
         }
     }
 
@@ -3354,11 +3357,11 @@ class CTrackManager extends CManager {
         });
 
 
-        // the balloon itself: a 0.5 m radius sphere riding the track. It is an object with its
-        // own name; a saved name comes back from its mod.
+        // the balloon itself: a 0.5 m radius sphere riding the track. It has the name of its
+        // track (shareNameWithObject below); a saved name comes back from its mod.
         const objectNode = new CNode3DObject({
             id: objectID,
-            displayName: CustomManager.getNextObjectName(),
+            displayName: options.displayName ?? shortName,
             geometry: "sphere",
             radius: 0.5,
             color: 0xf0f0f0,
@@ -3378,7 +3381,7 @@ class CTrackManager extends CManager {
         trackOb.trackColor = trackColor;
         trackOb.objectID = objectID;
         this.initTrackDisplayName(trackOb, options.displayName);
-        this.linkTrackAndObject(trackOb, objectNode);
+        this.shareNameWithObject(trackOb, objectNode);
 
         // Show-in-look-view toggle (same semantics as synthetic tracks)
         this.addShowInLookToggle(trackOb, guiFolder, [displayTrack], !!options.showInLook);
@@ -3562,7 +3565,9 @@ class CTrackManager extends CManager {
         const title = kind[0].toUpperCase() + kind.slice(1);
         const dummy = {
             deleteTrack: async () => {
-                if (await showConfirm(`Delete ${kind} "${trackOb.menuText}"?`, {title: `Delete ${title}`})) {
+                // by the name the user sees, which a rename changes
+                const name = trackOb.displayName ?? trackOb.menuText;
+                if (await showConfirm(`Delete ${kind} "${name}"?`, {title: `Delete ${title}`})) {
                     this.disposeRemove(trackOb.trackID);
                 }
             }
@@ -3708,7 +3713,8 @@ class CTrackManager extends CManager {
         // plain sphere, and the mods pass then restores the design it was saved with.
         const objectNode = new CNode3DObject({
             id: objectID,
-            displayName: CustomManager.getNextObjectName(),
+            // the name of its track (shareNameWithObject below)
+            displayName: options.displayName ?? shortName,
             ...(options.recipe
                 ? {proceduralModel: {mode: "procedural", recipe: options.recipe}}
                 : {geometry: "sphere", radius: 0.5, color: 0xf0f0f0, material: "phong"}),
@@ -3728,7 +3734,7 @@ class CTrackManager extends CManager {
         trackOb.trackColor = trackColor;
         trackOb.objectID = objectID;
         this.initTrackDisplayName(trackOb, options.displayName);
-        this.linkTrackAndObject(trackOb, objectNode);
+        this.shareNameWithObject(trackOb, objectNode);
 
         // Show-in-look-view toggle, for the track line and the flying line.
         this.addShowInLookToggle(trackOb, guiFolder, [displayTrack, lineDisplay], !!options.showInLook);
@@ -3903,10 +3909,19 @@ class CTrackManager extends CManager {
     relabelTrackOptions(trackOb) {
         const key = trackOb.menuText;
         const name = trackOb.displayName ?? key;
+        const fovSwitches = Sit.dropTargets?.fov ?? [];
         NodeMan.iterate((id, node) => {
             if (typeof node.setOptionLabel !== "function" || !node.inputs) return;
             if (node.inputs[key] !== undefined) node.setOptionLabel(key, name);
             if (node.inputs["Angles_" + key] !== undefined) node.setOptionLabel("Angles_" + key, name + " angles");
+            // Camera FOV has the track under its id. See updateDropTargets for the name rule.
+            const fovKey = trackOb.trackID;
+            if (fovSwitches.includes(id) && node.inputs[fovKey] !== undefined) {
+                const taken = Object.keys(node.inputs)
+                    .some(other => other !== fovKey && (node.guiLabels?.[other] ?? other) === name);
+                // taken: the option shows its key, not the name that the track had before
+                node.setOptionLabel(fovKey, taken ? fovKey : name);
+            }
         });
     }
 
@@ -3918,43 +3933,45 @@ class CTrackManager extends CManager {
     }
 
     /**
-     * Show Object Menu in the track's folder and Show Track Menu in the object's. The track is
-     * in Contents and the object in Objects, so without these the user has to find the other
-     * one. A panel opened from one of them goes beside the button that was clicked.
+     * A balloon or a kite and its object have ONE name, as a loaded track and its marker have.
+     * The object cannot leave the track, so the two are one thing to the user: "Balloon" in
+     * Contents and "Balloon" in Objects. A rename of one renames the other
+     * (sharesNameWithObject).
+     *
+     * A sitch that was saved before the pair had one name has two: "Balloon" and "Object 1".
+     * Those names stay, and noteObjectNameRestored turns the link off for them. A rename on
+     * load would change a folder title, and that sitch uses the title as the key of its menu
+     * state and can use it in a script path.
      */
-    linkTrackAndObject(trackOb, objectNode) {
-        trackOb.showObjectController = trackOb.guiFolder.add({
-            showObjectMenu: () => CustomManager.showNodeEditMenu(objectNode, clickedButtonX(), 0),
-        }, "showObjectMenu").name(t("trackManager.showObjectMenu.label"))
-            .tooltip(t("trackManager.showObjectMenu.tooltip"))
-            .moveAfter(t("displayName.label"));
-
-        objectNode.showTrackController = objectNode.gui.add({
-            showTrackMenu: () => CustomManager.showTrackMenu(
-                {trackID: trackOb.trackID, guiFolder: trackOb.guiFolder, trackOb}, clickedButtonX(), 0),
-        }, "showTrackMenu").name(t("nodes3dObject.showTrackMenu.label"))
-            .tooltip(t("nodes3dObject.showTrackMenu.tooltip"))
-            .moveAfter(t("displayName.label"));
-        // Common, so a model or geometry rebuild of the folder keeps it; live while hidden.
-        objectNode.showTrackController.isCommon = true;
-        objectNode.showTrackController.keepLiveWhenFolderOff?.();
+    shareNameWithObject(trackOb, objectNode) {
+        if (objectNode.displayName !== trackOb.displayName) {
+            objectNode.setDisplayName(trackOb.displayName, {linked: false});
+        }
+        trackOb.nameShared = true;
     }
 
-    // Undo linkTrackAndObject, for an object deleted on its own or kept by Delete Track Only.
+    // An object calls this when a saved sitch has given it its name back
+    // (CNode3DObject.modDeserialize). A balloon or kite pair is linked while the two names are
+    // the same. The flag is kept, and not worked out at each rename: a Name control writes
+    // the new name before it calls its handler, so the names already differ by then.
+    noteObjectNameRestored(objectNode) {
+        if (!/^(balloon|kite)Object_/.test(objectNode.id)) return;
+        const trackOb = this.trackForObject(objectNode.id);
+        if (trackOb?.objectID) trackOb.nameShared = trackOb.displayName === objectNode.displayName;
+    }
+
+    // An object that is deleted on its own, or kept by Delete Track Only, is no longer the
+    // track's. The link rows of the two folders follow by themselves (TrackObjectLinks.js).
     detachObject(trackOb) {
-        const objectNode = NodeMan.get(trackOb.objectID, false);
-        trackOb.showObjectController?.destroy();
-        trackOb.showObjectController = null;
-        objectNode?.showTrackController?.destroy();
-        if (objectNode) objectNode.showTrackController = null;
         trackOb.objectID = null;
+        trackOb.nameShared = false;
     }
 
     // True when the track and its object have one name: an imported track and its marker
-    // sphere. A synthetic or balloon track and the object made with it (objectID) are two
-    // things, "Track N" and "Object N", each with its own name.
+    // sphere, and a balloon or a kite and its object (nameShared). A hand-drawn track and the
+    // object made with it are two things, "Track N" and "Object N", each with its own name.
     sharesNameWithObject(trackOb) {
-        return !trackOb.objectID;
+        return !trackOb.objectID || !!trackOb.nameShared;
     }
 
     // Every name a track carries: its display name and its short name.

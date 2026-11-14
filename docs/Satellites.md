@@ -418,8 +418,9 @@ If the satellite is not in the loaded TLE data, the field shows *… not found*.
 calculated again when new TLE data is loaded.
 
 Each satellite track has a **Show in look view** checkbox, off by default, in its folder in the
-Contents menu, as other tracks do. The folders are named **satelliteDisplayTrack** and
-**satelliteDisplayTrack2**, and they appear when the satellite is in the loaded data. The look
+Contents menu, as other tracks do. The folders are named **Satellite** and
+**Satellite 2**, the names that the two tracks have in the camera and target track lists, and
+they appear when the satellite is in the loaded data. The look
 view's **Show Tracks** button and **Show → All Tracks in Look** include the satellite tracks too.
 
 ---

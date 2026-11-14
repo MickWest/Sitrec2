@@ -79,20 +79,19 @@ function makeObjectOnTrack() {
     object.displayName = "Object 1";
     object.gui = {};
     object.fixedObjectPositionID = position.id;
-    object.showTrackController = {destroy: jest.fn()};
     const otherObject = new TestObject({id: "syntheticObject_1000"});
     new TestNode({id: "syntheticObject_1000_size"});
     const panel = {_mirrorSource: object.gui, destroy: jest.fn()};
     context.Globals.menuBar.persistentMenus.push(panel);
     customManager.editingObjectNodeId = object.id;
-    const showObjectController = {destroy: jest.fn()};
-    const track = {trackID: "syntheticTrack_100", objectID: object.id, showObjectController};
+    // nameShared: as a balloon or kite pair has it. A track without its object has none.
+    const track = {trackID: "syntheticTrack_100", objectID: object.id, nameShared: true};
     trackManager.add(track.trackID, track);
-    return {object, otherObject, panel, track, showObjectController};
+    return {object, otherObject, panel, track};
 }
 
 test("Delete Object removes every node the object made, closes its panel, and detaches its track", () => {
-    const {object, panel, track, showObjectController} = makeObjectOnTrack();
+    const {object, panel, track} = makeObjectOnTrack();
     const madeByObject = () => Object.keys(nodeMan.list).filter(id => id.startsWith("syntheticObject_100_") || id === "syntheticObject_100");
     expect(madeByObject()).toHaveLength(4);
     customManager.deleteObject(object);
@@ -102,10 +101,11 @@ test("Delete Object removes every node the object made, closes its panel, and de
     expect(nodeMan.exists("syntheticObject_1000_size")).toBe(true);
     expect(panel.destroy).toHaveBeenCalled();
     expect(customManager.editingObjectNodeId).toBeNull();
-    // The track stays, without its object or its Show Object Menu button.
+    // The track stays, without its object. Its "Object" link row goes at the next refresh of
+    // the links (TrackObjectLinks.js), which reads the sitch and finds no object on the track.
     expect(trackManager.exists(track.trackID)).toBe(true);
     expect(track.objectID).toBeNull();
-    expect(showObjectController.destroy).toHaveBeenCalled();
+    expect(track.nameShared).toBe(false);
     expect(context.requestCameraFocusSync).toHaveBeenCalled();
 });
 

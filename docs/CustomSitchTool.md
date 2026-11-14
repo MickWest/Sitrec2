@@ -154,13 +154,13 @@ There's also a yellow line, the **Traverse**. This is where the object would hav
 
 The default method, "Target Object", is different: the traverse simply follows the target track, so it lies on the lines of sight only when the camera points at the target. With a fixed target it stays at one point, so you see no path until you select another method, such as "Constant Altitude". More on Traverses later — and see [Traverse Analysis and the Verdict](TraverseAnalysis.md).
 
-In addition, there is the Traverse Object, which defaults to a cube. You can change this in the **traverseObject** folder of the Objects menu. For example if you wanted to simulate a plane flying 1NM to the pilot's left, you could:
+In addition, there is the Traverse Object, which defaults to a cube. You can change this in the **Traverse Object** folder of the Objects menu. For example if you wanted to simulate a plane flying 1NM to the pilot's left, you could:
 
 - Tick **Relative Heading**
 - Set **Pan (Az)** to -90° (i.e. 90° left of the plane)
 - In the Traverse menu, set **LOS Traverse Method** to **Constant Distance**
 - Set **Tgt Start Dist (NM)** to 1
-- In the **traverseObject** folder, set **Model or Geometry** to "model"
+- In the **Traverse Object** folder, set **Model or Geometry** to "model"
 - Set **Model** to "737 MAX 8 BA"
 
 ![A 737 model set up as the traverse object, to the left of the camera plane, with the Heading folder of the Camera menu open](docimages/simple-plane-on-the-left.jpg)
