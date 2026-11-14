@@ -1619,7 +1619,7 @@ const en = {
             second: "Second",
             millisecond: "Millisecond",
         },
-        digitTip: "{{part}}: click left/right to subtract/add; drag to scrub. Tab/Shift+Tab selects digits to type. ↑/↓ steps; Shift ×10. Enter applies; Escape cancels and leaves.",
+        digitTip: "{{part}}: click to select and type; drag to scrub. Tab/Shift+Tab selects digits to type. ↑/↓ steps; Shift ×10. Enter applies; Escape cancels and leaves.",
         calendar: "Choose date from calendar",
         ms: "ms",
         frame: "Frame {{frame}}",

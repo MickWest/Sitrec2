@@ -184,9 +184,7 @@ export class TimeEditor {
             const state = this.adapter.read();
             const base = this.date(state).getTime();
             const x = event.clientX;
-            const bounds = element.getBoundingClientRect();
-            const direction = x < bounds.left + bounds.width / 2 ? -1 : 1;
-            let previous = 0, changed = false, scrubbed = false, pending;
+            let previous = 0, changed = false, pending;
             element.setPointerCapture?.(event.pointerId);
             const flush = () => {
                 if (this.raf != null) cancelAnimationFrame(this.raf);
@@ -199,7 +197,6 @@ export class TimeEditor {
                 if (e.pointerId !== event.pointerId) return;
                 // Six pixels per unit: relative, unbounded scrubbing with natural carry.
                 pending = Math.trunc((e.clientX - x) / 6) * (event.shiftKey ? 10 : 1);
-                if (pending !== 0) scrubbed = true;
                 if (pending === previous) return;
                 element.classList.add("te-scrubbing");
                 this.raf ??= requestAnimationFrame(flush);
@@ -208,10 +205,9 @@ export class TimeEditor {
                 if (e.pointerId !== event.pointerId) return;
                 if (e.type === "pointerup") { move(e); flush(); }
                 this.stopGesture();
-                if (e.type === "pointerup") {
-                    if (!scrubbed) this.step(part, direction * (event.shiftKey ? 10 : 1));
-                    element.focus(); element.select();
-                }
+                // A click without a drag changes nothing. It selects the number, so that
+                // the next key types a new value over it.
+                if (e.type === "pointerup") { element.focus(); element.select(); }
             };
             element.addEventListener("pointermove", move);
             element.addEventListener("pointerup", end);

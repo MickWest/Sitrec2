@@ -58,22 +58,22 @@ test("relative digit scrub is one undoable edit, crosses a boundary, and can ret
     expect(adapter.pause).toHaveBeenCalled();
 });
 
-test("left/right clicks step once, even when the digit is already focused", () => {
+test("a click selects the number for typing and never changes it, even when already focused", () => {
     const minute = input("minute");
     minute.getBoundingClientRect = () => ({left: 100, width: 80});
-    minute.focus();
-    pointer(minute, "pointerdown", 120);
-    pointer(minute, "pointerup", 120);
-    expect(state.now.toISOString()).toBe("2024-12-31T23:58:10.987Z");
-    pointer(minute, "pointerdown", 160);
-    pointer(minute, "pointerup", 160);
+    for (const [x, options] of [[120, {}], [160, {}], [160, {shiftKey: true}]]) {
+        pointer(minute, "pointerdown", x, options);
+        pointer(minute, "pointerup", x, options);
+        expect(document.activeElement).toBe(minute);
+        expect(minute.selectionStart).toBe(0);
+        expect(minute.selectionEnd).toBe(2);
+    }
+    expect(edits).toHaveLength(0);
     expect(state.now.toISOString()).toBe("2024-12-31T23:59:10.987Z");
-    pointer(minute, "pointerdown", 160, {shiftKey: true});
-    pointer(minute, "pointerup", 160, {shiftKey: true});
-    expect(state.now.toISOString()).toBe("2025-01-01T00:09:10.987Z");
-    expect(edits.map(e => e.begin)).toEqual([true, true, true]);
-    expect(document.activeElement).toBe(minute);
-    expect(minute.selectionEnd - minute.selectionStart).toBe(2);
+    // The typed value replaces the selected number.
+    minute.value = "30";
+    minute.dispatchEvent(new Event("change", {bubbles: true}));
+    expect(state.now.toISOString()).toBe("2024-12-31T23:30:10.987Z");
 });
 
 test("cancelling a pointer never steps or flushes a pending scrub", () => {

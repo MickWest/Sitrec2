@@ -282,8 +282,8 @@ Now Time move together. Use the playback bar to scrub through video frames inste
 - **Drag date or time digits left/right** to scrub time continuously. The clock carries
   across minute, hour and day boundaries. Month/year steps clamp the day to the end of a
   shorter month. Hold **Shift** before dragging for steps ten times larger.
-- **Click the left/right half of a number** to subtract/add one unit. There are no separate
-  step buttons. Hold **Shift** to step ten units.
+- **Click a number** to select it, then type a new value and press Enter or Tab. A click
+  does not change the number.
 - **Tab / Shift+Tab** selects the next/previous date or time number, wrapping between year
   and milliseconds and skipping the other controls. Type a value, then press Enter or Tab.
   Use **↑/↓** for one-unit
