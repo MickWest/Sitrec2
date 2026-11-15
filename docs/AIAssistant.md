@@ -133,7 +133,7 @@ error itself, so a silent "Done." with something plainly unchanged is worth a se
 
 ## Choosing a model
 
-**Sitrec → Settings → AI Model** picks which model answers. The same dropdown is mirrored into the
+**Sitrec → Settings → AI Settings → AI Model** picks which model answers. The same dropdown is mirrored into the
 Assistant window's own header menu, so you can change it without leaving the conversation.
 
 There are four routes, and they differ in who pays and where the conversation goes.
@@ -157,18 +157,18 @@ reply — and picks the cheapest. Use it if you have no reason to prefer a parti
 **Your own key** and **your own server** are set up in **Sitrec → Settings → API Keys…**. Which models
 appear, what a custom endpoint needs, and what happens to your key are all covered in
 [Your API Keys](APIKeys.md). By default the list shows only each provider's newest model family
-for your own keys; tick **Enable old AI models** in the same Settings folder to list the older
+for your own keys; tick **Enable old AI models** in the AI Settings folder to list the older
 generations too.
 
 **AI Effort** applies to your own key or custom endpoint. It sets how much the model thinks
 before it answers. Higher effort is slower and uses more tokens. The default is Medium.
 **Refusal Fallback** applies to Claude models on your own Anthropic key. When the model declines
 a request, Anthropic tries it again on a different Claude model, and that attempt is also charged
-to your key. It is off by default. Both are in **Sitrec → Settings**.
+to your key. It is off by default. Both are in **Sitrec → Settings → AI Settings**.
 
 If a request keeps going wrong, try a different model from the list.
 
-**Sitrec Focused** is on by default, in **Sitrec → Settings** and the Assistant header menu. For models
+**Sitrec Focused** is on by default, in **Sitrec → Settings → AI Settings** and the Assistant header menu. For models
 using **your own API key or custom endpoint**, turn it off to discuss any topic. It also
 applies to the spoken assistant and updates an active voice session immediately. Sitrec's
 own models always retain their Sitrec topic restriction. The preference is saved with your
@@ -210,7 +210,7 @@ pressing **+**, or loading a different sitch. The menu-bar button is the better 
 another window can cover the Assistant header. If you ask the assistant to hide the menu bar, the
 button hides with it.
 
-**Sitrec → Settings → Voice Model** chooses which realtime model is used; it is mirrored into the
+**Sitrec → Settings → AI Settings → Voice Model** chooses which realtime model is used; it is mirrored into the
 Assistant header menu alongside AI Model. The spoken assistant requires **your own OpenAI key** —
 there is no Sitrec-provided route for it — and pressing the button without one gives you a
 message saying where to add it. Your microphone audio is streamed to OpenAI while the session

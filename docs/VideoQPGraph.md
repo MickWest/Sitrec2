@@ -60,7 +60,7 @@ The **◐** button in the header of the graph, to the left of the fullscreen but
 between a **dark** theme (white on black) and a **light** theme (black on white). The light
 theme is better for a printed document: the mean line becomes black, the maximum and minimum
 lines become a darker orange and a darker blue, and the yellow line becomes amber. Many other
-graphs and 2D panels have this button, and **Sitrec → Settings → Theme** sets all of those
+graphs and 2D panels have this button, and **Sitrec → Settings → Display Settings → Theme** sets all of those
 together: see [Dark and light themes](UserInterface.md#dark-and-light-themes).
 
 The graph and its position are saved with the sitch while the graph is shown. Its theme is

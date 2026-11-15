@@ -204,8 +204,9 @@ export class   CNodeCompassUI extends CNodeViewUI {
         const headingDeg = heading * 180 / Math.PI;
         // make sure it's positive
         const headingPos = (headingDeg + 360) % 360;
-        // round to the nearest 0.1 degree
-        const headingRound = Math.round(headingPos * 10) / 10;
+        // Wrap after rounding too: a heading just west of north rounds to 360.
+        // Tiny camera-direction roundoff near north must not flicker between 0 and 360.
+        const headingRound = (Math.round(headingPos * 10) % 3600) / 10;
 
         // Get current wind states for change detection
         const targetWind = NodeMan.get("targetWind", false);

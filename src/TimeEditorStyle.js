@@ -24,10 +24,11 @@ export const timeEditorStyle = `
 .sitrec-time-editor button:hover { background: var(--panel-hover); border-color: var(--panel-accent); }
 .sitrec-time-editor :focus-visible { outline: 2px solid var(--panel-accent); outline-offset: 1px; }
 .sitrec-time-editor button[aria-pressed=true] { background: var(--panel-selected); border-color: var(--panel-accent); }
+.sitrec-time-editor button[data-action=live][aria-pressed=true] .te-live-indicator { color: #ff4545; }
 .sitrec-time-editor button:disabled { opacity: .45; cursor: default; }
 .sitrec-time-editor > :first-child { margin-top: 0; }
 .sitrec-time-editor > :last-child { margin-bottom: 0; }
-.sitrec-time-editor .te-target button { flex: 1; padding: 5px 2px; font-size: 11px; }
+.sitrec-time-editor select.te-edit-target { flex: none; min-height: 24px; padding: 3px 5px; font-size: 10px; }
 .sitrec-time-editor .te-date, .sitrec-time-editor .te-clock { display: grid; align-items: center; gap: 4px; margin: 4px 0; }
 .sitrec-time-editor .te-date { grid-template-columns: 1.6fr auto 1fr auto 1fr 28px; }
 .sitrec-time-editor .te-clock { grid-template-columns: 1fr auto 1fr auto 1fr; }

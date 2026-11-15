@@ -117,8 +117,8 @@ test("Tab selects only date/time digits in both directions and wraps", () => {
 });
 
 test("rows go from the date down to the paste field, and no row is in a closed section", () => {
-    const rows = ['[data-part="year"]', '[data-part="hour"]', '[data-part="millisecond"]', '[data-id="status"]',
-        '[data-id="zone"]', '[data-target="now"]', '[data-action="play"]', '[data-id="paste"]'].map(selector => editor.root.querySelector(selector));
+    const rows = ['[data-part="year"]', '[data-part="hour"]', '[data-part="millisecond"]', '[data-id="target"]', '[data-id="status"]',
+        '[data-id="zone"]', '[data-action="play"]', '[data-id="paste"]'].map(selector => editor.root.querySelector(selector));
     for (let i = 1; i < rows.length; i++) {
         expect(rows[i - 1].compareDocumentPosition(rows[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
@@ -168,7 +168,8 @@ test("drafts survive refresh; invalid input changes nothing; Escape restores it"
 });
 
 test("start mode targets frame zero without moving the playhead", () => {
-    editor.root.querySelector('[data-target="start"]').click();
+    editor.el("target").value = "start";
+    editor.el("target").dispatchEvent(new Event("change"));
     input("second").value = "20";
     input("second").dispatchEvent(new Event("change"));
     expect(edits[0].target).toBe("start");

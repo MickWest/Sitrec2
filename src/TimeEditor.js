@@ -26,8 +26,8 @@ export class TimeEditor {
         this.root.dataset.interactionNative = "true";
         this.root.setAttribute("role", "group");
         this.root.dataset.i18nLabel = "timeEditor.label";
-        // Top to bottom: the date, the time, the status row, the time zone, the time to
-        // edit, playback, and the paste field. Each row is always in view.
+        // Top to bottom: the date, the time, the edit target and status, the time
+        // zone, playback, and the paste field. Each row is always in view.
         this.root.innerHTML = `
             <div class="te-date">
                 ${digit("year")}<span aria-hidden="true">−</span>${digit("month")}<span aria-hidden="true">−</span>${digit("day")}
@@ -36,6 +36,10 @@ export class TimeEditor {
             <div class="te-clock">${["hour", "minute", "second"].map(digit).join('<span aria-hidden="true">:</span>')}</div>
             <div class="te-row">
                 <label class="te-ms"><span data-i18n="timeEditor.ms"></span>${digit("millisecond")}</label>
+                <select class="te-edit-target" data-id="target" data-i18n-label="timeEditor.target.label">
+                    <option value="now" data-i18n="timeEditor.target.now"></option>
+                    <option value="start" data-i18n="timeEditor.target.start"></option>
+                </select>
                 <span class="te-context" data-id="frame"></span>
                 <span class="te-status" data-id="status"></span>
             </div>
@@ -45,13 +49,9 @@ export class TimeEditor {
                 <button type="button" data-action="utc" data-i18n="timeEditor.utc.label" data-i18n-title="timeEditor.utc.tooltip"></button>
                 <button type="button" data-action="cameraZone" data-i18n="timeEditor.cameraZone.label" data-i18n-title="timeEditor.cameraZone.tooltip"></button>
             </div>
-            <div class="te-row te-target" data-i18n-label="timeEditor.target.label">
-                <button type="button" data-target="now" data-i18n="timeEditor.target.now"></button>
-                <button type="button" data-target="start" data-i18n="timeEditor.target.start"></button>
-            </div>
             <div class="te-row">
                 <button type="button" data-action="play" class="te-grow" data-i18n-title="timeEditor.play.tooltip"></button>
-                <button type="button" data-action="live" data-i18n="timeEditor.live.label" data-i18n-title="timeEditor.live.tooltip"></button>
+                <button type="button" data-action="live" data-i18n-title="timeEditor.live.tooltip"><span class="te-live-indicator" aria-hidden="true">●</span> <span data-i18n="timeEditor.live.label"></span></button>
                 <button type="button" data-action="undo" data-i18n="timeEditor.undo.label" data-i18n-title="timeEditor.undo.tooltip"></button>
                 <select data-id="speed" data-i18n-label="timeEditor.speed.label" data-i18n-title="timeEditor.speed.tooltip">
                     ${[1, 5, 10, 60, 300].map(speed => `<option value="${speed}">${speed}×</option>`).join("")}
@@ -81,6 +81,10 @@ export class TimeEditor {
         for (const name of adapter.zones) this.el("zone").add(new Option(name, name));
         this.el("zone").prepend(new Option("UTC", "__utc__"));
         this.el("zone").onchange = () => { adapter.zone(this.el("zone").value); this.clearError(); this.refresh(true); };
+        this.el("target").onchange = () => {
+            this.target = this.el("target").value;
+            this.clearError(); this.refresh(true);
+        };
         this.el("speed").onchange = () => { adapter.speed(Number(this.el("speed").value)); this.refresh(); };
         this.el("calendar").onchange = () => {
             const state = this.adapter.read();
@@ -112,11 +116,24 @@ export class TimeEditor {
             if (event.key === "Enter") { event.preventDefault(); this.paste(); }
             if (event.key === "Escape") { this.el("paste").value = ""; this.clearError(); this.el("paste").blur(); }
         });
+        this.timeFields = [...this.inputs, this.el("calendar"), this.el("paste"), this.el("target")];
+        for (const field of this.timeFields) {
+            field.addEventListener("pointerenter", () => { this.hoveredTimeField = field; this.refreshTimelinePreview(); });
+            field.addEventListener("pointerleave", () => { this.hoveredTimeField = null; this.refreshTimelinePreview(); });
+            field.addEventListener("focus", () => this.refreshTimelinePreview());
+            field.addEventListener("blur", () => this.refreshTimelinePreview());
+        }
         this.onBlur = () => this.stopGesture();
         window.addEventListener("blur", this.onBlur);
         this.refresh();
         // Paused scenes sleep the render loop. Never poll closed/hidden editors.
-        this.timer = setInterval(() => { if (this.root.getClientRects().length) this.refresh(); }, 100);
+        this.timer = setInterval(() => {
+            if (this.root.getClientRects().length) this.refresh();
+            else {
+                this.hoveredTimeField = null;
+                this.adapter.previewTime?.(this, null);
+            }
+        }, 100);
     }
 
     el(id) { return this.root.querySelector(`[data-id="${id}"]`); }
@@ -161,10 +178,6 @@ export class TimeEditor {
     click(event) {
         const button = event.target.closest("button");
         if (!button) return;
-        if (button.dataset.target) {
-            this.target = button.dataset.target;
-            this.clearError(); this.refresh(true);
-        }
         const action = button.dataset.action;
         if (action === "now") { this.target = "now"; this.apply(new Date()); }
         if (action === "play") this.adapter.play();
@@ -221,12 +234,25 @@ export class TimeEditor {
                 element.classList.remove("te-scrubbing");
                 if (element.hasPointerCapture?.(event.pointerId)) element.releasePointerCapture(event.pointerId);
             };
+            this.refreshTimelinePreview();
         });
     }
     stopGesture() {
         this.cleanupGesture?.(); this.cleanupGesture = null;
         if (this.raf != null) cancelAnimationFrame(this.raf);
         this.raf = null;
+        this.refreshTimelinePreview();
+    }
+    refreshTimelinePreview(wall) {
+        if (!this.adapter.previewTime) return;
+        const active = this.hoveredTimeField || this.cleanupGesture || this.timeFields?.includes(this.root.ownerDocument.activeElement);
+        if (active && this.root.getClientRects().length) {
+            if (!wall) {
+                const state = this.adapter.read();
+                wall = wallTimeISO(this.date(state), state.offset);
+            }
+            this.adapter.previewTime(this, {target: this.target, text: `${wall.slice(0, 10)}\n${wall.slice(11, 19)}`});
+        } else this.adapter.previewTime(this, null);
     }
     // refresh() runs ten times each second while the editor is in view. A write of the same
     // value is still a write: the browser lays out and paints the editor again, and the
@@ -244,14 +270,12 @@ export class TimeEditor {
             if ((force || document.activeElement !== input) && !input.hasAttribute("aria-invalid") && input.value !== values[input.dataset.part]) input.value = values[input.dataset.part];
         }
         this.setProperty(this.el("calendar"), "value", wall.slice(0, 10));
-        for (const button of this.root.querySelectorAll("[data-target]")) {
-            const start = button.dataset.target === "start";
-            this.setAttribute(button, "aria-pressed", String(button.dataset.target === this.target));
-            this.setTitle(button, t(start ? "timeEditor.target.startTip" : "timeEditor.target.nowTip", {
-                time: wallTimeISO(start ? state.start : state.now, state.offset).replace("T", " "),
-                zone: state.useZone ? state.zone : "UTC",
-            }));
-        }
+        const targetSelect = this.el("target");
+        const start = this.target === "start";
+        this.setProperty(targetSelect, "value", this.target);
+        this.setTitle(targetSelect, t(start ? "timeEditor.target.startTip" : "timeEditor.target.nowTip", {
+            time: wall.replace("T", " "), zone: state.useZone ? state.zone : "UTC",
+        }));
         const zone = state.useZone ? state.zone : "__utc__";
         if (![...this.el("zone").options].some(o => o.value === zone)) this.el("zone").add(new Option(zone, zone));
         this.setProperty(this.el("zone"), "value", zone);
@@ -277,10 +301,12 @@ export class TimeEditor {
         }
         this.setProperty(speed, "value", String(state.speed));
         this.setProperty(speed, "disabled", state.live);
+        this.refreshTimelinePreview(wall);
     }
     dispose() {
         this.stopGesture(); clearInterval(this.timer);
         window.removeEventListener("blur", this.onBlur);
+        this.adapter.previewTime?.(this, null);
         this.root.remove();
     }
 }

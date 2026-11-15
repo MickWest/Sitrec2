@@ -67,11 +67,11 @@ test("the time editor in a menu has a path that starts with the menu", () => {
         offset: 0, useZone: false, zone: "UTC", paused: true, live: false, speed: 1, playbackSpeed: 1, canUndo: false};
     const editor = new TimeEditor(menu.querySelector(".host"), {zones: [], read: () => state, pause() {}});
     try {
-        expect(buildPanelPath(editor.root.querySelector('[data-target="start"]'))).toBe("Time/Edit Start");
+        expect(buildPanelPath(editor.el("target"))).toBe("Time/Time to edit");
         expect(buildPanelPath(editor.root.querySelector('[data-part="hour"]'))).toBe("Time/Hour");
         expect(buildPanelPath(editor.root.querySelector('[data-id="paste"]'))).toBe("Time/Paste date and time");
         // The menu builder does not see the editor, so one click is not recorded two times.
-        expect(buildMenuPath(editor.root.querySelector('[data-target="start"]'))).toBeNull();
+        expect(buildMenuPath(editor.el("target"))).toBeNull();
     } finally {
         editor.dispose(); menu.remove();
     }

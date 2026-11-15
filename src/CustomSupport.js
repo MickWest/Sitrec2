@@ -569,9 +569,13 @@ export class CCustomManager {
 
         addChannelSettings(settingsFolder);
 
+        const displaySettingsFolder = settingsFolder.addFolder(t("custom.settings.displaySettings.title"))
+            .tooltip(t("custom.settings.displaySettings.tooltip"))
+            .close();
+
         Globals.settings.language = getCurrentLanguage();
 
-        settingsFolder.add(Globals.settings, "language", SUPPORTED_LANGUAGE_OPTIONS)
+        displaySettingsFolder.add(Globals.settings, "language", SUPPORTED_LANGUAGE_OPTIONS)
             .name(t("custom.settings.language.label"))
             .tooltip(t("custom.settings.language.tooltip"))
             .onChange((value) => {
@@ -588,7 +592,7 @@ export class CCustomManager {
 
         // Dark / light theme of the menus, and of every view that has a Dark / Light button.
         // No reload: setGlobalTheme() changes the CSS and sets all the views (Theme.js).
-        settingsFolder.add(Globals.settings, "theme", {
+        displaySettingsFolder.add(Globals.settings, "theme", {
             [t("custom.settings.theme.options.classic")]: "",
             [t("custom.settings.theme.options.dark")]: "dark",
             [t("custom.settings.theme.options.light")]: "light",
@@ -749,7 +753,7 @@ export class CCustomManager {
             })
             .listen();
 
-        // The assistant's three settings exist only when there is an assistant. With
+        // The assistant's settings exist only when there is an assistant. With
         // CHATBOT_ENABLED off (a hardened deployment, or any site without the relay) the
         // chat view is never built, there are no models to list, and a model dropdown
         // reading "Loading..." forever is a false promise. The controllers stay null; every
@@ -758,8 +762,12 @@ export class CCustomManager {
         this.chatModelController = null;
         this.voiceModelController = null;
         if (getEnvBool("CHATBOT_ENABLED", process.env.CHATBOT_ENABLED)) {
+            const aiSettingsFolder = settingsFolder.addFolder(t("custom.settings.aiSettings.title"))
+                .tooltip(t("custom.settings.aiSettings.tooltip"))
+                .close();
+
             // Add AI Model selector dropdown (bound directly to Globals.settings.chatModel)
-            this.chatModelController = settingsFolder.add(Globals.settings, "chatModel", { "Loading...": "" })
+            this.chatModelController = aiSettingsFolder.add(Globals.settings, "chatModel", { "Loading...": "" })
                 .name(t("custom.settings.aiModel.label"))
                 .tooltip(t("custom.settings.aiModel.tooltip"))
                 .onChange(() => {
@@ -775,7 +783,7 @@ export class CCustomManager {
             // The mirror stays in sync with this dropdown — value, option list, and onChange.
             registerMirrorSource("chatModel", this.chatModelController);
 
-            const focusController = settingsFolder.add(Globals.settings, "byokSitrecFocused")
+            const focusController = aiSettingsFolder.add(Globals.settings, "byokSitrecFocused")
                 .name(t("custom.settings.byokSitrecFocused.label"))
                 .tooltip(t("custom.settings.byokSitrecFocused.tooltip"))
                 .onChange((focused) => {
@@ -794,7 +802,7 @@ export class CCustomManager {
             // The spoken assistant's model. A separate control from AI Model because it is a
             // separate API: OpenAI's realtime models serve /v1/realtime over WebRTC and cannot
             // be called through chat completions, so the two lists have no overlap at all.
-            this.voiceModelController = settingsFolder
+            this.voiceModelController = aiSettingsFolder
                 .add(Globals.settings, "voiceModel", {"Loading…": ""})
                 .name(t("custom.settings.voiceModel.label"))
                 .tooltip(t("custom.settings.voiceModel.tooltip"))
@@ -808,7 +816,7 @@ export class CCustomManager {
 
             // Directly under the dropdown it governs, because that is the only place it makes
             // sense: it is a control over what that list contains, not a separate preference.
-            settingsFolder.add(Globals.settings, "enableOldAIModels")
+            aiSettingsFolder.add(Globals.settings, "enableOldAIModels")
                 .name(t("custom.settings.enableOldAIModels.label"))
                 .tooltip(t("custom.settings.enableOldAIModels.tooltip"))
                 .onChange(() => {
@@ -818,7 +826,7 @@ export class CCustomManager {
                 .listen();
 
             // Own-key models only. Sitrec-provided models keep their server-side settings.
-            settingsFolder.add(Globals.settings, "aiEffort", {
+            aiSettingsFolder.add(Globals.settings, "aiEffort", {
                 [t("custom.settings.aiEffort.options.low")]: "low",
                 [t("custom.settings.aiEffort.options.medium")]: "medium",
                 [t("custom.settings.aiEffort.options.high")]: "high",
@@ -830,7 +838,7 @@ export class CCustomManager {
                 .onChange(() => this.saveGlobalSettings(true))
                 .listen();
 
-            settingsFolder.add(Globals.settings, "aiRefusalFallback")
+            aiSettingsFolder.add(Globals.settings, "aiRefusalFallback")
                 .name(t("custom.settings.aiRefusalFallback.label"))
                 .tooltip(t("custom.settings.aiRefusalFallback.tooltip"))
                 .onChange(() => this.saveGlobalSettings(true))
@@ -855,7 +863,7 @@ export class CCustomManager {
         }
 
         // Add Center Sidebar toggle
-        settingsFolder.add(Globals.settings, "centerSidebar")
+        displaySettingsFolder.add(Globals.settings, "centerSidebar")
             .name(t("custom.settings.centerSidebar.label"))
             .tooltip(t("custom.settings.centerSidebar.tooltip"))
             .onChange((value) => {
@@ -865,7 +873,7 @@ export class CCustomManager {
             .listen();
 
         // Add Show Attribution toggle
-        settingsFolder.add(Globals.settings, "showAttribution")
+        displaySettingsFolder.add(Globals.settings, "showAttribution")
             .name(t("custom.settings.showAttribution.label"))
             .tooltip(t("custom.settings.showAttribution.tooltip"))
             .onChange((value) => {
@@ -876,7 +884,7 @@ export class CCustomManager {
             })
             .listen();
 
-        settingsFolder.add(Globals.settings, "showFilename")
+        displaySettingsFolder.add(Globals.settings, "showFilename")
             .name(t("custom.settings.showFilename.label"))
             .tooltip(t("custom.settings.showFilename.tooltip"))
             .onChange((value) => {

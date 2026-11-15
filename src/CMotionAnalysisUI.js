@@ -2675,7 +2675,7 @@ function createMaskingFolder(parentFolder) {
         // The gate that enforces that is in sitrecServer/aimask.php; this only hides the
         // button from everyone it would fail for.
         aiMaskController = autoFolder.add(maskParams, 'maskGroundAI').name(AI_MASK_BUTTON_NAME).perm()
-            .tooltip("EXPERIMENTAL. Sends the current frame to the AI model chosen in Settings > "
+            .tooltip("EXPERIMENTAL. Sends the current frame to the AI model chosen in Settings > AI Settings > "
                 + "AI Model, and asks it to outline the sky. The other side of the outline is "
                 + "masked. Sitrec then adds dark areas joined to it, such as a treetop, measured "
                 + "against the nearby sky.\n"

@@ -329,7 +329,7 @@ Custom graphs are available in a custom sitch and in other sitches you can modif
 
 ## Dark and light themes
 
-**Sitrec → Settings → Theme** sets the colors of the user interface. It has three values:
+**Sitrec → Settings → Display Settings → Theme** sets the colors of the user interface. It has three values:
 
 | Theme | Result |
 |---|---|

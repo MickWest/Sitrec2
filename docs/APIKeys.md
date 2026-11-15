@@ -268,11 +268,11 @@ as if no key were stored.
 
 ## Using your own AI models
 
-The AI controls in Settings exist only when the installation has the assistant switched on. The
+The AI Settings folder in Settings exists only when the installation has the assistant switched on. The
 desktop app and serverless builds have it off. A self-hosted server needs
 `CHATBOT_ENABLED=true` in `shared.env`. With the assistant off, an AI key has nothing to run.
 
-**Sitrec Focused** (Settings or the Assistant header menu) defaults to on. Switch it off to
+**Sitrec Focused** (Settings → AI Settings or the Assistant header menu) defaults to on. Switch it off to
 allow general conversation with your own-key models or custom endpoint, including voice.
 This changes the topic instructions, not billing: requests still include Sitrec context and
 recent chat history. Longer conversations and replies can increase your API costs. Turning
@@ -292,7 +292,7 @@ as a judgement about them: models for a different job entirely (embeddings, spee
 moderation, video), older completion-only models, and the web-search and deep-research variants,
 which bring their own fixed tool set and refuse Sitrec's. The spoken assistant's realtime models
 are absent from the typed list too — they serve a different API and get their own **Voice
-Model** dropdown, below Sitrec Focused in Settings. From OpenRouter, only models that accept
+Model** dropdown, below Sitrec Focused in Settings → AI Settings. From OpenRouter, only models that accept
 tools are listed.
 
 Any other model your key lists is offered. If one of them turns out not to work, the
@@ -300,7 +300,7 @@ provider's own message says so and names the model. The list is refreshed when y
 a key, and at most once a day otherwise.
 
 **By default you see only each provider's newest generation.** Tick **Enable old AI
-models**, below Voice Model in Settings, to see the rest. Sitrec works out what "newest"
+models**, below Voice Model in Settings → AI Settings, to see the rest. Sitrec works out what "newest"
 means from the version numbers the provider reports, so a family released tomorrow is current the day it appears. A model
 you have already selected stays in the list either way, so turning the option off never
 moves you to a different model.
@@ -384,7 +384,7 @@ Three things about the spoken assistant are worth knowing before you supply a ke
   Check OpenAI's current pricing. Sitrec's estimate prices audio and text tokens at their own
   rates, and the spending limit you set at OpenAI is the limit that binds.
 
-**Choosing a voice model.** **Sitrec → Settings → Voice Model** lists every realtime model your
+**Choosing a voice model.** **Sitrec → Settings → AI Settings → Voice Model** lists every realtime model your
 OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
 a published price on file, so the API Keys dialog can estimate what a conversation cost.
 Another model may work, but if it has no price on file, the dollar total leaves it out. The

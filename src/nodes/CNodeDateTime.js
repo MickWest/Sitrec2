@@ -590,6 +590,7 @@ export class CNodeDateTime extends CNode {
                 playbackSpeed: par.playbackSpeed ?? 1, canUndo: this.canUndoTimeEdit(),
             }),
             pause: () => this.pauseTimeEditing(),
+            previewTime: (source, preview) => NodeMan.get("FrameSlider", false)?.setTimeEditPreview(source, preview),
             edit: (date, target, begin) => this.editTime(date, target, begin),
             undo: () => this.undoTimeEdit(),
             zone: value => {

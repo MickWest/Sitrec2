@@ -795,6 +795,9 @@ export class CNodeFrameSlider extends CNode {
             this.frameDisplayBox.dispose();
             this.frameDisplayBox = null;
         }
+        this.timeEditDisplayBox?.dispose();
+        this.timeEditDisplayBox = null;
+        this.timeEditPreview = null;
         // Clear any pending fade out timer
         if (this.fadeOutTimer) {
             clearTimeout(this.fadeOutTimer);
@@ -803,7 +806,7 @@ export class CNodeFrameSlider extends CNode {
     }
 
     startFadeOut() {
-        if (this.pinned) return; // Don't fade out if pinned
+        if (this.pinned || this.timeEditPreview) return;
         
         // Use CSS transition for smooth fade out
         this.sliderDiv.style.transition = "opacity 0.5s";
@@ -866,7 +869,7 @@ export class CNodeFrameSlider extends CNode {
         this.updateAudioButton();
 
         // If pinned, ensure the bar stays visible
-        if (this.pinned) {
+        if (this.pinned || this.timeEditPreview) {
             this.sliderDiv.style.opacity = "1";
             this.sliderInput.style.opacity = "1";
             this.controlContainer.style.opacity = "1";
@@ -876,6 +879,8 @@ export class CNodeFrameSlider extends CNode {
                 this.fadeOutTimer = null;
             }
         }
+
+        this.updateTimeEditPreview();
 
         // Continuously update frame display when hovering over slider
         if (this.isHoveringSlider && this.frameDisplayBox && this.frameDisplayBox.visible) {
@@ -1494,6 +1499,39 @@ export class CNodeFrameSlider extends CNode {
         return this.sliderDiv.getBoundingClientRect().left + this.getFramePixelPosition(frame);
     }
 
+    // Each editor owns its request, so closing a second, inactive editor cannot
+    // clear the label for the one the user is working in.
+    setTimeEditPreview(source, preview) {
+        if (!preview) {
+            if (this.timeEditPreview?.source !== source) return;
+            this.timeEditPreview = null;
+            this.timeEditDisplayBox?.hide();
+            if (!this.sliderContainer.matches(':hover')) this.startFadeOut();
+            return;
+        }
+        this.timeEditPreview = {...preview, source};
+        if (!this.timeEditDisplayBox) {
+            this.timeEditDisplayBox = new CValueBox({fontSize: '18px'});
+            this.timeEditDisplayBox.el.style.textAlign = 'center';
+            this.timeEditDisplayBox.el.style.lineHeight = '1.35';
+        }
+        // Paused scenes may not render another frame just because a field is hovered.
+        this.sliderDiv.style.opacity = '1';
+        this.sliderInput.style.opacity = '1';
+        this.controlContainer.style.opacity = '1';
+        this.updateFrameSlider();
+        this.updateTimeEditPreview();
+    }
+
+    updateTimeEditPreview() {
+        if (!this.timeEditPreview || !this.timeEditDisplayBox) return;
+        const {target, text} = this.timeEditPreview;
+        const frame = target === 'start' ? 0 : par._frame;
+        const rect = this.sliderDiv.getBoundingClientRect();
+        this.timeEditDisplayBox.el.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+        this.timeEditDisplayBox.show(text, this.frameDisplayX(frame));
+    }
+
     // Show frame display box
     showFrameDisplay(frame, mouseX) {
         if (this.frameDisplayBox) {
@@ -1531,7 +1569,7 @@ export class CNodeFrameSlider extends CNode {
         
         // Calculate the actual thumb center position
         const range = max - min;
-        const valuePosition = (frame - min) / range;
+        const valuePosition = range > 0 ? (frame - min) / range : 0;
         const trackWidth = sliderRect.width - thumbWidth;
         
         return valuePosition * trackWidth + (thumbWidth / 2);

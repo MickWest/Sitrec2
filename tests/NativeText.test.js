@@ -42,7 +42,7 @@ test("the time editor shows a second language, and English where a string is not
         offset: 0, useZone: false, zone: "UTC", paused: true, live: false, speed: 1, playbackSpeed: 1, canUndo: false};
     const editor = new TimeEditor(host, {zones: [], read: () => state, pause() {}});
     try {
-        expect(editor.root.querySelector('[data-target="now"]').textContent).toBe("Abspielkopf");
+        expect(editor.el("target").selectedOptions[0].textContent).toBe("Abspielkopf");
         expect(editor.el("status").textContent).toBe("PAUSIERT");
         expect(editor.el("frame").textContent).toBe("Bild 300");
         expect(editor.root.querySelector('[data-part="year"]').getAttribute("aria-label")).toBe("Jahr");

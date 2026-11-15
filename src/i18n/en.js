@@ -792,7 +792,7 @@ const en = {
         },
         time: {
             title: "Time",
-            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nCheck the time zone below the clock, and choose Edit Playhead or Edit Start. Original sliders and timeline controls are in the expandable sections.",
+            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nUse the Edit Playhead / Edit Start dropdown below the clock to choose which time to edit, and check the time zone below it. Original sliders and timeline controls are in the expandable sections.",
         },
         objects: {
             title: "Objects",
@@ -1637,8 +1637,8 @@ const en = {
             label: "Time to edit",
             now: "Edit Playhead",
             start: "Edit Start",
-            nowTip: "Current: {{time}} {{zone}}. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
-            startTip: "Start: {{time}} {{zone}}. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
+            nowTip: "Editing the playhead: {{time}} {{zone}}. Choose Edit Start to edit the time at frame 0 instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
+            startTip: "Editing the start (frame 0): {{time}} {{zone}}. Choose Edit Playhead to edit the time at the current frame instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
         },
         play: {
             play: "▶ Play",
@@ -1646,7 +1646,7 @@ const en = {
             tooltip: "Play or pause the timeline",
         },
         live: {
-            label: "● Live",
+            label: "Live",
             tooltip: "Follow the real clock continuously",
         },
         undo: {
@@ -2218,6 +2218,7 @@ const en = {
             title: "Settings",
             tooltipLoggedIn: "Your Sitrec preferences, such as language, theme, performance and how a new sitch starts.\nSaved to the server for your account, with a copy in a browser cookie.",
             tooltipAnonymous: "Your Sitrec preferences, such as language, theme, performance and how a new sitch starts.\nSaved in this browser.",
+            displaySettings: { title: "Display Settings", tooltip: "Interface language, colors, sidebar placement and viewport labels." },
             language: { label: "Language", tooltip: "Select interface language. Changing this reloads the page. You will lose any unsaved work, so save first!" },
             theme: {
                 label: "Theme",
@@ -2231,6 +2232,7 @@ const en = {
             renderScale: { label: "Render Scale", tooltip: "Scales the offscreen render resolution. 50% renders 1/4 of the pixels - the single biggest perf knob on hi-DPI laptops. Lower = faster but blurrier." },
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
             performancePreset: { label: "Performance Preset", tooltip: "Sets all the Performance Tweaks at once. Balanced is the default.\nQuality: full render resolution, 4x MSAA, 60 fps, most terrain detail, video up to 1080P.\nBalanced: 85% render scale, 2x MSAA, 30 fps, video up to 720P.\nFast, Potato: lower render scale and terrain detail, no MSAA, 30 or 20 fps, video up to 480P or 360P.\nCustom: your own values. A change to a tweak selects Custom." },
+            aiSettings: { title: "AI Settings", tooltip: "Models and preferences for the chat and voice assistants. API Keys remains in Settings." },
             aiModel: { label: "AI Model", tooltip: "The AI model that the chat assistant uses.\nThe list holds the models of this server and, when you save a key in API Keys…, the models your own key can use." },
             byokSitrecFocused: {
                 label: "Sitrec Focused",
@@ -5351,10 +5353,10 @@ const en = {
             // open and that the assistant is waiting rather than thinking.
             listening: "Listening — just talk. Press the microphone again to stop.",
             stopped: "Voice stopped. The microphone is off.",
-            modelInUse: "The spoken assistant's model. Change it in Settings, Voice Model.",
+            modelInUse: "The spoken assistant's model. Change it in Settings → AI Settings → Voice Model.",
         },
         chat: {
-            modelInUse: "The model answering typed questions. Change it in Settings, AI Model.",
+            modelInUse: "The model answering typed questions. Change it in Settings → AI Settings → AI Model.",
         },
         hide: {
             label: "Hide",

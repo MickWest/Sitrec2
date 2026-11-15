@@ -47,7 +47,7 @@ export const extraCSS = `
 }
 
 /* ============================================================================
-   LIGHT THEME (Settings > Theme). Theme.js sets data-theme on the html element.
+   LIGHT THEME (Settings > Display Settings > Theme). Theme.js sets data-theme on the html element.
    The block above is the dark theme, and it stays the start condition.
    lil-gui declares its color variables on .lil-gui itself, so a :root value cannot
    reach them: the second rule must name .lil-gui. Only COLORS change here. The
