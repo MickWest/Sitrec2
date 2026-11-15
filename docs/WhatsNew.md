@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.198.0 (2026-11-14)
+
+### New Features
+- **Keys that change the sitch or the screen now need Alt** (Option on a Mac; Sitrec → Settings → *Require Alt for Shortcuts*): I and O (In and Out frame), F (full screen), U (menus), E (extend tracks to ground), C and X (move the camera and the target), ; and ' (Start Time) and 1 to 8 (view presets) now work only with Alt, so a key that you press by accident does nothing. The setting is on at the start. Turn it off to use the keys without Alt, as before. When you press one of these keys without Alt, a short message gives the new key, and the K overlay shows each key as it works now. On Windows and Linux, use Alt+Shift+F and Alt+Shift+E, because some browsers keep Alt+F and Alt+E for their own menu. While the setting is on, Alt no longer makes ; and ' 1000 times faster (Shift still makes them 10 times faster). The Point Track keys ; and ' and the Annotation tool letters in Edit Mode still work without Alt, and they no longer also move the Start Time, set the In frame, extend the tracks or move the target.
+- **Label Opacity** (Show → Celestial → Labels; the same slider is in Satellites → Labels): sets how opaque the constellation, star, planet, Sun and Moon, and satellite names are, in all views. At 1 (the default) the names look as before, and at 0 they are invisible. The value is saved with the sitch.
+
+### Improvements
+- **Show Wind at** (Physics → Wind): it no longer turns on by itself the first time that you change the wind in a sitch. It is off in a new sitch, and it changes only when you set it.
+- **Satellite Controls** (Satellites → Satellite Controls): the panel no longer puts three small readouts over the look view (the number of satellites in view, the direction of the look camera and the scene time), because they covered part of the sky. A sitch saved with them loads as before.
+- **The old Night Sky sitch** (*(OLD) Night Sky / Starlink*): it is no longer in Sitrec → Legacy Tools, and its *SAVE Night Sky Permalink* button (File menu) is removed, so it makes no new links. *Starlink Horizon Flares (LIVE)* in the Sitrec menu replaces it. Old links to it still open. In its look camera, C, Q and E now do nothing, because Sitrec uses these keys for other things. W, A, S and D still move the camera.
+
+### Bug Fixes
+- Fixed the menu bar covering the top two rows of the views at the top of the window. A video at 100% zoom now shows its whole frame. Before, its top edge was hidden, so a clock at the top of a video lost the top of its digits.
+- Fixed the E key, which did not extend the tracks to the ground, and which made the *Toggle ALL [E]xtend To Ground* button (Contents menu) fail after the first press.
+- Fixed the K overlay (Help → *[K]eyboard Shortcuts*), which gave < and > for one frame back and forward. It now gives , and . for one frame, and < and > for the previous or next marker, In or Out frame, or keyframe. It no longer lists [ and ] for the Start Time, which do nothing, and it now lists the view presets, E, N (Notes) and Tab (AI Assistant).
+- Fixed the AI Assistant and camera scripts giving a menu control a value of the wrong type. For example, a satellite number for *Search Loaded Satellites* (Satellites menu) became a number, and then the search failed. A checkbox got 1 or 0 in place of on or off. A value that a control cannot take is now refused with a message.
+- Fixed an error on each frame while W, A, S or D was held in a sitch without the custom-sitch camera, such as the old Night Sky sitch.
+
 ## Version 2.197.0 (2026-11-14)
 
 ### New Features
