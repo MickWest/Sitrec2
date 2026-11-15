@@ -43,7 +43,6 @@ export const timeEditorStyle = `
 .sitrec-time-editor .te-ms input { width: 47px; padding: 3px; font-size: 12px; }
 .sitrec-time-editor .te-context { font-size: 10px; color: var(--panel-muted); }
 .sitrec-time-editor .te-context { flex: 1; text-align: right; }
-.sitrec-time-editor .te-status { font-size: 10px; color: var(--panel-good); font-weight: 650; }
 .sitrec-time-editor .te-error { font-size: 11px; color: var(--panel-warning); margin: 5px 0; }
 .sitrec-time-editor .te-error:empty { display: none; }
 .sitrec-time-editor [aria-invalid=true] { outline: 2px solid var(--panel-warning); }

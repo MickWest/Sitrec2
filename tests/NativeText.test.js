@@ -33,7 +33,7 @@ test("a translation is shown as text and cannot add markup", () => {
 test("the time editor shows a second language, and English where a string is not translated", () => {
     initI18n();
     i18next.addResourceBundle("de", "translation", {timeEditor: {
-        target: {now: "Abspielkopf", start: "Start"}, status: {paused: "PAUSIERT"}, frame: "Bild {{frame}}", parts: {year: "Jahr"},
+        target: {now: "Abspielkopf", start: "Start"}, frame: "Bild {{frame}}", parts: {year: "Jahr"},
     }}, true, true);
     setLanguage("de");
     const host = document.createElement("div");
@@ -43,7 +43,6 @@ test("the time editor shows a second language, and English where a string is not
     const editor = new TimeEditor(host, {zones: [], read: () => state, pause() {}});
     try {
         expect(editor.el("target").selectedOptions[0].textContent).toBe("Abspielkopf");
-        expect(editor.el("status").textContent).toBe("PAUSIERT");
         expect(editor.el("frame").textContent).toBe("Bild 300");
         expect(editor.root.querySelector('[data-part="year"]').getAttribute("aria-label")).toBe("Jahr");
         // Not in the German strings: the English text is shown.

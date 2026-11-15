@@ -55,6 +55,7 @@ jest.mock('../src/utils', () => ({
     openFullscreen: jest.fn(),
 }));
 jest.mock('../src/nodes/CNodeViewUI', () => ({forceUpdateUIText: jest.fn()}));
+jest.mock('../src/CFeatureManager', () => ({FeatureManager: {addLocationPin: jest.fn()}}));
 
 import {sitrecAPI} from '../src/CSitrecAPI.js';
 

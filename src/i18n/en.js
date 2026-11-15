@@ -792,7 +792,7 @@ const en = {
         },
         time: {
             title: "Time",
-            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nUse the Edit Playhead / Edit Start dropdown below the clock to choose which time to edit, and check the time zone below it. Original sliders and timeline controls are in the expandable sections.",
+            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nUse the Playhead / Start dropdown below the clock to choose which time to edit, and check the time zone below it. Original sliders and timeline controls are in the expandable sections.",
         },
         objects: {
             title: "Objects",
@@ -1635,10 +1635,10 @@ const en = {
         },
         target: {
             label: "Time to edit",
-            now: "Edit Playhead",
-            start: "Edit Start",
-            nowTip: "Editing the playhead: {{time}} {{zone}}. Choose Edit Start to edit the time at frame 0 instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
-            startTip: "Editing the start (frame 0): {{time}} {{zone}}. Choose Edit Playhead to edit the time at the current frame instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
+            now: "Playhead",
+            start: "Start",
+            nowTip: "Editing the playhead: {{time}} {{zone}}. Choose Start to edit the time at frame 0 instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
+            startTip: "Editing the start (frame 0): {{time}} {{zone}}. Choose Playhead to edit the time at the current frame instead. Editing pauses playback and keeps the current frame fixed; start and current times shift together.",
         },
         play: {
             play: "▶ Play",

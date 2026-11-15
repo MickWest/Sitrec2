@@ -41,6 +41,7 @@ jest.mock('../src/CViewManager', () => ({ViewMan: {updateViewFromPreset: jest.fn
 jest.mock('../src/PageStructure', () => ({areControlsHidden: jest.fn(() => false), toggleControlsVisibility: jest.fn()}));
 jest.mock('../src/utils', () => ({closeFullscreen: jest.fn(), isFullscreen: jest.fn(() => false), openFullscreen: jest.fn()}));
 jest.mock('../src/nodes/CNodeViewUI', () => ({forceUpdateUIText: jest.fn()}));
+jest.mock('../src/CFeatureManager', () => ({FeatureManager: {addLocationPin: jest.fn()}}));
 
 import {looksLikeURL, refuseExternalURLParams} from '../src/PromptSafety';
 import {sitrecAPI} from '../src/CSitrecAPI.js';

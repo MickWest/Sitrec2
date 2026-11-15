@@ -62,7 +62,7 @@ test("view-header icons inherit disabled state and live explanations", () => {
     button.click();
     expect(state.on).toBe(false);
     c.enable().name("New name").tooltip("New help");
-    expect(button.title).toContain("New help");
+    expect(button.dataset.tooltip).toContain("New help");
     expect(button.getAttribute("aria-label")).toBe("New name");
     button.click();
     expect(state.on).toBe(true);

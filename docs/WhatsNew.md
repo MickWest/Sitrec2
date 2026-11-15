@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.199.0 (2026-11-15)
+
+### New Features
+- **Toolbar in the main view** (left edge of the main view): move the pointer to the left edge of the main view to show a small toolbar. It fades when you move away. It also shows for a moment when a sitch loads, so that you can see where it is. Its sun button opens an *Ambient Light* slider, which is the same setting as Lighting → *Ambient Intensity*. Double-click the name or the value of the slider to reset it to its default. The pin button at the top keeps the toolbar visible, and the sitch saves this choice. *Ambient Light* is also a new row in the header menu of the main view.
+- **Pins for the places that you go to** (Go To with G, text pasted onto Sitrec, and the AI Assistant): when you go to a place name or a coordinate, Sitrec now drops a pin there. Its label is the place or the coordinates that you gave. The AI Assistant is told to use only the place, so "go to London at noon tomorrow" gives a pin named *London*. Go To with a frame or a time makes no pin. The pin is a normal pin, the same as from right-click the ground → *Drop Pin*, so it is saved with the sitch and you can edit it.
+
+### Improvements
+- **Playhead / Start dropdown** (Time menu, and the top of Satellites → Satellite Controls): the time editor now has a *Playhead* / *Start* dropdown below the clock, to choose the time that you edit. It replaces the *Edit Playhead* and *Edit Start* buttons. While the pointer is on a date or time field or on the dropdown, or while you type in a field or drag its digits, a label above the playback bar shows the date and time that you edit. The label is at the current frame for *Playhead*, or at frame 0 for *Start*.
+- **Time editor** (Time menu): the LIVE, PAUSED or PLAYING text under the clock is removed. The dot on the *Live* button turns red while Live is on. The *Now once* button is now *Now*.
+- **Display Settings and AI Settings** (Sitrec → Settings): *Language*, *Theme*, *Center Sidebar*, *Show Attribution* and *Show Filename* are now in the *Display Settings* folder. *AI Model*, *Sitrec Focused*, *Voice Model*, *Enable old AI models*, *AI Effort* and *Refusal Fallback* are now in the *AI Settings* folder. That folder is only on sites that have the AI Assistant. *API Keys…* stays in Settings. Both folders are closed at the start, and your settings do not change.
+- **Tooltips on the view header bars and the new toolbar**: a tooltip now appears after 1.5 seconds, not after a quarter of a second. After one tooltip shows, the tooltip of the next button still shows at once. Only the tooltip of Sitrec shows. The tooltip of the browser no longer appears beside it.
+- **Video overlay slider** (the video overlay button in the header bar of the look view): double-click its value to reset the transparency to its default. The slider also opens when the button gets keyboard focus, and Escape closes it.
+
+### Bug Fixes
+- Fixed the compass in the views, which showed 360° for a heading just west of north and could switch between 0° and 360° while the camera moved near north. It now shows 0°.
+- Fixed a double-click on the name of a slider in the header menu of a view, which reset the slider to the value that it had when the menu was made, not to its default.
+
 ## Version 2.198.0 (2026-11-14)
 
 ### New Features

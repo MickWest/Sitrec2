@@ -105,7 +105,7 @@ describe('generated ids go through UniqueName', () => {
     const GENERATORS = [
         ['src/CustomManagerMenus.js', 'syntheticObject_'],
         ['src/CustomManagerMenus.js', 'syntheticTrack_'],
-        ['src/CustomManagerMenus.js', 'feature_'],
+        ['src/CFeatureManager.js', 'feature_'],
         ['src/TrackManager.js', 'syntheticTrack_'],
         ['src/TrackManager.js', 'syntheticTrackDisplay_'],
         ['src/TrackManager.js', 'balloonTrack_'],

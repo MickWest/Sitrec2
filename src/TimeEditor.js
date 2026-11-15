@@ -26,7 +26,7 @@ export class TimeEditor {
         this.root.dataset.interactionNative = "true";
         this.root.setAttribute("role", "group");
         this.root.dataset.i18nLabel = "timeEditor.label";
-        // Top to bottom: the date, the time, the edit target and status, the time
+        // Top to bottom: the date, the time, the edit target and frame, the time
         // zone, playback, and the paste field. Each row is always in view.
         this.root.innerHTML = `
             <div class="te-date">
@@ -41,7 +41,6 @@ export class TimeEditor {
                     <option value="start" data-i18n="timeEditor.target.start"></option>
                 </select>
                 <span class="te-context" data-id="frame"></span>
-                <span class="te-status" data-id="status"></span>
             </div>
             <div class="te-error" role="status" data-id="error"></div>
             <div class="te-row">
@@ -72,8 +71,6 @@ export class TimeEditor {
         // Text that refresh() shows many times each second.
         this.text = {
             play: t("timeEditor.play.play"), pause: t("timeEditor.play.pause"),
-            live: t("timeEditor.status.live"), paused: t("timeEditor.status.paused"), playing: t("timeEditor.status.playing"),
-            liveTip: t("timeEditor.status.liveTip"), pausedTip: t("timeEditor.status.pausedTip"),
         };
         // Tab stays on the date/time digits, in both editor locations. Other
         // controls remain clickable; Escape releases focus back to the scene.
@@ -286,9 +283,6 @@ export class TimeEditor {
         this.setText(this.root.querySelector('[data-action="play"]'), state.live || !state.paused ? text.pause : text.play);
         this.setAttribute(this.root.querySelector('[data-action="live"]'), "aria-pressed", String(state.live));
         this.setProperty(this.root.querySelector('[data-action="undo"]'), "disabled", !state.canUndo);
-        this.setText(this.el("status"), state.live ? text.live : state.paused ? text.paused : text.playing);
-        this.setTitle(this.el("status"), state.live ? text.liveTip : state.paused ? text.pausedTip
-            : t("timeEditor.status.playingTip", {speed: state.speed * state.playbackSpeed}));
         const speed = this.el("speed");
         // A speed that is not in the list gets an option of its own. Keep that option while
         // the speed is the same, and do not take it out and put it back on each refresh.

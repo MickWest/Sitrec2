@@ -58,7 +58,9 @@ class CFeatureManager extends CManager {
         // Add to manager with the node's ID
         this.add(featureNode.id, featureNode);
         
-        console.log(`Added feature marker: ${options.text} at (${options.positionLLA.lat}, ${options.positionLLA.lon}, ${options.positionLLA.alt})`);
+        // Log only the id: the label and position can name a real place, and the
+        // console goes into the debug-log export.
+        console.log(`Added feature marker: ${featureNode.id}`);
         
         return featureNode;
     }
