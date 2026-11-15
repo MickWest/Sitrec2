@@ -480,7 +480,7 @@ test("shared schema controllers support setMenuValue/getMenuValue and keep coupl
     const gui=new GUI({autoPlace:false});let settings=native();
     const controls=createThermalControls(gui,()=>settings,(key,value)=>{settings=normalizeSettings({...settings,[key]:value,
         fieldMode:key==="focalLengthM"?"focalLength":settings.fieldMode});},{translate:key=>key});
-    const API=methods("src/CSitrecAPI.js","CSitrecAPI",["_setMenuValue","_getMenuValue"]);
+    const API=methods("src/CSitrecAPI.js","CSitrecAPI",["_setMenuValue","_getMenuValue","_valueForControl","_controlValueType"]);
     const api=Object.assign(new API(),{invalidateMenuDocCache(){},_resolveControl(menu,key){
         const controller=gui.controllersRecursive().find(c=>c.property===key);return {success:!!controller,controller};}});
     try {

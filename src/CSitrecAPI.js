@@ -268,17 +268,17 @@ class CSitrecAPI {
         this.debug = isLocal;
 
         this.docs = {
-            gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt (Alt optional, defaults to 0). Parameters: lat (float), lon (float), alt (float, optional).",
+            gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt. Alt is the height above the ground in meters (optional, defaults to 2). Parameters: lat (float), lon (float), alt (float, optional).",
             setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
         };
 
         this.api = {
             gotoLLA: {
-                doc: "Move the camera to the specified latitude, longitude, and altitude.",
+                doc: "Move the camera to the specified latitude and longitude, at a height above the ground. It turns on Above Ground Level for the camera.",
                 params: {
                     lat: "Latitude in degrees (float)",
                     lon: "Longitude in degrees (float)",
-                    alt: "Altitude in meters (float, optional, defaults to 0)"
+                    alt: "Height above the ground in meters, not above sea level (float, optional, defaults to 2)"
                 },
                 fn: (v) => {
                     const camera = NodeMan.get("fixedCameraPosition");
@@ -1688,7 +1688,12 @@ class CSitrecAPI {
                 params: {
                     menu: "Menu ID (e.g. 'view', 'satellites', 'terrain'). Optional — omit/null to scan ALL menus and set the first control matching path",
                     path: "Control name or path with '/' for nested folders (e.g. 'showStarlink' or 'Views/showVideo')",
-                    value: "New value (type depends on control: number, boolean, string, or color hex)"
+                    // This text must not contain "number", "float", "int", "bool" or "array":
+                    // _coerceArgs reads those words as the type of the argument, and this one
+                    // has no single type. "number" here turned the text "101282" into a number
+                    // for a text box, and true into 1 for a checkbox. _valueForControl gives
+                    // the value the type of the control instead.
+                    value: "New value. Its type follows the control: a numeric value, true or false, text, an option name, or a color in hex"
                 },
                 fn: (v) => {
                     const result = this._setMenuValue(v.menu, v.path, v.value);
@@ -2985,6 +2990,43 @@ class CSitrecAPI {
         return null;
     }
 
+    // The type of value that a plain control holds: "string", "number" or "boolean".
+    // Null when a caller's value has no single type to be turned into: a dropdown (matched
+    // by option in _setMenuValue), a color (lil-gui keeps its own formats), a button, or a
+    // synthetic control from _resolveObjectControl (a light takes a boolean OR a brightness).
+    _controlValueType(controller) {
+        if (controller.property === undefined) return null;
+        if (Array.isArray(controller._values)) return null;
+        if (controller._format !== undefined) return null;
+        // The value at creation, so that one wrong value does not change the type for good.
+        const held = controller.initialValue ?? controller.getValue?.();
+        const type = typeof held;
+        return (type === "string" || type === "number" || type === "boolean") ? type : null;
+    }
+
+    // Give a value the type that the control holds. A text box keeps "101282" as text (a
+    // NORAD number in the satellite search), a slider gets a number from "45.5", and a
+    // checkbox gets true or false, never 1 or 0. A value of the right type is not touched.
+    // Returns {value}, or {error} when the value cannot be that type.
+    _valueForControl(controller, value) {
+        const type = this._controlValueType(controller);
+        if (type === null || typeof value === type) return {value};
+        if (type === "string") {
+            return {value: (value === null || value === undefined) ? "" : String(value)};
+        }
+        if (type === "boolean") {
+            if (typeof value === "number") return {value: value !== 0};
+            const text = String(value).trim().toLowerCase();
+            if (["true", "1", "on", "yes"].includes(text)) return {value: true};
+            if (["false", "0", "off", "no"].includes(text)) return {value: false};
+            return {error: `Value '${value}' is not true or false.`};
+        }
+        if (typeof value === "boolean") return {value: value ? 1 : 0};
+        const n = (typeof value === "string" && value.trim() !== "") ? Number(value) : NaN;
+        if (!Number.isFinite(n)) return {error: `Value '${value}' is not a number.`};
+        return {value: n};
+    }
+
     _setMenuValue(menuId, path, value) {
         const result = this._resolveControl(menuId, path);
         if (!result.success) return result;
@@ -2992,15 +3034,21 @@ class CSitrecAPI {
         const controller = result.controller;
         try {
             let finalValue = value;
-            
+
+            const typed = this._valueForControl(controller, value);
+            if (typed.error) return { success: false, error: typed.error };
+            finalValue = typed.value;
+
             // For dropdown controllers, match option values
             if (controller._values && Array.isArray(controller._values)) {
                 const valueLower = String(value).toLowerCase();
                 // Try exact match first
                 if (!controller._values.includes(value)) {
                     // Try case-insensitive match
+                    // undefined, not "falsy": an option can be 0 or "", and text such as "0" now
+                    // reaches here as text
                     let matched = controller._values.find(v => String(v).toLowerCase() === valueLower);
-                    if (!matched) {
+                    if (matched === undefined) {
                         return { success: false, error: `Value '${value}' not found. Options: ${controller._values.join(', ')}` };
                     }
                     finalValue = matched;

@@ -1178,6 +1178,88 @@ describe('CSitrecAPI menu control resolution', () => {
         expect(r.error).toContain('view, video');
     });
 
+    describe('a value takes the type of its control', () => {
+        let search, checkbox, slider, speed;
+        const set = (path, value) => sitrecAPI.handleAPICall({fn: 'setMenuValue', args: {menu: 'satellites', path, value}});
+        beforeEach(() => {
+            search = control('Search Loaded Satellites', '');
+            checkbox = control('Label Flares Only', true);
+            slider = control('Sat Brightness', 2);
+            speed = {...control('Frame Rate', 30), _values: [0, 24, 30, 60]};
+            mockGuiMenus.satellites = menu('satellites', [search, checkbox, slider, speed]);
+        });
+        afterEach(() => {
+            delete mockGuiMenus.satellites;
+        });
+
+        test('the description of value does not make _coerceArgs change its type', () => {
+            // The same rule as for `ra`: these words are read as the type of the argument.
+            expect(sitrecAPI.api.setMenuValue.params.value).not.toMatch(/float|number|\bint(eger)?\b|bool|array/i);
+        });
+
+        test('a NORAD number as text stays text in a text box', async () => {
+            // It became the number 101282, and the satellite filter then failed on every frame
+            // with "nameFilter.trim is not a function".
+            const r = await set('Search Loaded Satellites', '101282');
+
+            expect(r.result.success).toBe(true);
+            expect(search.getValue()).toBe('101282');
+        });
+
+        test('empty text clears a text box: it does not become 0', async () => {
+            search.setValue('ZK-2');
+            await set('Search Loaded Satellites', '');
+
+            expect(search.getValue()).toBe('');
+        });
+
+        test('a number for a text box becomes text (a script: set "Search Loaded Satellites" 25544)', () => {
+            expect(sitrecAPI._setMenuValue('satellites', 'Search Loaded Satellites', 25544).success).toBe(true);
+            expect(search.getValue()).toBe('25544');
+        });
+
+        test('a checkbox gets true or false, never 1 or 0', async () => {
+            await set('Label Flares Only', false);
+            expect(checkbox.getValue()).toBe(false);
+            await set('Label Flares Only', 'true');
+            expect(checkbox.getValue()).toBe(true);
+            await set('Label Flares Only', 0);
+            expect(checkbox.getValue()).toBe(false);
+        });
+
+        test('a checkbox refuses a value that is not true or false', async () => {
+            const r = await set('Label Flares Only', 'maybe');
+
+            expect(r.result.success).toBe(false);
+            expect(r.result.error).toMatch(/not true or false/);
+            expect(checkbox.getValue()).toBe(true);
+        });
+
+        test('a slider gets a number from text, and refuses text that is not a number', async () => {
+            await set('Sat Brightness', '4.5');
+            expect(slider.getValue()).toBe(4.5);
+
+            const r = await set('Sat Brightness', 'bright');
+            expect(r.result.success).toBe(false);
+            expect(r.result.error).toMatch(/not a number/);
+            expect(slider.getValue()).toBe(4.5);
+        });
+
+        test('a dropdown option that is 0 is found from the text "0"', async () => {
+            const r = await set('Frame Rate', '0');
+
+            expect(r.result.success).toBe(true);
+            expect(speed.getValue()).toBe(0);
+        });
+
+        test('a control with no property (a light, an object) gets the value as it is', () => {
+            const light = {object: {}, initialValue: 0, value: null,
+                           getValue() { return this.value; }, setValue(v) { this.value = v; }};
+            expect(sitrecAPI._valueForControl(light, true)).toEqual({value: true});
+            expect(sitrecAPI._valueForControl(light, 6000)).toEqual({value: 6000});
+        });
+    });
+
     describe('display rows and folders that got a name', () => {
         afterEach(() => {
             delete mockGuiMenus.traverse;
