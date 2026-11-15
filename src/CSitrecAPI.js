@@ -275,14 +275,14 @@ class CSitrecAPI {
 
         this.api = {
             gotoLLA: {
-                doc: "Move the camera to the specified latitude and longitude, at a height above the ground, and drop a pin on the ground there. It turns on Above Ground Level for the camera. Supply name using only the location from the user's request, without navigation instructions, dates, times or other commands.",
+                doc: "Move the camera to the specified latitude and longitude, at a height above the ground, select the location's time zone for the current date, and drop a pin on the ground there. It turns on Above Ground Level for the camera. Supply name using only the location from the user's request, without navigation instructions, dates, times or other commands.",
                 params: {
                     lat: "Latitude in degrees (float)",
                     lon: "Longitude in degrees (float)",
                     alt: "Height above the ground in meters, not above sea level (float, optional, defaults to 2)",
                     name: "Pin label: the location as requested by the user, e.g. London for 'go to London at noon tomorrow' (string, optional; defaults to the coordinates)"
                 },
-                fn: (v) => {
+                fn: async (v) => {
                     const camera = NodeMan.get("fixedCameraPosition");
                     if (!camera) return { success: false, error: "fixedCameraPosition node not found" };
                     // Without this the missing value reaches gotoLLA as undefined and NaN
@@ -292,6 +292,15 @@ class CSitrecAPI {
                         return { success: false, error: "lat and lon are required, in degrees" };
                     }
                     camera.gotoLLA(v.lat, v.lon, v.alt);
+                    const dateTime = GlobalDateTimeNode;
+                    if (dateTime) {
+                        const zone = await dateTime.setTimeZoneFromLocation(v.lat, v.lon, dateTime.dateNow);
+                        if (dateTime !== GlobalDateTimeNode) return {success: false, error: "The sitch changed during navigation"};
+                        if (zone) {
+                            dateTime.useTimeZone = true;
+                            dateTime.populate(true);
+                        }
+                    }
                     FeatureManager.addLocationPin({lat: v.lat, lon: v.lon, name: v.name});
                     return { success: true };
                 }

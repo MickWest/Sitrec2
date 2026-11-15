@@ -10,14 +10,11 @@ import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {lastSitFrame} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
 import {goToLatLon, resolveLocationString} from "./CoordinateInput";
-import {applyDateTimeString} from "./DateTimeParser";
+import {applyDateTimeString, parseDateTimeString, resolveDateTimeString} from "./DateTimeParser";
+import {parseGoToString} from "./GoToParser";
+import {lookupTimeZone} from "./TimeZoneLookup";
 import {importPastedTLE} from "./TLEPaste";
 import {FeatureManager} from "./CFeatureManager";
-
-// A single bare number - anything else is treated as a location, not a frame.
-// Decimals are accepted (and truncated) because the old number-only prompt did
-// the same.
-const BARE_NUMBER = /^[-+]?\d+(\.\d+)?$/;
 
 // Bumped for each request that reaches a place lookup, so a slow one can tell it
 // has been superseded (see applyGoToString).
@@ -55,40 +52,61 @@ export function goToFrame(f) {
  *   later one reports true: it was understood, it just lost the race.
  */
 export async function applyGoToString(text) {
-    if (typeof text !== "string") return false;
-    text = text.trim();
-    if (text === "") return false;
+    return (await executeGoToRequest(parseGoToString(text))).success;
+}
 
-    // A single bare number can only be a frame — every other form has two
-    // values, or letters/symbols, in it.
-    if (BARE_NUMBER.test(text)) {
-        goToFrame(parseInt(text, 10));
-        return true;
+// Resolve the destination's wall clock using the offset on the requested date,
+// including daylight saving changes. Explicit UTC/offsets still take priority.
+function destinationTime(text, zone, baseDate, location) {
+    return resolveDateTimeString(text, {baseDate, timeZone: zone, location});
+}
+
+/** Execute the same parsed request for the dialog, paste, and chat. Nothing in
+ * a combined request changes until both its place and its time are resolved. */
+export async function executeGoToRequest(request) {
+    const failure = {success: false, needsLLM: true, error: "Go To could not understand or find that destination."};
+    if (!request) return failure;
+    if (request.kind === "frame") {
+        goToFrame(request.frame);
+        return {success: true, message: `Jumped to frame ${par.frame}`};
+    }
+    if (request.kind === "tle") {
+        return {success: await importPastedTLE(request.text), message: "Satellite data processed"};
+    }
+    const namedTime = request.time && parseDateTimeString(request.time)?.namedTime;
+    if (request.kind === "time" && !namedTime) {
+        return applyDateTimeString(request.time, GlobalDateTimeNode)
+            ? {success: true, message: "Time updated"} : failure;
     }
 
-    // A pasted or typed two-line element set, which becomes a satellite. Tried
-    // early because it is decided by structure rather than by a lookup: it takes
-    // the text only if the TLE field grammar accounts for all of it, so nothing
-    // the other readings would have claimed can reach it.
-    if (await importPastedTLE(text)) return true;
-
-    // A date and/or time, applied as if typed into the Time menu. Safe to try
-    // before coordinates: the parser requires the whole string to be date/time
-    // tokens, and no coordinate format is (they all carry °, ′, ″, N/S/E/W,
-    // several decimals, or three numbers).
-    if (applyDateTimeString(text, GlobalDateTimeNode)) return true;
-
-    // A place name costs a network round trip, so two requests in quick
-    // succession can resolve out of order and leave the camera at the FIRST
-    // place instead of the second. Only the newest location request is allowed
-    // to land. Frame and date/time commands never take a ticket, so they don't
-    // cancel a place lookup the user also asked for.
     const ticket = ++locationRequestSeq;
-    const location = await resolveLocationString(text);
-    if (ticket !== locationRequestSeq) return true;
-    if (location === null) return false;
+    const node = GlobalDateTimeNode;
+    const superseded = () => ticket !== locationRequestSeq || node !== GlobalDateTimeNode;
+    const cancelled = {success: true, message: "Replaced by a newer navigation request"};
+    try {
+        const location = request.kind === "time" ? node?.getTimeLocation?.() : await resolveLocationString(request.location);
+        if (superseded()) return cancelled;
+        if (!location) return failure;
+        const zone = node && await lookupTimeZone(location.lat, location.lon);
+        if (superseded()) return cancelled;
+        if (node && !zone) return failure;
+        const date = request.time && node ? destinationTime(request.time, zone, node.dateNow, location) : null;
+        if (request.time && !date) return namedTime
+            ? {...failure, error: `No ${namedTime} time is available for that date and location.`} : failure;
 
-    goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
-    FeatureManager.addLocationPin({...location, name: text});
-    return true;
+        if (request.kind === "location") goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+        if (node) {
+            // The requested calendar date determines the zone's offset, not
+            // the previous sitch date. Select it before applying the clock.
+            node.useTimeZone = true;
+            node.setTimeZoneFromZone(zone, date ?? node.dateNow);
+            if (date) node.editTime(date);
+        }
+        if (request.kind === "time") return {success: true, message: `Time set to ${request.time}`};
+        FeatureManager.addLocationPin({...location, name: request.location});
+        return {success: true, message: `Moved to ${request.location}${date ? `; time set to ${request.time}` : ""}`};
+    } catch (error) {
+        if (superseded()) return cancelled;
+        return {...failure, error: `Go To failed: ${error.message}`};
+    }
 }

@@ -1,4 +1,4 @@
-// Parsing for dates and times typed by the user (the "G" / Go To box).
+// Shared parsing for the Go To box and the Time editor's date/time text field.
 //
 // Only what the user actually typed is changed: a time with no date keeps the
 // current date, a date with no time keeps the current time of day. Anything
@@ -6,8 +6,11 @@
 // that guard is what stops place names like "Mayfield" or "5 Jackson Street"
 // being swallowed here instead of reaching the geocoder.
 //
-// Pure module: applyDateTimeString() takes the date/time node as an argument
-// rather than importing it, so it can be unit tested against a plain object.
+// Resolution is separate from applying the result, so each editor can retain
+// its own edit target, playback and undo behavior.
+import {resolveCelestialTime} from "./CelestialTime";
+import {utcOffsetHoursInZone, zoneWallClockToInstant} from "./TimeZoneLookup";
+import {extractTimeOffset} from "./TimeOffsetParser";
 
 const MONTH_NAMES = [
     "january", "february", "march", "april", "may", "june",
@@ -24,7 +27,7 @@ function monthFromWord(word) {
 }
 
 // The longest each month can be. February gets 29 here because the year may not
-// be known at parse time; applyDateTimeString() re-checks against the actual
+// be known at parse time; resolveDateTimeString() re-checks against the actual
 // year, which is where "2/29 in a non-leap year" is caught.
 const LONGEST_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -43,7 +46,8 @@ function to24Hour(hour, meridiem) {
  * @param {string} input
  * @returns {{date: {year?:number, month:number, day:number}|null,
  *            time: {hour:number, minute:number, second:number}|null,
- *            utc: boolean} | null}
+ *            utc: boolean, offsetHours?: number, relativeDay?: number, now?: boolean, namedTime?: string,
+ *            timeShiftMS?: number} | null}
  */
 export function parseDateTimeString(input) {
     if (typeof input !== "string" || !input.trim()) return null;
@@ -51,9 +55,16 @@ export function parseDateTimeString(input) {
     // Lowercased, so ISO's "T" and "Z" arrive as "t" and "z". Split the date from
     // the time so the two halves parse independently ("2024-01-06t15:20:00z").
     let rest = input.trim().toLowerCase().replace(/(?<=\d)t(?=\d)/, " ");
+    const modifier = extractTimeOffset(rest);
+    if (!modifier) return null;
+    rest = modifier.text;
     let utc = false;
     let time = null;
     let date = null;
+    let offsetHours;
+    let relativeDay;
+    let now = false;
+    let namedTime;
 
     const take = (re, handler) => {
         const m = rest.match(re);
@@ -62,6 +73,13 @@ export function parseDateTimeString(input) {
         rest = rest.slice(0, m.index) + " " + rest.slice(m.index + m[0].length);
         return true;
     };
+
+    // Explicit ISO offsets take precedence over the displayed zone. Consume
+    // them before the clock parser can mistake the offset for the stated time.
+    take(/([+-])(\d{2}):(\d{2})$/, (m) => {
+        if (+m[2] > 23 || +m[3] > 59) return false;
+        offsetHours = (+m[2] + +m[3] / 60) * (m[1] === "-" ? -1 : 1);
+    });
 
     // "17:33UTC", "17:33 GMT", "15:20Z" - an explicit UTC marker means the time
     // is absolute, whatever time zone the Time menu is displaying. No leading \b:
@@ -73,9 +91,16 @@ export function parseDateTimeString(input) {
     // it used to eat is left in `rest`, which changes nothing - take() writes a space back
     // in place of the match anyway, and the leftover check below ignores whitespace.
     take(/(?:utc|gmt)\b|(?<=\d)\s*z\b/, () => { utc = true; });
+    if (utc && offsetHours !== undefined) return null;
+
+    take(/\bnow\b/, () => { now = true; });
+    take(/\b(yesterday|today|tomorrow)\b/, (m) => {
+        relativeDay = {yesterday: -1, today: 0, tomorrow: 1}[m[1]];
+    });
+    take(/\b(sunrise|sunset|moonrise|moonset|morning|evening|night|dusk|dawn)\b/, m => { namedTime = m[1]; });
 
     take(/\bnoon\b/, () => { time = {hour: 12, minute: 0, second: 0, millisecond: 0}; });
-    take(/\bmidnight\b/, () => { time = {hour: 0, minute: 0, second: 0, millisecond: 0}; });
+    if (!time) take(/\bmidnight\b/, () => { time = {hour: 0, minute: 0, second: 0, millisecond: 0}; });
 
     // "12:33am", "15:20", "15:20:30", and ISO's "15:20:00.000"
     if (!time) {
@@ -98,8 +123,7 @@ export function parseDateTimeString(input) {
     }
 
     // ISO 8601 "2024-01-06" - the form Sit.startTime is displayed in, so it can
-    // be pasted straight back. (A numeric offset such as "+05:00" is not read;
-    // it will be left over and the whole string declined.)
+    // be pasted straight back.
     take(/\b(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/, (m) => {
         if (!validDate(+m[2], +m[3])) return false;
         date = {month: +m[2], day: +m[3], year: +m[1]};
@@ -133,39 +157,56 @@ export function parseDateTimeString(input) {
         });
     }
 
-    if (!date && !time) return null;
+    if (now && (date || time || namedTime || relativeDay !== undefined)) return null;
+    if (time && namedTime) return null;
+    if (date && relativeDay !== undefined) return null;
+    if (!date && !time && !namedTime && !now && relativeDay === undefined) return null;
+    // A connector is allowed only between a recognized date and time.
+    if ((date || relativeDay !== undefined) && (time || namedTime)) take(/\bat\b/, () => {});
     // Every character has to be accounted for, or this was never a date/time.
     if (rest.replace(/[\s,]/g, "") !== "") return null;
 
-    return {date, time, utc};
+    return {date, time, utc,
+        ...(offsetHours !== undefined ? {offsetHours} : {}),
+        ...(relativeDay !== undefined ? {relativeDay} : {}),
+        ...(namedTime ? {namedTime} : {}),
+        ...(modifier.timeShiftMS !== undefined ? {timeShiftMS: modifier.timeShiftMS} : {}),
+        ...(now ? {now: true} : {})};
 }
 
 /**
- * Apply a typed date/time to the Time menu, exactly as if the user had edited
- * its year/month/day/hour/minute/second fields: same time-zone handling, same
- * live-mode reset, same recalculate.
- *
- * @param {string} text
- * @param {object} node - the CNodeDateTime (GlobalDateTimeNode)
- * @returns {boolean} true if the text was a date/time and has been applied
+ * Resolve user text to an instant without changing the scene. Missing fields
+ * come from baseDate (the playhead or start being edited). Relative day names
+ * use the real clock's date in the input zone; "now" is the real instant.
  */
-export function applyDateTimeString(text, node) {
+export function resolveDateTimeString(text, {baseDate = new Date(), offsetHours = 0, now = new Date(), location, timeZone} = {}) {
     const parsed = parseDateTimeString(text);
-    if (!parsed || !node) return false;
+    if (!parsed || !Number.isFinite(baseDate?.getTime()) || !Number.isFinite(offsetHours)
+        || !Number.isFinite(now?.getTime())) return null;
+    // Apply elapsed time after resolving the anchor, so offsets can cross
+    // midnight or a daylight saving change without moving the anchor's date.
+    const shifted = date => {
+        if (!date) return null;
+        const result = new Date(date.getTime() + (parsed.timeShiftMS ?? 0));
+        return Number.isFinite(result.getTime()) ? result : null;
+    };
+    if (parsed.now) return shifted(now);
 
-    const hours = (h) => h * 60 * 60000;
-    // The Time menu shows the selected time zone (or UTC when the override is
-    // off). An explicitly-UTC input is read in UTC regardless of that.
-    const displayOffset = node.useTimeZone ? hours(node.getTimeZoneOffset()) : 0;
-    const readOffset = parsed.utc ? 0 : displayOffset;
+    const zone = !parsed.utc && parsed.offsetHours === undefined ? timeZone : null;
+    const baseOffset = zone ? utcOffsetHoursInZone(zone, baseDate) : (parsed.offsetHours ?? (parsed.utc ? 0 : offsetHours));
+    const nowOffset = zone ? utcOffsetHoursInZone(zone, now) : baseOffset;
+    if (baseOffset === null || nowOffset === null) return null;
+    const readOffset = baseOffset * 3600000;
 
     // The current instant, expressed in the frame the typed fields are in, so
     // unspecified fields carry over unchanged.
-    const base = new Date(node.dateNow.getTime() + readOffset);
+    const base = new Date(baseDate.getTime() + readOffset);
+    const calendar = parsed.relativeDay === undefined ? base
+        : new Date(now.getTime() + nowOffset * 3600000 + parsed.relativeDay * 86400000);
 
-    const year = parsed.date?.year ?? base.getUTCFullYear();
-    const month = parsed.date?.month ?? (base.getUTCMonth() + 1);
-    const day = parsed.date?.day ?? base.getUTCDate();
+    const year = parsed.date?.year ?? calendar.getUTCFullYear();
+    const month = parsed.date?.month ?? (calendar.getUTCMonth() + 1);
+    const day = parsed.date?.day ?? calendar.getUTCDate();
     const hour = parsed.time?.hour ?? base.getUTCHours();
     const minute = parsed.time?.minute ?? base.getUTCMinutes();
     const second = parsed.time?.second ?? base.getUTCSeconds();
@@ -180,14 +221,28 @@ export function applyDateTimeString(text, node) {
     // could make valid.)
     const probe = new Date(Date.UTC(year, month - 1, day));
     if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
-        return false;
+        return null;
     }
 
-    const absolute = Date.UTC(year, month - 1, day, hour, minute, second, ms) - readOffset;
+    const toInstant = wall => zone ? zoneWallClockToInstant(wall, zone) : new Date(wall - readOffset);
+    if (parsed.namedTime) {
+        return shifted(resolveCelestialTime(parsed.namedTime, location,
+            toInstant(probe.getTime()), toInstant(probe.getTime() + 86400000)));
+    }
+    const absolute = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+    return Number.isFinite(absolute) ? shifted(toInstant(absolute)) : null;
+}
+
+/** Apply Go To text through the same path as editing the date/time sliders. */
+export function applyDateTimeString(text, node) {
+    if (!node) return false;
+    const offsetHours = node.useTimeZone ? node.getTimeZoneOffset() : 0;
+    const date = resolveDateTimeString(text, {baseDate: node.dateNow, offsetHours, location: node.getTimeLocation?.()});
+    if (!date) return false;
 
     // Write the fields the way populate() does, then take the same path a slider
     // edit takes.
-    const shown = new Date(absolute + displayOffset);
+    const shown = new Date(date.getTime() + offsetHours * 3600000);
     node.dateTime.year = shown.getUTCFullYear();
     node.dateTime.month = shown.getUTCMonth() + 1;
     node.dateTime.day = shown.getUTCDate();

@@ -28,6 +28,21 @@ beforeEach(() => {
 });
 afterEach(() => { editor.dispose(); host.remove(); jest.useRealTimers(); });
 const input = part => editor.root.querySelector(`input[data-part="${part}"]`);
+
+test.each([['sunset', '2025-06-10T20:37:00Z'], ['an hour after sunset', '2025-06-10T21:37:00Z']])(
+    'pasted %s uses the same event resolver and keeps the chosen edit target', (text, expected) => {
+    state.now = new Date('2025-06-10T12:00:00Z');
+    state.start = new Date('2025-06-10T11:59:50Z');
+    state.offset = 1;
+    adapter.location = () => ({lat: 53.8479533, lon: -1.8384526});
+    editor.target = 'start';
+    editor.el('paste').value = text;
+    editor.paste();
+    expect(edits).toHaveLength(1);
+    expect(edits[0].target).toBe('start');
+    expect(Math.abs(edits[0].date - new Date(expected))).toBeLessThan(60000);
+});
+
 function pointer(element, type, x = 0, options = {}) {
     const e = new MouseEvent(type, {bubbles: true, cancelable: true, button: 0, clientX: x, ...options});
     Object.defineProperty(e, "pointerId", {value: 1});
@@ -145,6 +160,28 @@ test("wheel scrolling over a focused digit does not change time", () => {
     input("second").dispatchEvent(wheel);
     expect(wheel.defaultPrevented).toBe(false);
     expect(edits).toHaveLength(0);
+});
+
+test.each([
+    ["12pm", "now", "2024-12-31T20:00:00.000Z"],
+    ["Jan 6, 2020", "now", "2020-01-06T23:59:10.987Z"],
+    ["tomorrow at noon", "now", "2026-01-01T20:00:00.000Z"],
+    ["yesterday", "start", "2025-12-30T23:59:00.987Z"],
+    ["now", "start", "2026-01-01T01:15:00.456Z"],
+    ["2026-11-08 00:15:30.42+05:45", "now", "2026-11-07T18:30:30.420Z"],
+])("text entry %s uses Go To formats with the %s edit target", (text, target, expected) => {
+    jest.setSystemTime(new Date("2026-01-01T01:15:00.456Z"));
+    state.offset = -8;
+    state.useZone = true;
+    editor.el("target").value = target;
+    editor.el("target").dispatchEvent(new Event("change"));
+    editor.el("paste").value = text;
+    editor.el("paste").dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
+    expect(edits).toHaveLength(1);
+    expect(edits[0].date.toISOString()).toBe(expected);
+    expect(edits[0].target).toBe(target);
+    expect(state.frame).toBe(300);
+    expect(editor.el("error").textContent).toBe("");
 });
 
 test("date digits and calendar edit the same local date without losing time precision", () => {

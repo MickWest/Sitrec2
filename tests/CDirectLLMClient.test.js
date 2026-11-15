@@ -760,7 +760,7 @@ describe('chat (direct OpenAI BYOK)', () => {
         ]);
 
         const result = await chat({
-            apiKey: 'k', provider: 'byok-openai', model: 'gpt-quirk-none',
+            apiKey: 'k', provider: 'byok-openrouter', model: 'gpt-quirk-none',
             systemPrompt: 'sp', history: [], userText: 'u', tools: [],
             executeCall: async () => ({success: true}),
         });
@@ -1370,5 +1370,86 @@ describe('retry and timeout', () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+});
+
+// These models reject reasoning_effort:none as well as tools + reasoning in
+// Chat Completions. Use Responses and retain the requested effort and tool loop.
+describe('OpenAI Responses function calling', () => {
+    const tool = {type: 'function', function: {name: 'getFrame', description: 'Read the frame',
+        parameters: {type: 'object', properties: {}, required: []}}};
+    const reasoning = {type: 'reasoning', id: 'rs_fixture', summary: [], encrypted_content: 'opaque-fixture'};
+    const action = {type: 'function_call', id: 'fc_fixture', call_id: 'call_fixture', name: 'getFrame', arguments: '{}'};
+    const answer = text => ({status: 'completed', output: [
+        {type: 'message', role: 'assistant', content: [{type: 'output_text', text}]},
+    ]});
+    const args = {apiKey: 'fixture', provider: 'byok-openai', systemPrompt: 'sp',
+        history: [], userText: 'read the frame', tools: [tool], effort: 'medium',
+        needsModelResult: () => true};
+
+    beforeEach(() => jest.resetAllMocks());
+
+    test.each(['gpt-6-astra', 'gpt-6.1-sol'])('%s retains reasoning and function results across rounds', async model => {
+        mockFetchSequence([
+            {body: {status: 'completed', output: [reasoning, action],
+                usage: {input_tokens: 100, output_tokens: 12, input_tokens_details: {cached_tokens: 60}}}},
+            {body: {...answer('Frame 25.'),
+                usage: {input_tokens: 120, output_tokens: 9, input_tokens_details: {cached_tokens: 80}}}},
+        ]);
+        const executeCall = jest.fn(async () => ({success: true, result: {frame: 25}}));
+        const result = await chat({...args, model, executeCall});
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(fetch.mock.calls.every(([url]) => url === 'https://api.openai.com/v1/responses')).toBe(true);
+        const first = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(first).toMatchObject({model, reasoning: {effort: 'medium'}, store: false,
+            max_output_tokens: DEFAULT_MAX_TOKENS, instructions: 'sp',
+            input: [{role: 'user', content: 'read the frame'}],
+            tools: [{type: 'function', name: 'getFrame', strict: false}]});
+        expect(first.reasoning_effort).toBeUndefined();
+        expect(first.messages).toBeUndefined();
+        const next = JSON.parse(fetch.mock.calls[1][1].body);
+        expect(next.input).toEqual([...first.input, reasoning, action,
+            {type: 'function_call_output', call_id: 'call_fixture', output: '{"frame":25}'}]);
+        expect(executeCall).toHaveBeenCalledWith({fn: 'getFrame', args: {}});
+        expect(result.text).toBe('Frame 25.');
+        expect(result.usage).toMatchObject({inputTokens: 80, cacheReadTokens: 140, outputTokens: 21, requests: 2});
+    });
+
+    test('learns the Responses requirement without lowering effort for a new model', async () => {
+        mockFetchSequence([
+            {ok: false, status: 400, body: {error: {message: 'Function tools with reasoning_effort are not supported. Use /v1/responses or set reasoning_effort to \'none\'.'}}},
+            {body: answer('First reply')},
+            {body: answer('Second reply')},
+        ]);
+        const request = {...args, model: 'gpt-future-responses-fixture', effort: 'high', executeCall: jest.fn()};
+        expect((await chat(request)).text).toBe('First reply');
+        expect((await chat(request)).text).toBe('Second reply');
+        expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+            'https://api.openai.com/v1/chat/completions',
+            'https://api.openai.com/v1/responses', 'https://api.openai.com/v1/responses',
+        ]);
+        expect(JSON.parse(fetch.mock.calls[1][1].body).reasoning.effort).toBe('high');
+        expect(JSON.parse(fetch.mock.calls[2][1].body).reasoning.effort).toBe('high');
+    });
+
+    test('never executes an incomplete function call', async () => {
+        mockFetchSequence([{body: {status: 'incomplete', incomplete_details: {reason: 'max_output_tokens'},
+            output: [reasoning, {...action, arguments: '{"frame":'}]}}]);
+        const executeCall = jest.fn();
+        const result = await chat({...args, model: 'gpt-6-astra', executeCall});
+        expect(executeCall).not.toHaveBeenCalled();
+        expect(result.text).toMatch(/cut off/);
+    });
+
+    test('reports provider errors without retrying against the incompatible endpoint', async () => {
+        mockFetchSequence([{ok: false, status: 401, body: {error: {message: 'Invalid API key'}}}]);
+        await expect(chat({...args, model: 'gpt-6-astra', executeCall: jest.fn()})).rejects.toThrow('Invalid API key');
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    test('OpenRouter still uses its own endpoint for the same model name', async () => {
+        mockFetchSequence([{body: {choices: [{message: {content: 'OK'}, finish_reason: 'stop'}]}}]);
+        await chat({...args, model: 'gpt-6.1-sol', provider: 'byok-openrouter', executeCall: jest.fn()});
+        expect(fetch.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/chat/completions');
     });
 });

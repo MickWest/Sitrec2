@@ -7,6 +7,7 @@
 // behavior stay consistent. To add another prompt type, mount a DOM
 // node into the shell and provide a getValue() that pulls the current
 // answer out of it; you don't have to rebuild the chrome.
+import {captureModalKeyboard} from "./ModalKeyboard";
 
 function tryNativePrompt(message, defaultValue = "") {
     if (typeof window === "undefined" || typeof window.prompt !== "function") {
@@ -125,9 +126,10 @@ function _openModal({
             cursor: pointer;
         `;
 
+        let releaseKeyboard;
         const close = (value) => {
-            document.removeEventListener("keydown", onKeyDown, true);
             overlay.remove();
+            releaseKeyboard?.();
             resolve(value);
         };
 
@@ -141,29 +143,17 @@ function _openModal({
             close(value);
         };
 
-        const onKeyDown = (event) => {
-            if (event.key === "Escape") {
-                event.preventDefault();
-                close(null);
-                return;
-            }
-            if (event.key === "Enter") {
-                event.preventDefault();
-                submit();
-            }
-        };
-
         cancelButton.addEventListener("click", () => close(null));
         confirmButton.addEventListener("click", submit);
         overlay.addEventListener("click", (event) => {
             if (event.target === overlay) close(null);
         });
-        document.addEventListener("keydown", onKeyDown, true);
-
         buttonRow.append(cancelButton, confirmButton);
         modal.append(titleElement, messageElement, content, errorElement, buttonRow);
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        modal.setAttribute('aria-label', title || 'Dialog');
+        releaseKeyboard = captureModalKeyboard(modal, {onCancel: () => close(null), onConfirm: submit});
 
         if (typeof onMount === "function") {
             onMount({

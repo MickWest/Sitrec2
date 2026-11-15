@@ -3,6 +3,7 @@ import {GlobalDateTimeNode, NodeMan} from "../src/Globals";
 import {ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {assert} from "../src/assert";
 import {getEnv} from "../src/envUtils";
+import {lookupNominatimLocation} from "../src/LocationSearch";
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -492,23 +493,10 @@ function earthNullSchoolLink() {
 }
 
 
-// given a lookup string, find the closest location [lat, lon]
+// Resolve a place name or address to [lat, lon], checking name and prominence.
 // or null if not found
 export async function customLocationFunction(lookupString) {
-    try {
-        const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(lookupString);
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (data.length > 0) {
-            const item = data[0];
-            return [parseFloat(item.lat), parseFloat(item.lon)];
-        }
-        return null;
-    } catch (error) {
-        console.error("Error fetching location: ", error);
-        return null;
-    }
+    return lookupNominatimLocation(lookupString);
 }
 
 

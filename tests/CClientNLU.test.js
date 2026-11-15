@@ -1,3 +1,7 @@
+jest.mock('../src/GoTo', () => ({
+    executeGoToRequest: jest.fn(async () => ({success: true, message: 'Moved'})),
+}));
+
 jest.mock('../src/Globals', () => ({
     guiMenus: {},
 }));
@@ -21,8 +25,68 @@ jest.mock('../src/nodes/CNode3DObject', () => ({
 
 import {clientNLU} from '../src/CClientNLU';
 import {sitrecAPI} from '../src/CSitrecAPI';
+import {executeGoToRequest} from '../src/GoTo';
+import {parseDateTimeString} from '../src/DateTimeParser';
 
 describe('CClientNLU parsing', () => {
+    describe('map source commands', () => {
+        const mapControl = {
+            menu: 'terrain', path: 'Map Type', controller: {
+                _names: ['ESRI World Imagery', 'Open Streetmap', 'MapBox', 'MapTiler', 'EOX', 'ESRI World Hillshade'],
+                _values: ['ESRI', 'osm', 'mapbox', 'maptiler', 'eox', 'ESRI_Hillshade'],
+            },
+        };
+
+        test.each([
+            ['ESRI', 'ESRI'], ['esri', 'ESRI'], ['OSM', 'osm'], ['Open Streetmap', 'osm'],
+            ['MapBox', 'mapbox'], ['MapTiler', 'maptiler'], ['EOX', 'eox'],
+            ['ESRI World Imagery', 'ESRI'], ['esri hillshade', 'ESRI_Hillshade'],
+        ])('bare %s selects a map instead of looking up a place', async (text, value) => {
+            const resolved = jest.spyOn(clientNLU, '_resolveMenuPath').mockReturnValue(mapControl);
+            executeGoToRequest.mockClear();
+            try {
+                const parsed = clientNLU.parse(text);
+                expect(parsed.intent).toBe('SET_MAP_SOURCE');
+                await clientNLU.execute(parsed);
+                expect(sitrecAPI.call).toHaveBeenLastCalledWith('setMenuValue', {menu: 'terrain', path: 'Map Type', value});
+                expect(executeGoToRequest).not.toHaveBeenCalled();
+            } finally { resolved.mockRestore(); }
+        });
+
+        test('explicit navigation and ordinary place names retain their meaning', () => {
+            const resolved = jest.spyOn(clientNLU, '_resolveMenuPath').mockReturnValue(mapControl);
+            try {
+                for (const text of ['go to ESRI', 'Bingley', 'Bingley June 10 6PM']) {
+                    expect(clientNLU.parse(text).intent).toBe('GO_TO');
+                }
+                expect(clientNLU.parse('show me ESRI').intent).not.toBe('SET_MAP_SOURCE');
+            } finally { resolved.mockRestore(); }
+        });
+
+        test.each(['use esri', 'switch to ESRI', 'set map type to esri', 'use esri imagery', 'use ESRI World Imagery'])(
+            '%s selects an available map locally', async text => {
+                const resolved = jest.spyOn(clientNLU, '_resolveMenuPath').mockReturnValue({
+                    menu: 'terrain', path: 'Map Type', controller: {_names: ['ESRI World Imagery', 'OpenStreetMap'], _values: ['ESRI', 'osm']},
+                });
+                try {
+                    const parsed = clientNLU.parse(text);
+                    expect(parsed.intent).toBe('SET_MAP_SOURCE');
+                    await clientNLU.execute(parsed);
+                    expect(sitrecAPI.call).toHaveBeenLastCalledWith('setMenuValue', {menu: 'terrain', path: 'Map Type', value: 'ESRI'});
+                } finally { resolved.mockRestore(); }
+            });
+
+        test('an unavailable or unknown map source falls back to AI without changing settings', async () => {
+            const resolved = jest.spyOn(clientNLU, '_resolveMenuPath').mockReturnValue(null);
+            sitrecAPI.call.mockClear();
+            try {
+                const result = await clientNLU.execute(clientNLU.parse('use esri'));
+                expect(result).toMatchObject({success: false, needsLLM: true});
+                expect(sitrecAPI.call).not.toHaveBeenCalled();
+            } finally { resolved.mockRestore(); }
+        });
+    });
+
     describe('SET_VALUE patterns', () => {
         test('parses "set vFOV to 4"', () => {
             const result = clientNLU.parse('set vFOV to 4');
@@ -308,13 +372,13 @@ describe('CClientNLU parsing', () => {
     describe('SET_FRAME patterns', () => {
         test('parses "frame 100"', () => {
             const result = clientNLU.parse('frame 100');
-            expect(result.intent).toBe('SET_FRAME');
+            expect(result.intent).toBe('GO_TO');
             expect(result.slots.frame).toBe(100);
         });
 
         test('parses "go to frame 50"', () => {
             const result = clientNLU.parse('go to frame 50');
-            expect(result.intent).toBe('SET_FRAME');
+            expect(result.intent).toBe('GO_TO');
             expect(result.slots.frame).toBe(50);
         });
     });
@@ -322,73 +386,63 @@ describe('CClientNLU parsing', () => {
     describe('SET_TIME patterns', () => {
         test('parses "12:30"', () => {
             const result = clientNLU.parse('12:30');
-            expect(result.intent).toBe('SET_TIME_RELATIVE');
-            expect(result.slots.hours).toBe(12);
-            expect(result.slots.minutes).toBe(30);
+            expect(result.intent).toBe('GO_TO');
+            expect(parseDateTimeString(result.slots.time).time.hour).toBe(12);
+            expect(parseDateTimeString(result.slots.time).time.minute).toBe(30);
         });
 
         test('parses "3pm"', () => {
             const result = clientNLU.parse('3pm');
-            expect(result.intent).toBe('SET_TIME_RELATIVE');
-            expect(result.slots.hours).toBe(15);
+            expect(result.intent).toBe('GO_TO');
+            expect(parseDateTimeString(result.slots.time).time.hour).toBe(15);
         });
 
         test('parses "12am"', () => {
             const result = clientNLU.parse('12am');
-            expect(result.intent).toBe('SET_TIME_RELATIVE');
-            expect(result.slots.hours).toBe(0);
+            expect(result.intent).toBe('GO_TO');
+            expect(parseDateTimeString(result.slots.time).time.hour).toBe(0);
         });
 
         test('parses ISO datetime', () => {
             const result = clientNLU.parse('set time to 2023-12-25T18:00:00Z');
-            expect(result.intent).toBe('SET_DATETIME');
-            expect(result.slots.dateTime).toBe('2023-12-25T18:00:00Z');
+            expect(result.intent).toBe('GO_TO');
+            expect(result.slots.time).toBe('2023-12-25T18:00:00Z');
         });
     });
 
     describe('GOTO patterns', () => {
-        test('longer requests reach the model instead of becoming a place name', () => {
-            for (const text of ['go to London at noon tomorrow', 'go to Paris at 12pm', 'go to London and set fov to 60']) {
-                expect(clientNLU.parse(text).intent).not.toBe('GOTO_NAMED_LOCATION');
+        test('place plus time is local; unrelated extra commands reach AI', () => {
+            for (const text of ['Bingley, 10AM', 'go to London at noon tomorrow', 'go to Paris at 12pm']) {
+                const result = clientNLU.parse(text);
+                expect(result.intent).toBe('GO_TO');
+                expect(result.slots.time).toBeTruthy();
             }
+            expect(clientNLU.parse('go to London and set fov to 60').intent).not.toBe('GO_TO');
         });
 
-        test('passes the requested coordinates as the pin label, without the command', async () => {
-            await clientNLU.execute(clientNLU.parse('go to 40.7128, -74.0060'));
-            expect(sitrecAPI.call).toHaveBeenLastCalledWith('gotoLLA', {
-                lat: 40.7128, lon: -74.006, alt: 0, name: '40.7128, -74.0060',
+        test.each(['go to 40.7128, -74.0060', 'move to London', 'Bingley, 10AM', 'tomorrow', 'frame 25'])(
+            'executes %s through the shared Go To handler', async text => {
+                const parsed = clientNLU.parse(text);
+                await clientNLU.execute(parsed);
+                expect(executeGoToRequest).toHaveBeenLastCalledWith(parsed.slots);
             });
-        });
-
-        test('keeps the requested place name instead of the geocoder display name', async () => {
-            const originalFetch = global.fetch;
-            global.fetch = jest.fn().mockResolvedValue({json: async () => [{lat: '51.5', lon: '-0.12', display_name: 'London, England, United Kingdom'}]});
-            try {
-                await clientNLU.execute(clientNLU.parse('move to London'));
-                expect(sitrecAPI.call).toHaveBeenLastCalledWith('gotoLLA', {
-                    lat: 51.5, lon: -0.12, alt: 0, name: 'London',
-                });
-            } finally {
-                global.fetch = originalFetch;
-            }
-        });
 
         test('parses "go to 40.7128, -74.0060"', () => {
             const result = clientNLU.parse('go to 40.7128, -74.0060');
-            expect(result.intent).toBe('GOTO_LLA');
-            expect(result.slots.lat).toBeCloseTo(40.7128);
-            expect(result.slots.lon).toBeCloseTo(-74.006);
+            expect(result.intent).toBe('GO_TO');
+            expect(result.slots.coordinates.lat).toBeCloseTo(40.7128);
+            expect(result.slots.coordinates.lon).toBeCloseTo(-74.006);
         });
 
         test('parses "go to London"', () => {
             const result = clientNLU.parse('go to London');
-            expect(result.intent).toBe('GOTO_NAMED_LOCATION');
+            expect(result.intent).toBe('GO_TO');
             expect(result.slots.location).toBe('London');
         });
 
         test('parses "move to New York City"', () => {
             const result = clientNLU.parse('move to New York City');
-            expect(result.intent).toBe('GOTO_NAMED_LOCATION');
+            expect(result.intent).toBe('GO_TO');
             expect(result.slots.location).toBe('New York City');
         });
     });
@@ -597,6 +651,14 @@ describe('small talk', () => {
         return parsed.intent === 'SMALL_TALK' ? parsed.slots.reply : null;
     };
 
+    test.each(['Sunset', 'Sunrise', 'Moonset', 'moonrise', 'morning', 'evening', 'night', 'dusk', 'dawn',
+        'an hour after sunset', 'half an hour before sunrise', '15 minutes before noon'])(
+        '%s is a time request, not a greeting or a place lookup', text => {
+            expect(clientNLU.parse(text)).toEqual(expect.objectContaining({
+                intent: 'GO_TO', slots: {kind: 'time', time: text},
+            }));
+        });
+
     test('answers greetings', () => {
         for (const t of ['hello', 'Hi', 'HEY', 'hiya', 'yo', 'howdy', 'good morning',
             'hola', 'bonjour', 'ciao', 'namaste', "what's up"]) {
@@ -647,9 +709,9 @@ describe('small talk', () => {
         }
     });
 
-    test('never intercepts an answer to a yes/no question', () => {
-        // The assistant asks clarifying questions; a bare "yes" is the answer to one and
-        // must reach the model, which is the only side holding that context.
+    test('does not answer yes/no replies as small talk', () => {
+        // The chat view routes every reply to an assistant question to the model
+        // before parsing. These words must not get a canned small-talk reply either.
         for (const t of ['yes', 'no', 'yeah', 'yep', 'nope', 'nah', 'sure', 'correct',
             'right one', 'the first one']) {
             expect(reply(t)).toBeNull();
@@ -712,7 +774,7 @@ describe('bare "go" without "to"', () => {
         for (const t of ['go bingley', 'go to bingley', 'goto bingley', 'fly to bingley',
             'move bingley', 'move to bingley', 'Go Bingley']) {
             const r = parse(t);
-            expect(r.intent).toBe('GOTO_NAMED_LOCATION');
+            expect(r.intent).toBe('GO_TO');
             expect(r.slots.location.toLowerCase()).toBe('bingley');
         }
     });
@@ -726,31 +788,31 @@ describe('bare "go" without "to"', () => {
     test('coordinates work bare too, and still parse as LLA', () => {
         for (const t of ['go 51.8, -1.8', 'go to 51.8, -1.8', 'go 51.8 -1.8 300']) {
             const r = parse(t);
-            expect(r.intent).toBe('GOTO_LLA');
-            expect(r.slots.lat).toBeCloseTo(51.8, 6);
-            expect(r.slots.lon).toBeCloseTo(-1.8, 6);
+            expect(r.intent).toBe('GO_TO');
+            expect(r.slots.coordinates.lat).toBeCloseTo(51.8, 6);
+            expect(r.slots.coordinates.lon).toBeCloseTo(-1.8, 6);
         }
-        expect(parse('go 51.8 -1.8 300').slots.alt).toBe(300);
+        expect(parse('go 51.8 -1.8 300').slots.coordinates.alt).toBe(300);
         // The "set location" spelling keeps working through the second alternation.
-        expect(parse('set location to 10, 20').slots.lat).toBeCloseTo(10, 6);
+        expect(parse('set location to 10, 20').slots.coordinates.lat).toBeCloseTo(10, 6);
     });
 
     test('coordinates in any format route to GOTO_LLA, place names do not', () => {
         const dms = parse('go to 40°26\'46"N 79°58\'56"W');
-        expect(dms.intent).toBe('GOTO_LLA');
-        expect(dms.slots.lat).toBeCloseTo(40.446111, 5);
-        expect(dms.slots.lon).toBeCloseTo(-79.982222, 5);
-        expect(dms.slots.alt).toBe(0);
+        expect(dms.intent).toBe('GO_TO');
+        expect(dms.slots.coordinates.lat).toBeCloseTo(40.446111, 5);
+        expect(dms.slots.coordinates.lon).toBeCloseTo(-79.982222, 5);
+        expect(dms.slots.coordinates.alt).toBeUndefined();
 
         const mgrs = parse('fly to 37SCR1192692923');
-        expect(mgrs.intent).toBe('GOTO_LLA');
-        expect(mgrs.slots.lat).toBeCloseTo(32.4576, 3);
+        expect(mgrs.intent).toBe('GO_TO');
+        expect(mgrs.slots.coordinates.lat).toBeCloseTo(32.4576, 3);
 
         const quito = parse('go -0 13 0, -78 30 0');
-        expect(quito.slots.lat).toBeCloseTo(-0.216667, 5);
+        expect(quito.slots.coordinates.lat).toBeCloseTo(-0.216667, 5);
 
-        expect(parse('go to Area 51').intent).toBe('GOTO_NAMED_LOCATION');
-        expect(parse('go to 1600 Pennsylvania Avenue').intent).toBe('GOTO_NAMED_LOCATION');
+        expect(parse('go to Area 51').intent).toBe('GO_TO');
+        expect(parse('go to 1600 Pennsylvania Avenue').intent).toBe('GO_TO');
     });
 
     // The reason "to" was not optional in the first place.
@@ -759,7 +821,7 @@ describe('bare "go" without "to"', () => {
             'go right', 'go home', 'go ahead', 'go faster', 'go next',
             'go show the tracks', 'go load starlink', 'go set fov to 30',
             'move up', 'move back']) {
-            expect(parse(t).intent).not.toBe('GOTO_NAMED_LOCATION');
+            expect(parse(t).intent).not.toBe('GO_TO');
         }
     });
 });

@@ -1,5 +1,6 @@
 import {Globals} from "./Globals";
 import {par} from "./par";
+import {captureModalKeyboard} from "./ModalKeyboard";
 
 /**
  * Show a copyable error dialog to the user.
@@ -162,8 +163,10 @@ export function showError(message, error=null) {
         font-size: 14px;
     `;
 
+    let releaseKeyboard;
     closeButton.onclick = () => {
-        document.body.removeChild(overlay);
+        overlay.remove();
+        releaseKeyboard?.();
     };
 
     // Assemble the modal
@@ -176,9 +179,8 @@ export function showError(message, error=null) {
 
     // Add to document
     document.body.appendChild(overlay);
-
-    // Auto-select text for easy copying
-    textarea.select();
+    modal.setAttribute('aria-label', title);
+    releaseKeyboard = captureModalKeyboard(modal, {initialFocus: closeButton, onCancel: () => closeButton.click()});
 
     console.error(message);
     return true;
@@ -201,6 +203,7 @@ function buildModalShell(title, message) {
     `;
 
     const modal = document.createElement('div');
+    modal.setAttribute('aria-label', title || 'Dialog');
     // A long list of options (a choice between many saved versions) scrolls in the modal.
     modal.style.cssText = `
         background: white; border-radius: 8px; padding: 20px;
@@ -240,8 +243,8 @@ function buildModalShell(title, message) {
  *
  * Resolves to the chosen option's `value`. Escape, a backdrop click, or the
  * option flagged `cancel:true` resolve to the cancel option's value (or
- * `cancelValue` if none is flagged). Enter activates the option flagged
- * `primary:true` (or the first option).
+ * `cancelValue` if none is flagged). The primary option is focused initially;
+ * arrow keys and Tab change focus, and Enter activates the focused option.
  *
  * @param {string} message - Body text (newlines preserved)
  * @param {object} opts
@@ -298,24 +301,18 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
             modal.appendChild(input);
         }
 
+        let releaseKeyboard;
         const cleanup = (result) => {
-            document.removeEventListener('keydown', onKey);
             if (overlay.parentNode) document.body.removeChild(overlay);
+            releaseKeyboard?.();
             resolve(result);
         };
 
         const primaryOption = options.find(o => o.primary && !o.disabled) || options.find(o => !o.disabled);
-        const onKey = (e) => {
-            if (e.key === 'Escape') { e.preventDefault(); cleanup(dismissValue); }
-            else if (e.key === 'Enter' && primaryOption) {
-                e.preventDefault();
-                if (armed || primaryOption.cancel) cleanup(primaryOption.value);
-            }
-        };
         // Backdrop (outside the modal) click dismisses.
         overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(dismissValue); });
 
-        let firstButton = null;
+        let primaryButton = null;
         for (const opt of options) {
             const btn = document.createElement('button');
             btn.style.cssText = `
@@ -343,14 +340,16 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
                 if (typeToConfirm && !opt.cancel) gated.push(btn);
             }
             modal.appendChild(btn);
-            if (!firstButton && !opt.disabled) firstButton = btn;
+            if (opt === primaryOption) primaryButton = btn;
         }
         if (typeToConfirm) setArmed(false);
 
-        document.addEventListener('keydown', onKey);
         document.body.appendChild(overlay);
-        if (input) input.focus();
-        else if (firstButton) firstButton.focus();
+        releaseKeyboard = captureModalKeyboard(modal, {
+            initialFocus: input || primaryButton,
+            onCancel: () => cleanup(dismissValue),
+            onConfirm: () => primaryButton?.click(),
+        });
     });
 }
 
@@ -382,8 +381,8 @@ export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLab
  * Show a styled single-line input prompt. Promise-based replacement for the native
  * blocking prompt() (which freezes the main thread and stalls automation). Resolves to
  * the entered string on OK/Enter, or null on Cancel/Escape/backdrop-click. The input is
- * a real <input>, so while it's focused the global keyboard shortcuts (which bail on
- * text-input focus) are naturally suppressed.
+ * a real <input>. Keyboard input stays within the dialog, including while a button
+ * has focus; Tab and cursor keys move between fields and buttons.
  * @param {string} message - Body/label text
  * @param {object} [opts]
  * @param {string} [opts.title="Enter Value"]
@@ -473,18 +472,14 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
 
         // Single exit path, so the open flag and the playback state are always
         // restored — including on backdrop click and Escape.
+        let releaseKeyboard;
         const cleanup = (result) => {
             endTextEntry();
             par.paused = wasPaused;
             if (overlay.parentNode) document.body.removeChild(overlay);
+            releaseKeyboard?.();
             resolve(result);
         };
-
-        // Handle Enter/Escape on the input itself (it's focused, so it receives them).
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); cleanup(input.value); }
-            else if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
-        });
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
@@ -496,7 +491,11 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
         overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(null); });
 
         document.body.appendChild(overlay);
-        input.focus();
+        releaseKeyboard = captureModalKeyboard(modal, {
+            initialFocus: input,
+            onCancel: () => cleanup(null),
+            onConfirm: () => cleanup(input.value),
+        });
         input.select();
     });
 }
@@ -550,17 +549,13 @@ export function showTextEditor(message, {title = "Edit Text", defaultValue = "",
         `;
         modal.appendChild(textArea);
 
+        let releaseKeyboard;
         const cleanup = (result) => {
             endTextEntry();
             if (overlay.parentNode) document.body.removeChild(overlay);
+            releaseKeyboard?.();
             resolve(result);
         };
-
-        // Escape on the text area cancels. Other keys stay with the text area: the global
-        // keyboard shortcuts do not act while a text input has the focus.
-        textArea.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
-        });
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
@@ -578,7 +573,7 @@ export function showTextEditor(message, {title = "Edit Text", defaultValue = "",
         });
 
         document.body.appendChild(overlay);
-        textArea.focus();
+        releaseKeyboard = captureModalKeyboard(modal, {initialFocus: textArea, onCancel: () => cleanup(null)});
     });
 }
 

@@ -60,11 +60,63 @@ else wrote. [Your API Keys](APIKeys.md) gives the reason for web addresses.
 
 A small pattern matcher inside Sitrec recognises common phrasings and carries them out on the
 spot, with no model involved: `play`, `pause`, `frame 300`, `load starlink`,
-`ambient only`, `go to Denver`, `point at Saturn`, `what is 2+2`. You will
+`ambient only`, `use esri`, `use osm`, `go to Denver`, `point at Saturn`, `what is 2+2`. You will
 notice these because they answer instantly.
+
+Map-source names also work alone: `ESRI`, `OSM`, `MapBox`, or a full name from
+the Map Type menu selects that map. These names take priority over place lookup
+in chat, so `ESRI` does not navigate to a business with that name. Use an explicit
+`go to …` request when you do mean a location.
+
+Chat uses the same navigation parser as **Go To** (`G`). Both accept a place and
+time together, such as `Bingley Jun 10 6PM` or `go to Paris tomorrow at noon`.
+Commas and order are optional: `12PM Bingley`, `Bingley 12PM`, and
+`June 10 Bingley 6PM` are understood by recognizing the date/time content around
+the place name. Navigation switches to the destination's time zone, even for a place alone.
+Any requested date is resolved first so the local time uses that date's daylight
+saving rule (for example, 6PM BST in Bingley on June 10). An explicit UTC marker
+or offset still takes precedence when interpreting the time. A
+time without a date keeps the sitch date; `yesterday`, `today`, and `tomorrow`
+use the real calendar date, and `now` uses the real clock. Navigation drops a pin
+named for the place, without the time or command words.
+
+Place lookup checks actual names, including alternate names such as `NYC`.
+Map metadata flags do not count as names. A single word must match a town,
+region, or prominent feature; add the region or a more specific name to find
+a small village, shop, or other minor feature.
+Hospitals, shops, stations, and similar facilities require a fuller name or a
+location qualifier even when their importance score is high: use `HUG Geneva`,
+for example, rather than `hug`. City aliases such as `NYC` still work alone.
+
+`sunrise`, `sunset`, `moonrise`, `moonset`, `dawn`, `dusk`, `morning`, `evening`,
+and `night` use the requested date and location. For example, `Bingley June 10 sunset`
+and `sunset Bingley June 10` select the same instant. A time alone uses the current
+map location and sitch date. These names also work in the Time menu's text field.
+Sun and Moon rise/set times use the apparent horizon; dawn and dusk mean civil
+twilight (the Sun at −6°). Morning is one hour after sunrise, evening one hour
+before sunset, and night one hour after civil dusk. Local terrain and buildings
+are not included. If an event does not occur on that date, the request fails
+instead of silently choosing a different day's event.
+
+Add a duration with `before` or `after`: `an hour after sunset`,
+`30 minutes before sunrise`, `half an hour before moonrise`, or
+`Bingley June 10 1 hour 30 minutes after sunset`. Seconds, minutes, hours, and
+days accept numbers or common number words; half and quarter hours also work.
+Modifiers work with clock times too, such as `15 minutes before noon`. The
+duration is applied after resolving the event, and can cross midnight or a
+daylight saving change.
+
+If Go To cannot understand or find a destination, it offers **Edit request** or
+**Continue in Chat**. Continue in Chat opens the Assistant and submits the
+request immediately. This option is available when the sitch has
+an Assistant view.
+Continue in Chat is the default choice. Arrow keys or Tab select an option,
+Enter activates the option with the green outline, and Escape cancels.
 
 Anything it does not recognise goes to the model, and anything beginning "how" or "why" always
 goes to the model.
+If the assistant asks a question, your next reply goes directly to the model with
+the conversation history, even if it looks like a location, time, or local command.
 
 The matcher also tries any typed message that starts with show, hide, enable, disable, turn on
 or turn off, or that ends with on, off, visible, hidden, enabled or disabled. It sets the first

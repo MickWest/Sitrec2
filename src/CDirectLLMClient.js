@@ -30,6 +30,7 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 // Server-side refusal fallback, "default" form: Anthropic picks the substitute model by
 // refusal category. The array form uses a different (older) header; do not mix them.
 const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
@@ -989,6 +990,7 @@ function canSkipConfirmation(calls, results, needsModelResult) {
 // mistake in a new place; asking, and doing what the error says, cannot go stale. A 400
 // costs only the round trip — nothing was processed, so no tokens were spent.
 const MODEL_PARAM_QUIRKS = new Map();
+const OPENAI_RESPONSES_MODELS = new Set();
 
 function quirksFor(model) {
     if (!MODEL_PARAM_QUIRKS.has(model)) MODEL_PARAM_QUIRKS.set(model, {drop: new Set()});
@@ -1054,6 +1056,67 @@ function remedyFor(model, message, sentEffort = null) {
     return null;
 }
 
+// Keep the existing tool loop, but carry Responses output items intact between
+// rounds. Reasoning items (including encrypted content with store:false) must
+// accompany function calls when their results are sent back to the model.
+function responsesInput(messages) {
+    return messages.flatMap(message => {
+        if (message.responsesOutput) return message.responsesOutput;
+        if (message.role === 'tool') {
+            return [{type: 'function_call_output', call_id: message.tool_call_id, output: message.content}];
+        }
+        const items = message.content ? [{role: message.role, content: message.content}] : [];
+        for (const call of message.tool_calls || []) {
+            items.push({type: 'function_call', call_id: call.id,
+                name: call.function.name, arguments: call.function.arguments});
+        }
+        return items;
+    });
+}
+
+async function callOpenAIResponses({apiKey, model, systemPrompt, systemParts, messages, tools, maxTokens, effort}) {
+    const {res, data} = await postJSON(OPENAI_RESPONSES_URL, {
+        'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`,
+    }, JSON.stringify({
+        model,
+        instructions: fullSystemPrompt(systemPrompt, systemParts),
+        input: responsesInput(messages),
+        // Responses otherwise normalizes schemas to strict mode, making every
+        // optional Sitrec argument required. Retain the supplied tool contract.
+        tools: (tools || []).map(tool => ({type: 'function', ...tool.function, strict: tool.function.strict ?? false})),
+        reasoning: {effort: effortForOpenAI(effort)},
+        max_output_tokens: maxTokens,
+        store: false,
+    }), {timeoutMs: requestTimeoutMs(effortForOpenAI(effort), false), serviceName: 'OpenAI', custom: false});
+    if (!res.ok || data.error || data.status === 'failed') {
+        const error = new Error(`OpenAI API error: ${data.error?.message || `HTTP ${res.status}`}`);
+        error.status = res.status;
+        error.body = data;
+        throw error;
+    }
+    const output = data.output || [];
+    const content = output.filter(item => item.type === 'message')
+        .flatMap(item => item.content || [])
+        .map(part => part.type === 'output_text' ? part.text : (part.type === 'refusal' ? part.refusal : ''))
+        .filter(Boolean).join('\n');
+    const calls = output.filter(item => item.type === 'function_call').map(item => ({
+        id: item.call_id, type: 'function', function: {name: item.name, arguments: item.arguments},
+    }));
+    // Adapt only the envelope; execution, argument validation, truncation
+    // checks, action confirmations, and accounting remain in one shared loop.
+    return {
+        choices: [{message: {role: 'assistant', content, tool_calls: calls},
+            finish_reason: data.status === 'incomplete' ? 'length' : (calls.length ? 'tool_calls' : 'stop')}],
+        responsesOutput: output,
+        usage: {
+            prompt_tokens: data.usage?.input_tokens ?? 0,
+            completion_tokens: data.usage?.output_tokens ?? 0,
+            prompt_tokens_details: data.usage?.input_tokens_details,
+            completion_tokens_details: data.usage?.output_tokens_details,
+        },
+    };
+}
+
 export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', systemPrompt,
     systemParts, messages, tools, model, maxTokens = DEFAULT_MAX_TOKENS, sessionId, endpoint,
     effort = DEFAULT_EFFORT}) {
@@ -1062,6 +1125,13 @@ export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', syst
     const url = custom ? endpoint?.chatURL : (direct ? OPENAI_API_URL : OPENROUTER_API_URL);
     if (!url) throw new Error('No endpoint address is set for the custom provider.');
     const serviceName = custom ? 'Endpoint' : (direct ? 'OpenAI' : 'OpenRouter');
+    const responsesArgs = {apiKey, model, systemPrompt, systemParts, messages, tools, maxTokens, effort};
+    // GPT-6 function calling requires Responses. The Chat Completions error
+    // suggests effort:none, but these models reject that value too. Preserve
+    // the user's effort instead of cycling through incompatible requests.
+    if (direct && (/^gpt-6(?:[.-]|$)/i.test(model) || OPENAI_RESPONSES_MODELS.has(model))) {
+        return callOpenAIResponses(responsesArgs);
+    }
 
     const headers = {'Content-Type': 'application/json'};
     // A self-hosted server usually wants no credential at all, and some reject an empty
@@ -1101,6 +1171,13 @@ export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', syst
         if (res.ok && !data.error) return data;
 
         const msg = data?.error?.message || `HTTP ${res.status}`;
+        // Learn the same requirement for newly released models from the
+        // provider, without routing custom endpoints or OpenRouter elsewhere.
+        if (direct && res.status === 400 && /function tools.*reasoning_effort/i.test(msg)
+            && msg.includes('/v1/responses')) {
+            OPENAI_RESPONSES_MODELS.add(model);
+            return callOpenAIResponses(responsesArgs);
+        }
         const sent = quirksFor(model).drop.has('reasoning_effort') ? null
             : (quirksFor(model).reasoningEffort ?? effortForOpenAI(effort));
         const remedy = res.status === 400 ? remedyFor(model, msg, sent) : null;
@@ -1334,7 +1411,8 @@ async function chatOpenAIFormat({apiKey, keyProvider, model, systemPrompt, syste
                 + 'That answer was cut off before I could finish the action, so I have not run it.';
             break;
         }
-        messages.push({role: 'assistant', content: message.content || null, tool_calls: toolCalls});
+        messages.push({role: 'assistant', content: message.content || null, tool_calls: toolCalls,
+            ...(response.responsesOutput ? {responsesOutput: response.responsesOutput} : {})});
 
         const calls = toolCalls.map(toolCall => {
             let args = {};

@@ -3,8 +3,8 @@ import {FileManager, guiMenus} from "./Globals";
 import {ensureNightSkyFiles} from "./ExtraFiles";
 import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
-import {isSecureBuild} from "./configUtils";
-import {parseLatLonAlt} from "./CoordinateParser";
+import {parseGoToString} from "./GoToParser";
+import {executeGoToRequest} from "./GoTo";
 // number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
 // the full ~2.4MB mathjs (BigNumber/Complex/Fraction/units) if this used 'mathjs'.
 // The degrees-trig calculator only needs scalar number functions.
@@ -317,23 +317,6 @@ const COMMAND_KEYWORDS = ["set", "show", "hide", "enable", "disable", "turn", "l
     "zoom", "play", "pause", "stop", "start", "resume", "go", "move", "point", "look", "frame",
     "make", "change", "calculate", "evaluate", "what", "ambient"];
 
-// After a BARE "go"/"move" with no "to", these are directions, motions or commands rather
-// than the name of a place: "go back", "go north", "go on", "go show the tracks". Without
-// this, making "to" optional so that "go bingley" works like "go to bingley" would turn
-// every one of them into a geocoder lookup.
-//
-// It does not have to be exhaustive. A name that slips through is looked up, fails, and the
-// message falls through to the model exactly as it does today — see the needsLLM path in
-// CNodeViewChat.handleMessage. This list is about not wasting the round trip, not about
-// correctness.
-const NOT_A_PLACE_AFTER_BARE_GO = new Set([
-    "on", "off", "ahead", "back", "backward", "backwards", "forward", "forwards",
-    "up", "down", "left", "right", "in", "out", "away", "there", "here", "home",
-    "north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest",
-    "faster", "slower", "slow", "fast", "first", "last", "next", "previous", "prev",
-    "again", "now", "ok", "okay", "away",
-]);
-
 // Question / function words that must NEVER be "corrected" into a command keyword.
 // Without this, fuzzy matching maps "how" -> "show" (kw.slice(1) === "how", one edit),
 // turning every "how do I ..." question into a bogus "show ..." toggle command.
@@ -382,7 +365,7 @@ const SMALL_TALK = [
             "hello", "hello there", "hi", "hii", "hiii", "hi there", "hiya", "hey",
             "heya", "hey there", "yo", "sup", "whats up", "wassup", "wazzup", "howdy",
             "greetings", "good morning", "good afternoon", "good evening", "good day",
-            "morning", "afternoon", "evening", "gday", "g day", "aloha", "hey ai",
+            "afternoon", "gday", "g day", "aloha", "hey ai",
             "hello ai", "hi ai", "hello bot", "hi bot", "hey bot", "hello sitrec",
             // Commonly typed without any expectation of a non-English reply.
             "hola", "buenos dias", "buenas tardes", "buenas noches", "bonjour", "bonsoir",
@@ -418,7 +401,7 @@ const SMALL_TALK = [
         phrases: [
             "bye", "bye bye", "byebye", "goodbye", "good bye", "see you", "see ya",
             "see you later", "catch you later", "cya", "cu", "later", "laters", "ttyl",
-            "good night", "goodnight", "night", "nighty night", "farewell", "im off",
+            "good night", "goodnight", "nighty night", "farewell", "im off",
             "i am off", "gtg", "got to go", "gotta go", "thats all", "thats it for now",
             "adios", "hasta luego", "au revoir", "auf wiedersehen", "tschuss",
             "arrivederci", "ciao ciao", "sayonara", "poka", "hej da", "vale",
@@ -597,6 +580,26 @@ class CClientNLU {
                 confidence: 1,
             },
             {
+                name: "set_map_source",
+                regex: /^(?:(?:use|switch\s+to)\s+|(?:set\s+)?(?:map\s+type|map|imagery)\s+(?:to\s+)?)(.+)$/i,
+                extract: match => ({intent: "SET_MAP_SOURCE", slots: {source: match[1].trim()}}),
+                confidence: 0.95,
+            },
+            {
+                // Map names are UI vocabulary first. Do not send "ESRI" to
+                // the geocoder and fly to a business with the same name.
+                name: "bare_map_source",
+                test: text => this._resolveMapSource(text),
+                extract: (_match, source) => ({intent: "SET_MAP_SOURCE", slots: {source: source.value}}),
+                confidence: 1,
+            },
+            {
+                name: "go_to",
+                test: (text) => parseGoToString(text, {chat: true}),
+                extract: (_match, request) => ({intent: "GO_TO", slots: request}),
+                confidence: 0.95,
+            },
+            {
                 name: "set_fov_variants",
                 regex: /^(?:set\s+)?(?:v?fov|h?fov|field\s*of\s*view)\s*(?:to\s+)?(\d+(?:\.\d+)?)$/i,
                 extract: (match) => ({intent: "SET_VALUE", slots: {path: "vFOV", value: parseFloat(match[1])}}),
@@ -606,18 +609,6 @@ class CClientNLU {
                 name: "set_value_equals",
                 regex: /^(?:set\s+)?(\S+)=(\S+)$/i,
                 extract: (match) => ({intent: "SET_VALUE", slots: {path: match[1], value: this._parseValue(match[2])}}),
-                confidence: 0.95
-            },
-            {
-                name: "set_frame",
-                regex: /^(?:go\s+to\s+)?frame\s+(\d+)$/i,
-                extract: (match) => ({intent: "SET_FRAME", slots: {frame: parseInt(match[1])}}),
-                confidence: 0.95
-            },
-            {
-                name: "set_datetime_iso",
-                regex: /^(?:set\s+)?(?:date\s*(?:time)?|time)\s+(?:to\s+)?(\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2}|Z)?)?)$/i,
-                extract: (match) => ({intent: "SET_DATETIME", slots: {dateTime: match[1]}}),
                 confidence: 0.95
             },
             {
@@ -781,81 +772,6 @@ class CClientNLU {
                 confidence: 0.95
             },
             {
-                name: "set_time_simple",
-                // The "time" keyword is CAPTURED (match[1]) so extract can tell whether the
-                // user actually named the clock - every word here is optional, so without
-                // that test a lone "2" matches and sets the time to 02:00.
-                regex: /^(?:set\s+)?(time\s+(?:to\s+)?)?(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?$/i,
-                extract: (match) => {
-                    // With no "time" keyword, only a time-SHAPED value is a time command:
-                    // "2:30" or "2pm", not a bare "2". A lone number is far more likely to
-                    // be the user picking option 2 from a list the assistant just offered,
-                    // and reading it as 02:00 silently moves the sitch clock instead of
-                    // answering. Same reasoning as the bare-number guard in math_expression.
-                    if (!match[1] && !match[3] && !match[5]) return null;
-
-                    let hours = parseInt(match[2]);
-                    const minutes = match[3] ? parseInt(match[3]) : 0;
-                    const seconds = match[4] ? parseInt(match[4]) : 0;
-                    const ampm = match[5]?.toLowerCase();
-                    if (ampm === "pm" && hours < 12) hours += 12;
-                    if (ampm === "am" && hours === 12) hours = 0;
-                    return {intent: "SET_TIME_RELATIVE", slots: {hours, minutes, seconds}};
-                },
-                confidence: 0.85
-            },
-            {
-                name: "goto_location_simple",
-                // "to" is optional: people type "go 51.8, -1.8" as readily as "go to ...".
-                // Whatever follows goes to the shared coordinate parser - decimal,
-                // D M S, hemisphere letters, MGRS, "lat, lon, alt" - and if it is
-                // not a coordinate, returning null lets goto_location_named below
-                // treat it as a place.
-                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(.+)$|^set\s+location(?:\s+to)?\s+(.+)$/i,
-                extract: (match) => {
-                    const text = (match[1] ?? match[2] ?? "").trim();
-                    const located = parseLatLonAlt(text, {loose: true});
-                    if (!located) return null;
-                    return {
-                        intent: "GOTO_LLA",
-                        slots: {
-                            lat: located.lat,
-                            lon: located.lon,
-                            alt: located.alt ?? 0,
-                            name: text
-                        }
-                    };
-                },
-                confidence: 0.95
-            },
-            {
-                name: "goto_location_named",
-                // "to" is optional after go/move, so "go bingley" behaves like "go to
-                // bingley". "goto" and "fly to" are accepted for the same reason: they are
-                // what people type, and sending them to the model instead spends a turn to
-                // reach the identical geocoder call.
-                regex: /^(?:go|move|goto|fly)(?:\s+to)?\s+(.+)$|^set\s+location(?:\s+to)?\s+(.+)$/i,
-                extract: (match) => {
-                    const location = (match[1] ?? match[2] ?? '').trim();
-                    if (!location) return null;
-                    // A bare "go" followed by a direction or a command is not a place.
-                    // Returning null lets _tryMatch fall through to the later patterns.
-                    const first = location.split(/\s+/)[0].toLowerCase();
-                    if (NOT_A_PLACE_AFTER_BARE_GO.has(first) || COMMAND_KEYWORDS.includes(first)) {
-                        return null;
-                    }
-                    // Let the model separate longer requests. Otherwise their time or
-                    // next command becomes part of both the geocoder query and pin label.
-                    const nextCommand = location.match(/\s(?:and|then)\s+(\w+)/i)?.[1]?.toLowerCase();
-                    if ((nextCommand && COMMAND_KEYWORDS.includes(nextCommand))
-                        || /\s(?:at\s+(?:\d|noon\b|midnight\b)|on\s+\d)|\b(?:today|tomorrow|yesterday|tonight)\b/i.test(location)) {
-                        return null;
-                    }
-                    return {intent: "GOTO_NAMED_LOCATION", slots: {location}};
-                },
-                confidence: 0.6
-            },
-            {
                 name: "point_at_object",
                 regex: /^(?:point|look)\s+(?:at|towards?)\s+(?:the\s+)?(.+)$/i,
                 extract: (match) => ({intent: "POINT_AT", slots: {target: match[1].trim()}}),
@@ -923,6 +839,16 @@ class CClientNLU {
             geoName = GEOMETRY_TYPES.find(g => lower.includes(g.toLowerCase()));
         }
         return geoName || null;
+    }
+
+    _resolveMapSource(source) {
+        const resolved = this._resolveMenuPath("mapType");
+        const normalize = value => String(value).toLowerCase().replace(/[\s_-]+/g, "");
+        const requested = new Set([normalize(source), normalize(source.replace(/\s+(?:map|maps|imagery)$/i, ""))]);
+        const values = resolved?.controller._values ?? [];
+        const names = resolved?.controller._names ?? [];
+        const index = values.findIndex((value, i) => requested.has(normalize(value)) || requested.has(normalize(names[i])));
+        return index < 0 ? null : {...resolved, value: values[index]};
     }
 
     _resolveMenuPath(target) {
@@ -1008,6 +934,10 @@ class CClientNLU {
                 };
             }
         }
+        // Only after the other commands: a bare place should navigate, while
+        // "play", greetings, and conversational answers keep their own meaning.
+        const request = parseGoToString(trimmed, {chat: true, allowBarePlace: true});
+        if (request) return {intent: "GO_TO", slots: request, confidence: 0.6, patternName: "go_to", originalText: trimmed};
         return {intent: null, slots: {}, confidence: 0, originalText: trimmed};
     }
 
@@ -1015,6 +945,12 @@ class CClientNLU {
         const {intent, slots} = parseResult;
 
         switch (intent) {
+            case "SET_MAP_SOURCE": {
+                const resolved = this._resolveMapSource(slots.source);
+                if (!resolved) return {success: false, needsLLM: true, error: `Map source not available: ${slots.source}`};
+                return sitrecAPI.call("setMenuValue", {menu: resolved.menu, path: resolved.path, value: resolved.value});
+            }
+
             case "SET_VALUE": {
                 const resolved = this._resolveMenuPath(slots.path);
                 if (resolved) {
@@ -1105,23 +1041,8 @@ class CClientNLU {
             case "PAUSE":
                 return sitrecAPI.call("pause", {});
 
-            case "SET_FRAME":
-                return sitrecAPI.call("setFrame", {frame: slots.frame});
-
-            case "SET_TIME_RELATIVE": {
-                const now = new Date();
-                now.setHours(slots.hours, slots.minutes, slots.seconds, 0);
-                return sitrecAPI.call("setDateTime", {dateTime: now.toISOString()});
-            }
-
-            case "SET_DATETIME":
-                return sitrecAPI.call("setDateTime", {dateTime: slots.dateTime});
-
-            case "GOTO_LLA":
-                return sitrecAPI.call("gotoLLA", {lat: slots.lat, lon: slots.lon, alt: slots.alt, name: slots.name});
-
-            case "GOTO_NAMED_LOCATION":
-                return this._geocodeAndGoto(slots.location);
+            case "GO_TO":
+                return executeGoToRequest(slots);
 
             case "POINT_AT": {
                 const target = slots.target;
@@ -1169,29 +1090,6 @@ class CClientNLU {
         }
     }
 
-    async _geocodeAndGoto(locationName) {
-        // The secure build makes no geocoding request. Said outright, through the same
-        // {success, error} shape generateResponse() already shows the user, rather than
-        // failing on the network (see docs/dev/Secure-Build.md).
-        if (isSecureBuild) {
-            return {success: false, error: `Looking up a place by name is not available in this build (${locationName})`};
-        }
-        try {
-            const response = await fetch(
-                `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationName)}&limit=1`,
-                {headers: {"User-Agent": "Sitrec/1.0"}}
-            );
-            const data = await response.json();
-            if (data && data.length > 0) {
-                const {lat, lon} = data[0];
-                return sitrecAPI.call("gotoLLA", {lat: parseFloat(lat), lon: parseFloat(lon), alt: 0, name: locationName});
-            }
-            return {success: false, error: `Location not found: ${locationName}`, needsLLM: true};
-        } catch (e) {
-            return {success: false, error: `Geocoding failed: ${e.message}`, needsLLM: true};
-        }
-    }
-
     generateResponse(parseResult, executeResult) {
         const {intent, slots} = parseResult;
 
@@ -1202,6 +1100,8 @@ class CClientNLU {
         switch (intent) {
             case "SMALL_TALK":
                 return slots.reply;
+            case "SET_MAP_SOURCE":
+                return `Switched map to ${slots.source}`;
             case "SET_VALUE":
                 return `Set ${slots.path} to ${slots.value}`;
             case "TOGGLE_ON":
@@ -1228,15 +1128,8 @@ class CClientNLU {
                 return "Playing";
             case "PAUSE":
                 return "Paused";
-            case "SET_FRAME":
-                return `Jumped to frame ${slots.frame}`;
-            case "SET_TIME_RELATIVE":
-            case "SET_DATETIME":
-                return "Time updated";
-            case "GOTO_LLA":
-                return `Moved to ${slots.lat}, ${slots.lon}`;
-            case "GOTO_NAMED_LOCATION":
-                return `Moved to ${slots.location}`;
+            case "GO_TO":
+                return executeResult.message;
             case "POINT_AT":
                 return `Pointing at ${slots.target}`;
             case "LOCK_ON":

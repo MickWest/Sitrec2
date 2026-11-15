@@ -173,8 +173,6 @@ describe("i18n help strings", () => {
             "menus.help.documentation.thirdPartyNoticesTooltip",
             "menus.help.documentation.downloadBridge",
             "menus.help.documentation.downloadBridgeTooltip",
-            "menus.help.documentation.menuHelpTitle",
-            "menus.help.documentation.menuHelpTooltip",
         ]);
 
         const orphans = [];

@@ -12,6 +12,8 @@ var mockSetNewSitchObject = jest.fn();
 var mockSetRenderOne = jest.fn();
 var mockWithTestUser = jest.fn((url) => url);
 var mockSetStartDateTime = jest.fn();
+var mockSetTimeZoneFromLocation = jest.fn(async () => 'Europe/London');
+var mockPopulateDateTime = jest.fn();
 var mockShowChoice = jest.fn();
 var mockIsSitchExternal = jest.fn(() => false);
 var mockGetSitchSourceLabel = jest.fn(() => null);
@@ -59,7 +61,12 @@ jest.mock('../src/Globals', () => {
     return {
         CustomManager: mockCustomManager,
         FileManager: mockFileManager,
-        GlobalDateTimeNode: {setStartDateTime: (...args) => mockSetStartDateTime(...args)},
+        GlobalDateTimeNode: {
+            dateNow: new Date('2025-06-10T17:00:00Z'),
+            setStartDateTime: (...args) => mockSetStartDateTime(...args),
+            setTimeZoneFromLocation: (...args) => mockSetTimeZoneFromLocation(...args),
+            populate: (...args) => mockPopulateDateTime(...args),
+        },
         Globals: mockGlobalsState,
         guiMenus: mockGuiMenus = {},
         markSitchDirty: (...args) => mockMarkSitchDirty(...args),
@@ -192,6 +199,8 @@ describe('CSitrecAPI location pins', () => {
         const result = await sitrecAPI.call('gotoLLA', {lat: 51.5, lon: -0.12, alt: 1500, name: 'London'});
         expect(result.success).toBe(true);
         expect(camera.gotoLLA).toHaveBeenCalledWith(51.5, -0.12, 1500);
+        expect(mockSetTimeZoneFromLocation).toHaveBeenCalledWith(51.5, -0.12, new Date('2025-06-10T17:00:00Z'));
+        expect(mockPopulateDateTime).toHaveBeenCalledWith(true);
         expect(FeatureManager.addLocationPin).toHaveBeenCalledTimes(1);
         expect(FeatureManager.addLocationPin).toHaveBeenCalledWith({lat: 51.5, lon: -0.12, name: 'London'});
     });
@@ -202,6 +211,7 @@ describe('CSitrecAPI location pins', () => {
         const result = await sitrecAPI.call('gotoLLA', {lat: NaN, lon: -0.12, name: 'London'});
         expect(result.result.success).toBe(false);
         expect(camera.gotoLLA).not.toHaveBeenCalled();
+        expect(mockSetTimeZoneFromLocation).not.toHaveBeenCalled();
         expect(FeatureManager.addLocationPin).not.toHaveBeenCalled();
     });
 });

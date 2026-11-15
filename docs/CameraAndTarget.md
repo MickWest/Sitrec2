@@ -302,7 +302,6 @@ To drive this tool from a script, see [Fit Points API](FitPointsAPI.md).
 | **MQ9 Tracking** (folder) | — | Simulates an operator acquiring and tracking a scene object. See [MQ9 Tracking Simulation](MQ9TrackingSimulation.md). |
 | **IR/TV Mode Switches** (folder) | — | Marks the look view as infrared (IR) or visible light (TV) from a chosen frame onward. Each switch holds until the next one. The **WescamMXUI** and **ATFLIRUI** overlays (**Show → Views**) show the mode. On TV frames, the look view skips its infrared effects. An IR switch adds no infrared look: the look view keeps its own effects. |
 | **Camera Data** (folder) | Hidden | Appears when a file of camera data is loaded. It shows the rows that came from the file, and has **Drive Look View** and **Remove Camera Data**. |
-| **Help** (folder) | — | Links to the documentation for this menu. |
 
 ---
 

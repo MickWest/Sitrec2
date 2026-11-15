@@ -196,6 +196,19 @@ test("setTimeZoneFromLocation looks the zone up and applies it", async () => {
     expect(node.getTimeZoneName()).toBe("JST UTC+9");
 });
 
+test("a destination date selects BST before the sitch clock moves out of winter", () => {
+    const node = makeNode(JANUARY);
+    expect(node.setTimeZoneFromZone("Europe/London", new Date('2025-06-10T17:00:00Z'))).toBe("BST UTC+1");
+    expect(node.getTimeZoneOffset()).toBe(1);
+    expect(node.dateStart).toEqual(JANUARY);
+});
+
+test("a location lookup can use the playhead date instead of the start date", async () => {
+    const node = makeNode(JANUARY);
+    expect(await node.setTimeZoneFromLocation(53.85, -1.84, JULY)).toBe("Europe/London");
+    expect(node.getTimeZoneName()).toBe("BST UTC+1");
+});
+
 test("a zone set while a lookup runs wins over the lookup", async () => {
     // Set by an offset (as by a date with an offset, or the AI assistant).
     const byOffset = makeNode(JULY);

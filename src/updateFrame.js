@@ -5,8 +5,7 @@ import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {UpdatePRFromEA} from "./JetStuff";
 import {Frame2Az, Frame2El} from "./JetUtils";
 import {clampSitFrameRange} from "./UpdateSitFrames";
-import {showError, showPrompt} from "./showError";
-import {applyGoToString} from "./GoTo";
+import {showGoToDialog} from "./GoToDialog";
 
 
 let hookedKeys = false;
@@ -45,18 +44,7 @@ export function updateFrame(elapsed) {
                 // browser's default action types the "g" that opened the dialog
                 // straight into it.
                 e?.preventDefault();
-                // Opens blank: the box takes places, coordinates and times as
-                // well as frames, so pre-filling the current frame number would
-                // just be something to clear.
-                showPrompt("Frame, date/time, coordinates, place name, or TLE:", {
-                    title: "Go To",
-                }).then(async (result) => {
-                    if (result === null || result.trim() === "") return;
-                    const text = result.trim();
-                    if (!await applyGoToString(text)) {
-                        showError(`Go To: "${text}" is not a frame number, a date/time, a coordinate, a TLE, or a place we could find.`);
-                    }
-                });
+                showGoToDialog();
             });
 
             hookedKeys = true;

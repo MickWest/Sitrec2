@@ -590,6 +590,7 @@ export class CNodeDateTime extends CNode {
                 playbackSpeed: par.playbackSpeed ?? 1, canUndo: this.canUndoTimeEdit(),
             }),
             pause: () => this.pauseTimeEditing(),
+            location: () => this.getTimeLocation(),
             previewTime: (source, preview) => NodeMan.get("FrameSlider", false)?.setTimeEditPreview(source, preview),
             edit: (date, target, begin) => this.editTime(date, target, begin),
             undo: () => this.undoTimeEdit(),
@@ -972,18 +973,18 @@ export class CNodeDateTime extends CNode {
         return ticket === this.timeZoneSerial;
     }
 
-    // Show times in an IANA zone ("Europe/Berlin"). The offset is the zone's offset on
-    // the sitch START date, so it has that date's daylight saving rule. Returns the name
-    // now in the Time Zone menu, or null when the browser does not know the zone.
-    setTimeZoneFromZone(zone) {
-        const offset = utcOffsetHoursInZone(zone, this.dateStart);
+    // Show times in an IANA zone ("Europe/Berlin"), using the specified date's
+    // daylight saving rule. Go To can supply its destination date before applying
+    // the new clock time; other callers default to the sitch start date.
+    setTimeZoneFromZone(zone, date = this.dateStart) {
+        const offset = utcOffsetHoursInZone(zone, date);
         if (offset === null) {
             console.warn(`CNodeDateTime - this browser has no rules for the time zone ${zone}`);
             return null;
         }
         this._bumpTimeZoneSerial();
         this.timeZoneOffset = offset;
-        this.timeZoneName = timeZoneKeyForZone(zone, this.dateStart, offset) ?? genericTimeZoneName(offset);
+        this.timeZoneName = timeZoneKeyForZone(zone, date, offset) ?? genericTimeZoneName(offset);
         this.populate(true);
         forceUpdateUIText();
         setRenderOne(true);
@@ -1005,12 +1006,24 @@ export class CNodeDateTime extends CNode {
     // loads on first use, so this is async. Returns the IANA zone, or null if nothing
     // was changed: no zone found, a different sitch loaded, or the zone was set some
     // other way while the lookup ran (see startTimeZoneLookup).
-    async setTimeZoneFromLocation(latDeg, lonDeg) {
+    async setTimeZoneFromLocation(latDeg, lonDeg, date) {
         const ticket = this.startTimeZoneLookup();
         const generation = Globals.loadGeneration;
         const zone = await lookupTimeZone(latDeg, lonDeg);
         if (!zone || generation !== Globals.loadGeneration || !this.isTimeZoneLookupCurrent(ticket)) return null;
-        return this.setTimeZoneFromZone(zone) ? zone : null;
+        return this.setTimeZoneFromZone(zone, date) ? zone : null;
+    }
+
+    // Named times use the current map location, including the last Go To destination.
+    getTimeLocation() {
+        const terrain = NodeMan.get("terrainUI", false);
+        if (Number.isFinite(terrain?.lat) && Number.isFinite(terrain?.lon)) return {lat: terrain.lat, lon: terrain.lon};
+        const position = NodeMan.get("lookCamera", false)?.camera?.position;
+        if (position && position.lengthSq() > 0) {
+            const lla = ECEFToLLAVD_radii(position);
+            return {lat: lla.x, lon: lla.y};
+        }
+        return {lat: Sit.lat, lon: Sit.lon};
     }
 
     // Menu item: the zone at the look camera, which is where the sighting was seen from.

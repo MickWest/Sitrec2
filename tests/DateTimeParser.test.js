@@ -1,4 +1,4 @@
-import {applyDateTimeString, parseDateTimeString} from "../src/DateTimeParser";
+import {applyDateTimeString, parseDateTimeString, resolveDateTimeString} from "../src/DateTimeParser";
 
 describe("parseDateTimeString", () => {
     describe("times", () => {
@@ -125,8 +125,10 @@ describe("parseDateTimeString", () => {
             expect(parseDateTimeString("2025-02-30")).toBeNull();
         });
 
-        test("a numeric zone offset is declined rather than silently ignored", () => {
-            expect(parseDateTimeString("2024-01-06T15:20:00+05:00")).toBeNull();
+        test("a numeric zone offset is kept, including fractional hours", () => {
+            expect(parseDateTimeString("2024-01-06T15:20:00+05:45").offsetHours).toBe(5.75);
+            expect(parseDateTimeString("2024-01-06T15:20:00-08:00").offsetHours).toBe(-8);
+            expect(parseDateTimeString("2024-01-06T15:20:00+08:75")).toBeNull();
         });
     });
 
@@ -178,6 +180,139 @@ describe("parseDateTimeString", () => {
     });
 });
 
+describe("resolveDateTimeString", () => {
+    const options = {
+        baseDate: new Date("2024-07-15T03:04:05.123Z"),
+        now: new Date("2026-01-01T01:15:00.456Z"),
+        offsetHours: -8,
+    };
+
+    test.each([
+        ["yesterday", "2025-12-31T03:04:05.123Z"],
+        ["today", "2026-01-01T03:04:05.123Z"],
+        ["tomorrow", "2026-01-02T03:04:05.123Z"],
+        ["tomorrow at noon", "2026-01-01T20:00:00.000Z"],
+        ["noon yesterday", "2025-12-30T20:00:00.000Z"],
+        ["tomorrow at midnight UTC", "2026-01-02T00:00:00.000Z"],
+        ["tomorrow at 00:15+05:45", "2026-01-01T18:30:00.000Z"],
+        ["NOW", "2026-01-01T01:15:00.456Z"],
+        ["now UTC", "2026-01-01T01:15:00.456Z"],
+        ["2026-11-08 00:15:30.42+05:45", "2026-11-07T18:30:30.420Z"],
+    ])("%s resolves against the real calendar in the input zone", (text, expected) => {
+        expect(resolveDateTimeString(text, options).toISOString()).toBe(expected);
+    });
+
+    test.each(["Tomorrowland", "Now York", "Yesterday Cafe", "tomorrow London", "yesterday tomorrow",
+        "now noon", "now tomorrow", "tomorrow Jan 6", "noon midnight", "2024-01-06T15:20Z+08:00"])(
+        "rejects unrelated or conflicting text: %s", text => {
+            expect(resolveDateTimeString(text, options)).toBeNull();
+        });
+});
+
+describe("location-dependent times", () => {
+    const context = {
+        baseDate: new Date('2025-06-10T12:00:00Z'),
+        location: {lat: 53.8479533, lon: -1.8384526},
+        timeZone: 'Europe/London',
+    };
+
+    test.each([
+        ['Sunrise', '2025-06-10T03:37:00Z'],
+        ['Sunset', '2025-06-10T20:37:00Z'],
+        ['Moonrise', '2025-06-10T20:45:00Z'],
+        ['Moonset', '2025-06-10T02:16:00Z'],
+        ['dawn', '2025-06-10T02:44:00Z'],
+        ['dusk', '2025-06-10T21:30:00Z'],
+        ['morning', '2025-06-10T04:37:00Z'],
+        ['evening', '2025-06-10T19:37:00Z'],
+        ['night', '2025-06-10T22:30:00Z'],
+    ])('%s uses the observer and local calendar date', (text, expected) => {
+        expect(parseDateTimeString(text).namedTime).toBe(text.toLowerCase());
+        expect(Math.abs(resolveDateTimeString(text, context) - new Date(expected))).toBeLessThan(60000);
+    });
+
+    test('an explicit date changes the season and its daylight saving offset', () => {
+        const winter = resolveDateTimeString('January 10 sunrise', context);
+        expect(winter.toISOString().startsWith('2025-01-10T08:')).toBe(true);
+        expect(resolveDateTimeString('June 10 sunset', {...context, baseDate: winter}).toISOString())
+            .toBe(resolveDateTimeString('sunset', context).toISOString());
+    });
+
+    test.each([
+        ['an hour after sunset', 'sunset', 3600000],
+        ['a minute before sunrise', 'sunrise', -60000],
+        ['30 minutes before sunrise', 'sunrise', -1800000],
+        ['half an hour before moonrise', 'moonrise', -1800000],
+        ['a quarter of an hour after moonset', 'moonset', 900000],
+        ['quarter hour before dusk', 'dusk', -900000],
+        ['two hours after dawn', 'dawn', 7200000],
+        ['1.5 hours after sunset', 'sunset', 5400000],
+        ['two and a half hours before sunset', 'sunset', -9000000],
+        ['an hour and a half after sunset', 'sunset', 5400000],
+        ['1 hour and 30 minutes after sunset', 'sunset', 5400000],
+        ['1h30m after sunset', 'sunset', 5400000],
+        ['twenty-five minutes after sunset', 'sunset', 1500000],
+        ['45 seconds before midnight', 'midnight', -45000],
+        ['15 min before noon', 'noon', -900000],
+        ['1 day after sunset', 'sunset', 86400000],
+        ['0 hours after sunset', 'sunset', 0],
+    ])('%s shifts the resolved anchor by elapsed time', (text, anchor, shift) => {
+        expect(parseDateTimeString(text).timeShiftMS).toBe(shift);
+        const result = resolveDateTimeString(text, context);
+        expect(result).not.toBeNull();
+        expect(result - resolveDateTimeString(anchor, context)).toBe(shift);
+    });
+
+    test('the anchor keeps its date when the modifier crosses midnight', () => {
+        const result = resolveDateTimeString('June 10 2025 four hours after sunset', context);
+        expect(result.toISOString().startsWith('2025-06-11T00:37:')).toBe(true);
+        const previousDay = resolveDateTimeString('45 seconds before midnight', context);
+        expect(previousDay.toISOString()).toBe('2025-06-09T22:59:15.000Z');
+    });
+
+    test('offsets from now use the real instant and offsets across DST use elapsed hours', () => {
+        const now = new Date('2026-11-15T10:00:00Z');
+        expect(resolveDateTimeString('ten minutes before now', {...context, now}).toISOString())
+            .toBe('2026-11-15T09:50:00.000Z');
+        expect(resolveDateTimeString('March 9 2025 an hour after 1:30am', {...context, timeZone: 'America/New_York'}).toISOString())
+            .toBe('2025-03-09T07:30:00.000Z');
+    });
+
+    test.each(['before sunset', 'an hour after', '-1 hour after sunset', 'two parsecs before sunset',
+        'one hour and before sunset', 'one hour after one hour before sunset', 'a while before sunset'])(
+        'incomplete modifiers fail as a whole: %s', text => {
+            expect(parseDateTimeString(text)).toBeNull();
+        });
+
+    test('a modifier cannot invent a missing polar event', () => {
+        expect(resolveDateTimeString('an hour after sunrise', {...context, location: {lat: 89, lon: 0}})).toBeNull();
+    });
+
+    test('relative dates use the actual local date, not the sitch date or host timezone', () => {
+        const options = {...context, timeZone: 'Asia/Tokyo', location: {lat: 35.68, lon: 139.69},
+            now: new Date('2026-11-15T23:30:00Z')};
+        expect(resolveDateTimeString('tomorrow dawn', options).toISOString())
+            .toBe(resolveDateTimeString('November 17 2026 dawn', options).toISOString());
+    });
+
+    test('UTC boundaries do not change the requested local calendar date', () => {
+        const date = resolveDateTimeString('June 10 sunset', {...context, timeZone: 'Pacific/Honolulu',
+            location: {lat: 21.3, lon: -157.8}});
+        expect(date.toISOString().startsWith('2025-06-11T')).toBe(true);
+        expect(new Date(date.getTime() - 10 * 3600000).toISOString().slice(0, 10)).toBe('2025-06-10');
+    });
+
+    test('a nonexistent polar event and a missing location fail without inventing a time', () => {
+        expect(resolveDateTimeString('sunrise', {...context, location: {lat: 89, lon: 0}})).toBeNull();
+        expect(resolveDateTimeString('sunset', {baseDate: context.baseDate})).toBeNull();
+    });
+
+    test.each(['sunset 6PM', 'sunrise sunset', 'now moonrise', 'moonset noon', 'Sunset Boulevard'])(
+        'rejects conflicting times or leftover place text: %s', text => {
+            expect(parseDateTimeString(text)).toBeNull();
+        });
+});
+
 describe("applyDateTimeString", () => {
     // Stand-in for CNodeDateTime: the fields the Time menu binds its sliders to,
     // plus the updateDateTime() seam a slider edit goes through.
@@ -227,6 +362,20 @@ describe("applyDateTimeString", () => {
         const node = makeNode();
         expect(applyDateTimeString("2020-01-06T17:33:00.000Z", node)).toBe(true);
         expect(node.resolved()).toBe("2020-01-06T17:33:00.000Z");
+    });
+
+    test("Go To applies relative dates and now through its normal edit path", () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-01-01T01:15:00.456Z"));
+        try {
+            const node = makeNode({useTimeZone: true, offsetHours: -8});
+            expect(applyDateTimeString("tomorrow at noon", node)).toBe(true);
+            expect(node.resolved()).toBe("2026-01-01T20:00:00.000Z");
+            expect(applyDateTimeString("now", node)).toBe(true);
+            expect(node.resolved()).toBe("2026-01-01T01:15:00.456Z");
+            expect(node.updated).toBe(2);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     describe("impossible dates are declined, never rolled over", () => {

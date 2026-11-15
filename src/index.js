@@ -53,7 +53,7 @@ import {
 } from "./Globals";
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
-import {helpDocs, DOC_SECTIONS, getDocsForMenu, docMenuIds} from "./docsRegistry";
+import {helpDocs, DOC_SECTIONS} from "./docsRegistry";
 import {showDocumentationSearch} from "./documentation/DocumentationSearchDialog";
 import {EXTRA_TOOLS} from "./extraTools";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
@@ -2247,18 +2247,6 @@ async function initializeOnce() {
         const folder = addTranslatedGUIFolder("docsSection_" + s.id, s.labelKey, "doumentation").perm()
             .tooltip(t("menus.help.docSectionTips." + s.id));
         for (const d of inSection) addDocLink(folder, d.labelKey, d.file);
-    }
-
-    // Contextual help: a "Help" folder at the top of each app menu that has docs, so the
-    // documentation is reachable from where the controls are rather than only from the
-    // Help menu. Driven entirely by `menuId` in the registry.
-    for (const menuId of new Set(helpDocs.flatMap(docMenuIds))) {
-        const menu = guiMenus[menuId];
-        if (menu === undefined) continue;      // menu not created in this build/sitch
-        const folder = addTranslatedGUIFolder(
-            "menuHelp_" + menuId, "menus.help.documentation.menuHelpTitle", menuId
-        ).tooltip(t("menus.help.documentation.menuHelpTooltip")).perm();
-        for (const d of getDocsForMenu(menuId)) addDocLink(folder, d.labelKey, d.file);
     }
 
     if (localDocsEnabled) {

@@ -18,6 +18,7 @@ import {
 } from "./AltShortcuts";
 import {showViewMessage} from "./ViewMessage";
 import {t} from "./i18n";
+import {MODAL_OPEN_EVENT} from "./ModalKeyboard";
 
 // The frames Shift+, / Shift+. stop at: timeline markers, the In and Out
 // frames, and every keyframe published to the KeyframeRegistry.
@@ -158,6 +159,7 @@ class CKeyBoardManager {
 }
 
 const KeyMan = new CKeyBoardManager()
+const clearModalKeys = () => KeyMan.clearAll();
 
 export { KeyMan }
 
@@ -311,6 +313,7 @@ function isTextInputFocused() {
 }
 
 export function initKeyboard() {
+    document.addEventListener(MODAL_OPEN_EVENT, clearModalKeys);
     document.onkeydown = function (e) {
 
         // If focus is on a text input, don't process keyboard shortcuts

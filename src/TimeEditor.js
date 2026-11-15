@@ -1,6 +1,7 @@
 import {modernControlStyle} from "./ModernControlStyle";
 import {timeEditorStyle} from "./TimeEditorStyle";
-import {parseTimeEntry, replaceTimePart, shiftTimePart, wallTimeISO} from "./TimeEditing";
+import {replaceTimePart, shiftTimePart, wallTimeISO} from "./TimeEditing";
+import {resolveDateTimeString} from "./DateTimeParser";
 import {panelKeepsKey, releaseKeyToScene, watchFocusSource} from "./NativeKeyRouting";
 import {t} from "./i18n";
 import {localizeElements} from "./NativeText";
@@ -155,7 +156,10 @@ export class TimeEditor {
         if (!this.apply(date)) input.setAttribute("aria-invalid", "true");
     }
     paste() {
-        this.apply(parseTimeEntry(this.el("paste").value, this.adapter.read().offset));
+        const state = this.adapter.read();
+        this.apply(resolveDateTimeString(this.el("paste").value, {
+            baseDate: this.date(state), offsetHours: state.offset, location: this.adapter.location?.(),
+        }));
     }
     step(part, amount, begin = true) {
         const state = this.adapter.read();
@@ -240,15 +244,16 @@ export class TimeEditor {
         this.raf = null;
         this.refreshTimelinePreview();
     }
-    refreshTimelinePreview(wall) {
+    refreshTimelinePreview(wall, state) {
         if (!this.adapter.previewTime) return;
         const active = this.hoveredTimeField || this.cleanupGesture || this.timeFields?.includes(this.root.ownerDocument.activeElement);
         if (active && this.root.getClientRects().length) {
+            state ??= this.adapter.read();
             if (!wall) {
-                const state = this.adapter.read();
                 wall = wallTimeISO(this.date(state), state.offset);
             }
-            this.adapter.previewTime(this, {target: this.target, text: `${wall.slice(0, 10)}\n${wall.slice(11, 19)}`});
+            const zone = state.useZone ? state.zone : "UTC";
+            this.adapter.previewTime(this, {target: this.target, text: `${wall.slice(0, 10)}\n${wall.slice(11, 19)} ${zone}`});
         } else this.adapter.previewTime(this, null);
     }
     // refresh() runs ten times each second while the editor is in view. A write of the same
@@ -278,7 +283,7 @@ export class TimeEditor {
         this.setProperty(this.el("zone"), "value", zone);
         const elapsed = (state.now - state.start) / 1000;
         const text = this.text;
-        this.setText(this.el("frame"), t("timeEditor.frame", {frame: state.frame}));
+        this.setText(this.el("frame"), t("timeEditor.frame", {frame: Math.round(state.frame * 1000) / 1000}));
         this.setTitle(this.el("frame"), t("timeEditor.frameTip", {elapsed: `${elapsed >= 0 ? "+" : ""}${elapsed.toFixed(3)}`}));
         this.setText(this.root.querySelector('[data-action="play"]'), state.live || !state.paused ? text.pause : text.play);
         this.setAttribute(this.root.querySelector('[data-action="live"]'), "aria-pressed", String(state.live));
@@ -295,7 +300,7 @@ export class TimeEditor {
         }
         this.setProperty(speed, "value", String(state.speed));
         this.setProperty(speed, "disabled", state.live);
-        this.refreshTimelinePreview(wall);
+        this.refreshTimelinePreview(wall, state);
     }
     dispose() {
         this.stopGesture(); clearInterval(this.timer);

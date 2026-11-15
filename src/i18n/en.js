@@ -962,8 +962,6 @@ const en = {
                     analysis: "Analysis",
                     advanced: "Advanced",
                 },
-                menuHelpTitle: "Help",
-                menuHelpTooltip: "Documentation pages about this menu. Each link opens a page in a new tab.",
                 thirdPartyNotices: "Third-Party Notices",
                 thirdPartyNoticesTooltip: "Open-source license attributions for bundled third-party software",
                 downloadBridge: "Download MCP Bridge",
@@ -1660,7 +1658,7 @@ const en = {
         paste: {
             placeholder: "Paste a date & time",
             label: "Paste date and time",
-            tooltip: "Paste or type an ISO date and time, for example 2026-11-08 21:30:00.000Z. Include Z for UTC or an offset; otherwise the selected zone is used. Enter applies.",
+            tooltip: "Paste or type a date or time as in Go To: 12pm, Jan 6, 2020, tomorrow at noon, yesterday, or now. ISO dates and times also work. Include UTC, Z or a numeric offset to override the selected zone. Date-only entries keep the time of day; relative days use the real calendar date. Enter applies.",
         },
         nowOnce: {
             label: "Now",

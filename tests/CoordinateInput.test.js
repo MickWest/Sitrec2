@@ -4,7 +4,27 @@
  * Covers the GUI half of coordinate entry: what a lil-gui Lat/Lon field does
  * when the user types or pastes something that isn't a plain number.
  */
-import {attachCoordinateInput, attachLatLonInputs, isPlainNumber} from "../src/CoordinateInput";
+jest.mock('../src/runtimeConfig', () => ({customLocationFunction: jest.fn()}));
+jest.mock('../src/configUtils', () => ({isSecureBuild: false}));
+
+import {attachCoordinateInput, attachLatLonInputs, isPlainNumber, resolveLocationString} from "../src/CoordinateInput";
+const configUtils = require('../src/configUtils');
+import {customLocationFunction} from '../src/runtimeConfig';
+
+test('all navigation entry points respect the build restriction on place lookup', async () => {
+    configUtils.isSecureBuild = true;
+    try {
+        expect(await resolveLocationString('Bingley')).toBeNull();
+        expect(customLocationFunction).not.toHaveBeenCalled();
+        expect(await resolveLocationString('40, -74')).toEqual(expect.objectContaining({lat: 40, lon: -74}));
+    } finally { configUtils.isSecureBuild = false; }
+});
+
+test('place lookup uses the configured resolver', async () => {
+    customLocationFunction.mockResolvedValueOnce([53.85, -1.84]);
+    expect(await resolveLocationString(' Bingley ')).toEqual(expect.objectContaining({lat: 53.85, lon: -1.84}));
+    expect(customLocationFunction).toHaveBeenCalledWith('Bingley');
+});
 
 // Stand-in for a lil-gui NumberController, including the parts that fight us:
 // its 'input' handler is registered FIRST, parses with parseFloat (bailing on

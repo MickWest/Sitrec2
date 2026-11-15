@@ -10,6 +10,7 @@
 
 import {parseLatLonAlt, parseLatLonPair, parseSingleCoordinate} from "./CoordinateParser";
 import {customLocationFunction} from "./runtimeConfig";
+import {isSecureBuild} from "./configUtils";
 import {NodeMan} from "./Globals";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 
@@ -152,8 +153,8 @@ export async function resolveLocationString(text) {
     const located = parseLatLonAlt(text, {loose: true});
     if (located) return {lat: located.lat, lon: located.lon, alt: located.alt, isCoordinate: true};
 
-    // Serverless builds have no geocoder, so a non-coordinate is simply unknown.
-    if (customLocationFunction === undefined) return null;
+    // All entry points share the same restriction on external place lookups.
+    if (isSecureBuild || customLocationFunction === undefined) return null;
 
     const location = await customLocationFunction(text.trim());
     if (!location) return null;

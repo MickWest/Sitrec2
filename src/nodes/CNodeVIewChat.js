@@ -611,12 +611,7 @@ class CNodeViewChat extends CNodeViewText {
         this.inputBox.addEventListener('keydown', (e) => {
             e.stopPropagation();
             if (e.key === 'Enter') {
-                const text = this.inputBox.value.trim();
-                if (text) {
-                    this.addUserMessage(text);
-                    this.sendToServer(text);
-                    this.inputBox.value = '';
-                }
+                this.submitMessage();
             } else if (e.key === 'ArrowUp') {
                 // Navigate chat history up
                 const userMessages = this.chatHistory.filter(msg => msg.role === 'user');
@@ -677,6 +672,14 @@ class CNodeViewChat extends CNodeViewText {
                 this.inputBox.focus();
             }
         });
+    }
+
+    submitMessage(text = this.inputBox.value) {
+        text = text.trim();
+        if (!text) return;
+        this.addUserMessage(text);
+        this.inputBox.value = '';
+        return this.sendToServer(text);
     }
 
     setInputTextAndFocus(text) {
@@ -865,14 +868,16 @@ class CNodeViewChat extends CNodeViewText {
 
     // Is the assistant's last message one the user might be answering?
     //
-    // Two ways: it asked outright (trailing "?", tolerating a closing bracket or quote,
-    // because "…the Line Width control?)" still asks), or it offered (above).
-    lastBotMessageInvitesAReply() {
+    // Questions take priority over every local command. Offers without a question
+    // still protect short acknowledgements such as "okay" from local small talk.
+    lastBotMessageInvitesAReply({questionsOnly = false} = {}) {
         for (let i = this.chatHistory.length - 1; i >= 0; i--) {
             const entry = this.chatHistory[i];
             if (entry?.role !== 'bot') continue;
             const text = String(entry.text || '');
-            if (/\?["'\)\]]*\s*$/.test(text)) return true;
+            // A question can be followed by an explanation or a list of choices.
+            if (/[?？]/.test(text)) return true;
+            if (questionsOnly) return false;
             const lower = text.toLowerCase();
             return CNodeViewChat.OFFER_PHRASES.some(phrase => lower.includes(phrase));
         }
@@ -914,6 +919,14 @@ class CNodeViewChat extends CNodeViewText {
             return;
         }
 
+        // The model owns its follow-up questions. Even a reply that looks like a
+        // complete command or destination needs that conversation's context first.
+        if (this.lastBotMessageInvitesAReply({questionsOnly: true})) {
+            this.addDebugMessage("Reply to an assistant question — sending to the model.");
+            await this.sendToLLM(text);
+            return;
+        }
+
         // Interrogatives ("how ...", "why ...") are knowledge / how-to questions, not
         // UI commands. Send them straight to the LLM (which can answer or read a help
         // doc) instead of letting the command-matching NLU fuzzy-match them into a
@@ -926,19 +939,11 @@ class CNodeViewChat extends CNodeViewText {
         const parseResult = clientNLU.parse(text);
         this.addDebugMessage(`NLU: ${parseResult.patternName || 'none'} (${parseResult.confidence})`);
 
-        // Small talk is answered locally — EXCEPT when it might be a reply to the
-        // assistant rather than filler. "Do you mean the Line Width control?" / "ok", or
-        // "Say the word and I'll move the camera." / "okay", are both consent, and the
-        // model is the only side holding the context to act on it. The NLU cannot see the
-        // conversation, so the check belongs here.
-        //
-        // Only the categories that CAN express consent are gated: a greeting, thanks or a
-        // farewell is never an answer to an offer, and gating those too would send most
-        // small talk to the model — which is the cost this whole feature exists to avoid,
-        // since assistants offer things constantly.
+        // Offers without a question can also invite consent: "Say the word and I'll
+        // move the camera." / "okay". Keep that narrower guard for acknowledgements.
         if (parseResult.intent === "SMALL_TALK" && parseResult.slots.couldBeConsent
             && this.lastBotMessageInvitesAReply()) {
-            this.addDebugMessage("Small talk after a question — sending to the model instead.");
+            this.addDebugMessage("Acknowledgement of an assistant offer — sending to the model.");
             await this.sendToLLM(text);
             return;
         }
@@ -953,9 +958,9 @@ class CNodeViewChat extends CNodeViewText {
                 // Only mark dirty for commands that change serialized sitch state
                 // Navigation/transient commands (camera, frame, time, math) don't count
                 const navigationalIntents = new Set([
-                    "MATH", "SET_FRAME", "SET_DATETIME", "SET_TIME_RELATIVE",
+                    "MATH", "GO_TO",
                     "ZOOM_IN", "ZOOM_OUT", "POINT_AT", "LOCK_ON", "UNLOCK",
-                    "PLAY", "PAUSE", "GOTO_LLA", "GOTO_NAMED_LOCATION",
+                    "PLAY", "PAUSE",
                     // Saying hello changes nothing; marking the sitch dirty for it would
                     // prompt to save a file that has not been altered.
                     "SMALL_TALK",
