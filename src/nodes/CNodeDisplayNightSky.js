@@ -142,7 +142,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         const satGUI = guiMenus.satellites;
         const selectionGUI = satGUI.addFolder("Selection & Filters").close();
-        const satelliteLabelsGUI = satGUI.addFolder("Labels").close();
+        const satelliteLabelsGUI = this.satelliteLabelsGUI = satGUI.addFolder("Labels").close();
         const tracksGUI = satGUI.getFolder("Tracks & Guides") ?? satGUI.addFolder("Tracks & Guides").close();
         const orbitDataGUI = satGUI.addFolder("Orbit Data").close();
         const brightnessGUI = satGUI.addFolder("Brightness").close();
@@ -959,6 +959,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.labelList = "";
         this.addSimpleSerial("labelList")
 
+        // Show > Celestial > Labels > Label Opacity. 1 (the default, and the value for a save
+        // that has none) draws the constellation, star, planet and satellite names as before;
+        // 0 hides them. CNodeDisplaySkyOverlay reads it on each draw, so one value serves
+        // every view. The GUI rows are added in addNightSky(), below Name Filter.
+        this.celestialLabelOpacity = 1;
+        this.addSimpleSerial("celestialLabelOpacity")
+
         this.updateVis()
 
 
@@ -1102,6 +1109,21 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     labelPassesAny(names) {
         if (this.labelListPrefixes === null) return true;
         return names.some(name => this.labelPasses(name));
+    }
+
+    // Label Opacity: the slider in Show > Celestial > Labels, and the same slider in
+    // Satellites > Labels, because it also sets the opacity of the satellite names. The second
+    // row is a mirror (MenuMirror.js): it is bound to the same value and runs the onChange of
+    // the first, so there is one piece of state. It is not marked fadeWhenFolderOff: it still
+    // acts on the star names when the satellite labels are off.
+    addLabelOpacityControls() {
+        const opacity = this.labelsGUI.add(this, "celestialLabelOpacity", 0, 1, 0.01)
+            .listen()
+            .onChange(() => setRenderOne(true))
+            .name(t("nightSky.celestialLabelOpacity.label"))
+            .tooltip(t("nightSky.celestialLabelOpacity.tooltip"));
+        opacity.mirrorTo(this.satelliteLabelsGUI);
+        return opacity;
     }
 
     // videoProperty adds a V box to the row; setupVideoLinesCheckbox gives it its behavior.
@@ -2293,6 +2315,8 @@ export function addNightSky(def) {
         .onChange(() => setRenderOne(true))
         .name(t("nightSky.labelList.label"))
         .tooltip(t("nightSky.labelList.tooltip"));
+
+    nightSky.addLabelOpacityControls();
 
     // Atmospheric optics (halos, arcs, sun dogs) drawn on the daytime sky,
     // centered on the Sun. Created alongside the night sky so GlobalSunSkyScene

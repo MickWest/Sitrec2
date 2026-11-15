@@ -389,6 +389,7 @@ visible: the region calculation has the limits stated below.
 | **Label Lit Only** | Off | Label only satellites that are in sunlight |
 | **Label Look Visible Only** | Off | In the main view, label only satellites inside the look camera's field of view. **Satellite Labels (Look View)** must also be on, or no main view label appears |
 | **Max Labels Displayed** | 1000 | The largest number of satellite labels drawn at one time (100 to 10,000) |
+| **Label Opacity** | 1 | Opacity of the satellite, star, planet and constellation names in all views, from 0 (invisible) to 1 (fully opaque). The same slider is in **Show → Celestial → Labels** |
 | **Display Range (km)** | 100000 | Satellites farther away than this get no name labels or arrows |
 
 Labels shorten Starlink names, so STARLINK-1234 is labeled SL-1234.

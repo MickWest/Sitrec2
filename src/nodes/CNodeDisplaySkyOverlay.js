@@ -283,8 +283,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             // not fade on the way there, so neither does the name: they appear and go together.
             if (showConstellationNames && skyOpacity < 1) {
                 // Camera at the origin, as for the stars: same celestial sphere.
-                this.renderConstellationNames(this.displayedCamera(live, true), earthSphere,
-                    actualCameraPosition, date);
+                this.drawAtCelestialLabelOpacity(() => this.renderConstellationNames(
+                    this.displayedCamera(live, true), earthSphere, actualCameraPosition, date));
             }
 
             const font_h = 9
@@ -296,15 +296,30 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             if (showStarNames) {
                 // Camera at the origin: the celestial sphere holds directions on a
                 // huge radius and is rendered that way in GlobalNightSkyScene.
-                this.renderStarNames(this.displayedCamera(live, true), earthSphere,
-                    actualCameraPosition, date, starAlpha);
+                this.drawAtCelestialLabelOpacity(() => this.renderStarNames(
+                    this.displayedCamera(live, true), earthSphere, actualCameraPosition, date, starAlpha));
             }
 
             if (showSatelliteNames) {
                 // Satellites live in GlobalScene, at the camera's real position.
-                this.renderSatelliteNames(this.displayedCamera(live), earthSphere, starAlpha);
+                this.drawAtCelestialLabelOpacity(() => this.renderSatelliteNames(
+                    this.displayedCamera(live), earthSphere, starAlpha));
             }
         });
+    }
+
+    // Run a draw of the constellation, star, planet or satellite names at Show > Celestial >
+    // Labels > Label Opacity. The canvas multiplies every fill by globalAlpha, so the opacity
+    // combines with the twilight fade that the names carry in their fill color, and it
+    // applies to a color of any form. At 1 the draw is the same as with no opacity control.
+    // At 0 the draw still runs and paints nothing: the satellite pass also records which
+    // satellites the look view sees (sat.visibleInLook), and Label Look Visible Only and the
+    // satellite arrows read that.
+    drawAtCelestialLabelOpacity(draw) {
+        const alphaBefore = this.ctx.globalAlpha;
+        this.ctx.globalAlpha = alphaBefore * this.nightSky.celestialLabelOpacity;
+        draw();
+        this.ctx.globalAlpha = alphaBefore;
     }
 
     renderHorizonCompassRibbon(live) {
