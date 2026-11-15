@@ -1556,7 +1556,11 @@ class CameraMapControls {
 			return;
 		}
 
-		const fixedCamera = NodeMan.get("fixedCameraPosition");
+		// Only the custom sitch and the model inspector have a fixedCameraPosition node. In the
+		// other sitches this walker has nothing to move. (The old Night Sky sitch has its own WASD
+		// handler, CNodeControllerManualPosition.)
+		const fixedCamera = NodeMan.get("fixedCameraPosition", false);
+		if (!fixedCamera) return;
 
 		if (fixedCamera.agl) {
 			// AGL camera: just move horizontally and let recalculate() hold it the

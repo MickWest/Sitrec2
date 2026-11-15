@@ -38,7 +38,8 @@ describe("selectInitialSitch with an unknown sitch name", () => {
 
     const SITCHES = {
         custom: {data: {name: "custom", isCustom: true}},
-        nightsky: {data: {name: "nightsky"}},
+        // Hidden, as SitNightSky.js is: it is not in the sitch menus, but old links still load it.
+        nightsky: {data: {name: "nightsky", hidden: true}},
     };
 
     function run(search) {
@@ -67,7 +68,7 @@ describe("selectInitialSitch with an unknown sitch name", () => {
     beforeEach(() => jest.spyOn(console, "log").mockImplementation(() => {}));
     afterEach(() => jest.restoreAllMocks());
 
-    test("a known ?sitch= loads that sitch", () => {
+    test("a known ?sitch= loads that sitch, also a hidden one", () => {
         const {env, selectInitialSitch} = run("?sitch=NightSky");
         selectInitialSitch();
         expect(env.CSituation).toHaveBeenCalledWith(SITCHES.nightsky.data);

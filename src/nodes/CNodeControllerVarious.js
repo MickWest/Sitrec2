@@ -248,6 +248,11 @@ export class CNodeControllerManualPosition extends CNodeController {
         super(v);
 
         this.aboveGround = v.aboveGround;
+        // disableConflictingKeys: turn off C (move to the point under the mouse), Q (up) and E
+        // (down). Each has another use: Alt+C moves the camera and Alt+E extends tracks to the
+        // ground (AltShortcuts.js), and a held Q moves and resizes views. W, A, S, D and Shift
+        // still work.
+        this.disableConflictingKeys = v.disableConflictingKeys === true;
         this.clKeyWasHeld = false;
         this.undoCameraLat = null;
         this.undoCameraLon = null;
@@ -266,7 +271,7 @@ export class CNodeControllerManualPosition extends CNodeController {
         const fwd = camera.getWorldDirection(new Vector3())
         const right = new Vector3().crossVectors(fwd, camera.up)
 
-        const clHeld = isKeyHeld('c');
+        const clHeld = !this.disableConflictingKeys && isKeyHeld('c');
         if (clHeld) {
             const cursorPos = getCursorPositionFromTopView();
             if (cursorPos) {
@@ -325,11 +330,13 @@ export class CNodeControllerManualPosition extends CNodeController {
         if (isKeyHeld('d')) {
             camPos.add(right.multiplyScalar(speed))
         }
-        if (isKeyHeld('q')) {
-            camPos.y += speed
-        }
-        if (isKeyHeld('e')) {
-            camPos.y -= speed
+        if (!this.disableConflictingKeys) {
+            if (isKeyHeld('q')) {
+                camPos.y += speed
+            }
+            if (isKeyHeld('e')) {
+                camPos.y -= speed
+            }
         }
 
         if (this.aboveGround !== undefined) {

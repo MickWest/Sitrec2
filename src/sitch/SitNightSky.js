@@ -1,21 +1,11 @@
-import {Matrix4, Quaternion, Vector3} from "three";
-import {
-    FileManager,
-    getEffectiveUserID,
-    GlobalDateTimeNode,
-    guiMenus,
-    NodeMan,
-    setRenderOne,
-    Sit,
-    withTestUser
-} from "../Globals";
+import {Matrix4, Quaternion} from "three";
+import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
-import {showError} from "../showError";
 import {CNodeViewUI} from "../nodes/CNodeViewUI";
 import {AddTimeDisplayToUI} from "../UIHelpers";
 import {DragDropHandler} from "../DragDropHandler";
 import JSURL from "jsurl"
-import {isLocal, SITREC_SERVER} from "../configUtils";
+import {SITREC_SERVER} from "../configUtils";
 import {CNodeSwitch} from "../nodes/CNodeSwitch";
 import {CNodeControllerManualPosition} from "../nodes/CNodeControllerVarious";
 import {assert} from "../assert";
@@ -30,10 +20,17 @@ import {waitForParsingToComplete} from "../CFileManager";
 export const SitNightSky = {
     name: "nightsky",
     menuName: "(OLD) Night Sky / Starlink",
+
+    // DEPRECATED. The Starlink sitch (data/starlink/SitStarlink.js) replaces it. "hidden" takes it
+    // out of the sitch menu, Test All and the sitch lists, so a new sitch cannot start from it.
+    // Old links (?sitch=nightsky&data=...) still load it: index.js finds the sitch by its name and
+    // does not read "hidden".
+    hidden: true,
+
     isTextable: false,
     isTool: true,
 
-    canMod: false, // night sky is not modifiable, just Save Permalink
+    canMod: false, // night sky is not modifiable, and (deprecated) it saves no new permalinks
 
     showDateTime: false, // opens the DateTime folder in the UI - not needed any more with new menu system
 
@@ -130,7 +127,9 @@ export const SitNightSky = {
             desc: "Camera Motion",
             inputs: {
                 "Manual Position": new CNodeControllerManualPosition ({
-                    id: "manualController"
+                    id: "manualController",
+                    // C, Q and E have other uses in Sitrec (see CNodeControllerManualPosition).
+                    disableConflictingKeys: true,
                 }),
 
                 // "XXX Position": new CNodeControllerManualPosition ({
@@ -157,156 +156,8 @@ export const SitNightSky = {
         var labelVideo = new CNodeViewUI({id: "labelVideo", overlayView: viewLook});
         AddTimeDisplayToUI(labelVideo, 99.5, 3, -16, "#f0f000", "right")
 
-
-
-
-
-        if (getEffectiveUserID() > 0)
-            this.permaButton = guiMenus.file.add(this, "makeNightSkyURL").name("SAVE Night Sky Permalink")
-        else {
-            this.permaButton = guiMenus.file.add(this, "loginAttempt").name("Permalink DISABLED (click to log in)")
-        }
-    },
-
-
-    loginAttempt: function() {
-        FileManager.loginAttempt(this.makeNightSkyURL);
-    },
-
-    makeNightSkyURL: function () {
-
-
-        // first rehost the dynamic links, such as
-        FileManager.rehostDynamicLinks().then(() => {
-
-            // get the base of the URL (e.g. https://www.metabunk.org/sitrec/
-            var url = window.location.href.split('?')[0];
-            console.log(url)
-
-            const mainCam = NodeMan.get("mainCamera").camera;
-
-            var p = mainCam.position.clone()
-            const v = new Vector3();
-            v.setFromMatrixColumn(mainCam.matrixWorld, 2);
-            v.multiplyScalar(-1000)
-            v.add(p)
-
-            var _q = mainCam.quaternion.clone();
-            var q = {x: _q.x, y: _q.y, z: _q.z, w: _q.w}
-
-            const nightSkyNode = NodeMan.get("NightSkyNode");
-
-            const lookPTZ = getPTZController("lookCamera");
-            assert(lookPTZ !== undefined, "lookCamera's PTZ controller not found");
-
-            const savePar = {
-                v: 2, // version flag: v2 = ECEF camera coords, v1/missing = legacy EUS
-                olat: Sit.lat,
-                olon: Sit.lon,
-                lat: NodeMan.get("cameraLat").value,
-                lon: NodeMan.get("cameraLon").value,
-                alt: NodeMan.get("cameraAlt").value,
-                startTime: Sit.startTime,
-                az: lookPTZ.az,
-                el: lookPTZ.el,
-                fov: lookPTZ.fov,
-                roll: lookPTZ.roll,
-                p: p,
-                //       v:v,
-                u: mainCam.up,
-                q: q,
-                f: par.frame,
-                pd: par.paused,
-                ssa: nightSkyNode.showSunArrows,
-                sfr: nightSkyNode.showFlareRegion,
-                sfb: nightSkyNode.showFlareBand,
-                ssn: nightSkyNode.showSatelliteNames,
-            }
-
-            if (Sit.simSpeed !== 1) {
-                savePar.spd = Sit.simSpeed;
-            }
-
-            // Wait just in case a file is still uploading
-            // unlikely, but possible with a slow connection and.or large file
-            FileManager.rehoster.waitForAllRehosts().then(() => {
-
-                var rehostedFiles = []
-
-                Object.keys(FileManager.list).forEach(key => {
-                    const f = FileManager.list[key];
-                    if (f.dynamicLink) {
-                        console.log("Adding Rehosted dynamic file to url: " + f.staticURL)
-                        rehostedFiles.push(f.staticURL)
-                    } else {
-                        console.log("Skipping non-dynamic file: " + f.staticURL)
-                    }
-
-                })
-
-
-                savePar.rehostedFiles = rehostedFiles;
-                savePar.rhs = FileManager.rehostedStarlink;
-
-
-                // const JSONSave = JSON.stringify(savePar, null, 4)
-                // console.log (JSONSave)
-
-                const encodedURL = JSURL.stringify(savePar) + "_" // adding an underscore as twitter does not like trailing parenthsese
-                console.log(encodedURL)
-
-                // and add that to the base URL
-                url += "?sitch=" + Sit.name + "&data=" + encodedURL;
-
-
-                if (isLocal) {
-                    // if it's different to the URL we have now
-                    if (oldURL.localeCompare(url) !== 0) {
-                        // then push the current state, so we can go back
-                        window.history.pushState({}, null, url);
-                        oldURL = "" + url;
-                    }
-                } else {
-
-// Assuming original_url is the URL you want to shorten
-
-// URL-encode the original URL
-                    var encoded_url = encodeURIComponent(url);
-
-// Construct the URL for the PHP shortener
-                    var shortenerUrl = SITREC_SERVER + "shortener.php?url=" + encoded_url;
-
-// Fetch the shortened URL
-                    fetch(withTestUser(shortenerUrl))
-                        .then(response => {
-                            if (!response.ok) {
-                                throw new Error('Network response was not ok: ' + response.statusText);
-                            }
-                            return response.text();
-                        })
-                        .then(shortenedUrl => {
-                            // If the shortened URL is different from the current one
-                            if (oldURL.localeCompare(shortenedUrl) !== 0) {
-                                // Push the new state to the browser history
-                                window.history.pushState({}, null, "https://" + shortenedUrl);
-                                oldURL = "" + shortenedUrl;
-
-                                console.log(shortenedUrl);
-                            }
-                        })
-                        .catch(error => {
-                            showError("Error fetching shortened URL:", error);
-                            // Some error, or not logged in
-                            if (oldURL.localeCompare(url) !== 0) {
-                                // then push the current state, so we can go back
-                                window.history.pushState({}, null, url);
-                                oldURL = "" + url;
-                            }
-                        });
-
-                }
-            })
-        })
+        // No "SAVE Night Sky Permalink" button: the sitch is deprecated and makes no new links.
+        // Old links still load (parseURLDataBeforeSetup and parseURLDataAfterSetup).
     },
 
     parseURLDataBeforeSetup(data) {
@@ -448,7 +299,3 @@ export const SitNightSky = {
 
     },
 }
-
-let oldURL = "";
-
-

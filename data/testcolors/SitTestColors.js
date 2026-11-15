@@ -53,7 +53,8 @@ export const SitSWRCSC = {
     lookView: {left:0.5, top:0.5, width:-1.792,height:0.5,background:'#132d44', doubleClickFullScreen: true,},
     lookPosition: { fromLat: 40.2576896691347, fromLon: -109.88881130294267, fromAltFeet: 4932, fromAltMin: 4900, framAltMax: 5500,},
 
-    manualPositionController: {kind:"ManualPosition", object: "lookCamera", aboveGround: 3},
+    // C, Q and E have other uses in Sitrec (see CNodeControllerManualPosition).
+    manualPositionController: {kind:"ManualPosition", object: "lookCamera", aboveGround: 3, disableConflictingKeys: true},
 
     labelView: {id:"labelVideo", overlay: "lookView"},
     DisplayCameraFrustum: {radius:100000},

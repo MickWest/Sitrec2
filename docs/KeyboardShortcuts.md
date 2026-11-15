@@ -164,10 +164,8 @@ on. Where [3D tiles](Terrain.md) are loaded, a step below the tile surface raise
 surface. With **Free Look Camera** on, or after a dropped photo or video gives the altitude, the
 camera can go below the ground.
 
-A few legacy built-in sitches (for example Night Sky) have a "Manual Position" camera with its
-own, separate movement handler. It uses the same letters but a much finer step (0.1 m per
-frame, ×10 with `Shift`), and adds `Q` / `E` to move the camera up / down. The custom sitch
-does not use it.
+The old Night Sky sitch is not in the sitch menu now, but old links to it still open. Its look
+camera has its own `W` `A` `S` `D` movement, not the walk described above.
 
 ## Files and editing
 
