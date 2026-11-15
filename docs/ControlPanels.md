@@ -189,6 +189,8 @@ Use the existing menu footprint for equivalent controls: current rails are 250px
 ordinary native rows are 22px, and widget headers are 24px. Do not impose a universal large
 form layout. Floaters scroll within the viewport, and small-screen rails overlay the view.
 Compact information widgets reuse existing readouts; satellite counting has one producer.
+Satellite Controls names no information widget in its composition: `satelliteInfo`,
+`cameraInfo` and `clockInfo` stay in the registries for other compositions.
 
 `ModernControlStyle.js` supplies shared dark/light tokens. `WidgetPanelStyle.js` supplies
 native shells and specialized forms. `StarlinkPanelStyle.js` only places the launcher and

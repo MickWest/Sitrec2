@@ -50,7 +50,7 @@ This does the following for you:
 
 ### Satellite Controls
 
-The Starlink Horizon Flares (LIVE) preset opens with a large sky view, a small globe overview, and the viewing controls enabled. The controls are available in every custom sitch, including older saves, and start hidden in other custom scenes. Toggle **Satellite Controls** at the top of **Satellites** to show them. Turning the checkbox off hides the panel, its launcher, and its sky readouts. Saved scenes keep their visibility setting.
+The Starlink Horizon Flares (LIVE) preset opens with a large sky view, a small globe overview, and the viewing controls enabled. The controls are available in every custom sitch, including older saves, and start hidden in other custom scenes. Toggle **Satellite Controls** at the top of **Satellites** to show them. Turning the checkbox off hides the panel and its launcher. Saved scenes keep their visibility setting.
 
 The panel's open/closed state is separate: **‹** collapses it to **Satellite Controls**, and that button expands it again. The **Satellite Controls** checkbox remembers this state when hiding and showing the controls; both settings are saved with the sitch. On narrow screens the panel initially opens collapsed. Ordinary custom scenes keep their view layout until you select **Sky + overview** or **Split views**.
 
@@ -62,7 +62,7 @@ The panel's open/closed state is separate: **‹** collapses it to **Satellite C
 - **Flares:** toggle **Sun Angle Arrows**, **Flare Band**, and independent Main/Look region markers. The band marks observing locations on Earth; the region is where to look in the sky. The region is valid only inside the band, and aiming does not establish that flares are visible.
 - **Sky guides** holds constellation lines, star names, the grid, and the horizon compass.
 
-The sky readout counts modeled satellite points inside the view after filtering and Earth-horizon checks. Terrain, daylight, and observing conditions can still make these points invisible to an observer. The normal menus remain available, and their settings stay synchronized with the panel.
+The normal menus remain available, and their settings stay synchronized with the panel.
 
 Instructions and detailed orbit epochs are in tooltips. In **Sky + overview**, the TLE date/range stats move from the inset Main view to the top right of Look; **Split views** returns them to Main.
 

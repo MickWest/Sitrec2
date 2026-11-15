@@ -10,8 +10,10 @@ import {SIMULATED_SATELLITE_COLOR} from "./SatelliteSimulation";
 // That widget starts open, so the button is in view.
 export const satellitePanelDefinition = {
     id: "satellite-controls", titleKey: "panels.satellite.title",
-    widgets: ["time", "observer", {type: "camera", merge: ["aim"], collapsed: false}, "viewLayout", "satelliteData", "satelliteFilters", "flares", "skyGuides",
-        {type: "satelliteInfo", home: "left"}, {type: "cameraInfo", home: "left"}, {type: "clockInfo", home: "right"}],
+    // No information widget is here. satelliteInfo, cameraInfo and clockInfo sat over the
+    // look view with `home: "left"` or `home: "right"` and covered part of the sky. They
+    // stay in the registries, so another composition can name them.
+    widgets: ["time", "observer", {type: "camera", merge: ["aim"], collapsed: false}, "viewLayout", "satelliteData", "satelliteFilters", "flares", "skyGuides"],
 };
 
 const count = number => number.toLocaleString();
