@@ -34,7 +34,7 @@ import {intersectSphere2, V3} from "../threeUtils";
 import {GlobalScene, LocalFrame} from "../LocalFrame";
 import {ViewMan} from "../CViewManager";
 import {earthCenterECEF, XYZ2EA, XYZJ2PR} from "../SphericalMath";
-import {isKeyHeld} from "../KeyBoardHandler";
+import {isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
 import {glareSphere, targetSphere} from "../JetStuffVars";
 import {jetPitchFromFrame} from "../JetUtils";
 import {t} from "../i18n";
@@ -227,8 +227,9 @@ export const mouseMethods = {
             if (!this.visible || !this.camera || !this.mouseEnabled) return;
             const focusTrackActive =
                 !this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+            // C and X by their physical key: Option+C on a Mac gives "ç" (AltShortcuts.js).
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x')
+                isKeyCodeHeld('KeyC') || isKeyCodeHeld('KeyX')
                 || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) return;
             const {x, y} = getMousePosition();
@@ -609,8 +610,9 @@ export const mouseMethods = {
             // hover when nothing visible depends on it.
             const focusTrackActive =
                 !this.suspendObjectFocus && this.focusTrackName !== "default" && NodeMan.exists(this.focusTrackName);
+            // C and X by their physical key: Option+C on a Mac gives "ç" (AltShortcuts.js).
             const positionKeyHeld =
-                isKeyHeld('c') || isKeyHeld('x')
+                isKeyCodeHeld('KeyC') || isKeyCodeHeld('KeyX')
                 || isKeyHeld('v') || isKeyHeld('b');
             if (!this.showLOSArrow && !focusTrackActive && !positionKeyHeld) {
                 return;

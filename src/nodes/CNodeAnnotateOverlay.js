@@ -16,6 +16,7 @@ import {assert} from "../assert";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {showPrompt} from "../showError";
+import {registerBareKeyOwner} from "../AltShortcuts";
 
 const TOOLS = ["select", "pencil", "brush", "line", "arrow", "rect", "ellipse", "text", "image", "eraser"];
 
@@ -1424,6 +1425,17 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
     _installKeyHandler() {
         if (CNodeAnnotateOverlay._keyHandlerInstalled) return;
         CNodeAnnotateOverlay._keyHandlerInstalled = true;
+
+        // In Edit Mode a bare I, E or X picks a tool, so it is not an accident and gets no
+        // "this key now needs Alt" hint (AltShortcuts.js).
+        registerBareKeyOwner(code => {
+            if (!(code in TOOL_HOTKEYS)) return false;
+            let editing = false;
+            NodeMan.iterate((id, n) => {
+                if (n instanceof CNodeAnnotateOverlay && n.editing) editing = true;
+            });
+            return editing;
+        });
         window.addEventListener("keydown", (e) => {
             // Ignore when typing in inputs
             const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";

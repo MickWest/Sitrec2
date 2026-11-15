@@ -60,7 +60,7 @@ On the three reference clips in [What to expect](#what-to-expect), this procedur
    picture. Press **Disable Stabilization**, in Point Track or in Motion Analysis, or untick
    **Stabilize on Stars** in **Video → Star Tracker**.
 2. If you only want part of the clip, set the end of the range with the **Out** marker on the
-   timeline (**Time → Out Frame [O]**, or the **O** key at that frame). Tracking stops at the
+   timeline (**Time → Out Frame [O]**, or **Alt+O** at that frame). Tracking stops at the
    Out frame.
 3. Go to the first frame you want tracked, at a moment where you can see the object.
 4. **Drag the yellow cursor onto the object.** The drag places the start point. A bare click,
@@ -122,10 +122,12 @@ the frames you cleared.
 
 Hold **`'`** to track one frame at a time at about playback speed, which is useful for watching
 a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking backwards": it
-**deletes** the points as it goes, user points included, so use it to undo a bad run. Holding `;`
-also moves the sitch's **Start Time** back, one second per screen update. If the time matters,
-use **Clear from Here** instead, or set the Start Time again afterwards. The Start Time does not
-move while `'` is tracking, but the first hold of `'` can move it forward before tracking starts.
+**deletes** the points as it goes, user points included, so use it to undo a bad run. These keys
+do not move the sitch's **Start Time**, which uses `Alt`+`;` and `Alt`+`'`. With
+**Sitrec → Settings → Require Alt for Shortcuts** off they do: holding `;` also moves the Start
+Time back, one second per screen update, and the first hold of `'` can move it forward before
+tracking starts. If the time matters, use **Clear from Here** instead, or set the Start Time
+again afterwards.
 See [Time, Frames and Syncing](TimeAndSync.md#keys-for-time-and-frames).
 
 If a frame cannot be decoded (for example, a damaged frame), **`'`** and **Start Point Track**

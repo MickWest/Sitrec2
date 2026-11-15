@@ -177,6 +177,10 @@ function sanitizeSettings($settings) {
         $sanitized['showFilename'] = $settings['showFilename'];
     }
 
+    if (isset($settings['requireAltForShortcuts']) && is_bool($settings['requireAltForShortcuts'])) {
+        $sanitized['requireAltForShortcuts'] = $settings['requireAltForShortcuts'];
+    }
+
     // "" = no selection (the classic look), "dark" or "light"
     if (isset($settings['theme']) && in_array($settings['theme'], ['', 'dark', 'light'], true)) {
         $sanitized['theme'] = $settings['theme'];

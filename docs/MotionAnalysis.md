@@ -85,7 +85,7 @@ so playback runs at the speed of the analysis until those frames are done.
 
 ### Export the motion as a CSV file
 
-1. Set the range with the **In** and **Out** markers (keys `I` and `O`).
+1. Set the range with the **In** and **Out** markers (keys `Alt`+`I` and `Alt`+`O`).
 2. Press **Export Motion**. If the range is not analyzed yet, Sitrec analyzes it first and shows
    the progress on the button. Then the browser downloads the CSV file.
 

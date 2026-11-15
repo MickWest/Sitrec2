@@ -49,6 +49,7 @@ import {isUserMadeObjectId, ownedSubNodeIds} from "./UserObjects";
 import {unlistManualObject} from "./TrackSelectors";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
+import {altModifierName, isAltRequired, shortcutLabel} from "./AltShortcuts";
 import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
 import {LayoutMan} from "./CLayoutManager";
 import {placeVideoInset} from "./VideoInsetLayout";
@@ -882,6 +883,18 @@ export class CCustomManager {
                 Globals.settings.showFilename = Boolean(value);
                 this.saveGlobalSettings(true);
                 updateFilenameOverlay();
+            })
+            .listen();
+
+        // I, O, F, U, E, C, X, ; ' and 1-8 need Alt (Option on a Mac) while this is on. The K
+        // overlay is rebuilt every frame from the setting, so it follows at once.
+        settingsFolder.add(Globals.settings, "requireAltForShortcuts")
+            .name(t("custom.settings.requireAltForShortcuts.label"))
+            .tooltip(t("custom.settings.requireAltForShortcuts.tooltip"))
+            .onChange((value) => {
+                Globals.settings.requireAltForShortcuts = Boolean(value);
+                this.saveGlobalSettings(true);
+                setRenderOne(true);
             })
             .listen();
 
@@ -2662,21 +2675,28 @@ export class CCustomManager {
     update(f) {
 
 
+        // shortcutLabel() writes "Opt+C" / "Alt+C" while Settings > Require Alt for Shortcuts is
+        // on, else just "C" (AltShortcuts.js). This runs every frame, so the K overlay follows
+        // the setting at once. While Alt is required it cannot also be the x1000 Start Time
+        // multiplier (CNodeDateTime.update), so that line changes too.
+        const k = shortcutLabel;
         UpdateHUD(""
-            + "+/- - Zoom in/out<br>"
-            + "C - Move Camera<br>"
-            + "X - Move Target<br>"
+            + "=/- - Zoom in/out<br>"
+            + k("C") + " - Move Camera<br>"
+            + k("X") + " - Move Target<br>"
             + "WASD - Walk in look View<br>"
             + "PageUp/PageDown - Raise/lower Camera<br>"
-            + "Shift-C - Ground Camera<br>"
-            + "Shift-X - Ground Target<br>"
-            + "; - Decrease Start Time<br>"
-            + "' - Increase Start Time<br>"
-            + "[ - Decrease Start Time+<br>"
-            + "] - Increase Start Time+<br>"
-            + (Globals.onMac ? "Shift/Ctrl/Opt/Cmd - speed<br>" : "Shift/Ctrl/Alt/Win - speed<br>")
-
-
+            + k("Shift-C") + " - Ground Camera<br>"
+            + k("Shift-X") + " - Ground Target<br>"
+            + k(";") + " - Decrease Start Time<br>"
+            + k("'") + " - Increase Start Time<br>"
+            + (isAltRequired()
+                ? "&nbsp;&nbsp;with Shift - 10x faster<br>"
+                : `&nbsp;&nbsp;with Shift / ${altModifierName(Globals.onMac, {short: true})} - 10x / 1000x faster<br>`)
+            + k("1-8") + " - View Presets<br>"
+            + k("E") + " - Extend Tracks to Ground<br>"
+            + "N - Notes (Shift-N docks)<br>"
+            + "Tab - AI Assistant<br>"
         )
 
 

@@ -7,6 +7,17 @@ import {KeyframeRegistry} from "./CKeyframeRegistry";
 import {nextStop, prevStop, timelineStops, TimelineMarkers} from "./TimelineMarkers";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {exitTrackEditMode, hasOpenContextMenu} from "./TrackEditMode";
+import {
+    ALT_SHORTCUTS,
+    altModifierOK,
+    isAltRequired,
+    isAltShortcut,
+    isBareAltShortcut,
+    isBareKeyOwned,
+    shortcutLabel
+} from "./AltShortcuts";
+import {showViewMessage} from "./ViewMessage";
+import {t} from "./i18n";
 
 // The frames Shift+, / Shift+. stop at: timeline markers, the In and Out
 // frames, and every keyframe published to the KeyframeRegistry.
@@ -164,6 +175,31 @@ export function isKeyCodeHeld(code) {
 
 export function wut() {
     return 1;
+}
+
+// For code that polls a held Alt shortcut each frame (C and X, ; and '): true when Alt is held,
+// or when the "Require Alt for Shortcuts" setting is off. KeyMan never records Ctrl or Cmd (the
+// keydown handler returns before it for those), and AltGr records as "altgraph", not "alt".
+export function altShortcutHeld() {
+    return !isAltRequired() || isKeyHeld("alt");
+}
+
+// "Key I to set In frame is now Option+I", in the first visible main view. On Windows and Linux,
+// F and E are written "Alt+Shift+F" and "Alt+Shift+E" (AltShortcuts.js, shiftOffMac).
+function showAltShortcutHint(code) {
+    const shortcut = ALT_SHORTCUTS[code];
+    const text = t("keyboard.altShortcut.hint", {
+        key: shortcut.key,
+        action: t(`keyboard.altShortcut.actions.${shortcut.action}`),
+        shortcut: shortcutLabel(shortcut.key, {required: true, short: false}),
+    });
+    for (const id of ["mainView", "lookView", "video", "video2"]) {
+        const view = NodeMan.get(id, false);
+        if (view?.visible && view.div) {
+            showViewMessage(view, text);
+            return;
+        }
+    }
 }
 
 // a quickToggle is a more immediate mode UI toggle you can just use
@@ -365,6 +401,26 @@ export function initKeyboard() {
         // Let the browser handle them natively
         if (e.ctrlKey || e.metaKey) return;
 
+        // Keys that need Alt (Option on a Mac) while "Require Alt for Shortcuts" is on. See
+        // AltShortcuts.js for the list.
+        const altShortcut = isAltShortcut(keyCode);
+        if (isBareAltShortcut(e)) {
+            // No hint for a key that an active tool uses bare (an Annotation tool letter in
+            // Edit Mode, Point Track's ; and ').
+            if (!isBareKeyOwned(keyCode)) showAltShortcutHint(keyCode);
+            // I, O, F and U act in this handler, so a bare press stops here. The others go on
+            // to KeyMan and the "keydown" listeners: their own code checks for Alt, Point Track
+            // still needs to hear a bare ; and ', and a legacy manual camera reads a held E.
+            // The E toggle is stopped below.
+            if (['KeyI', 'KeyO', 'KeyF', 'KeyU'].includes(keyCode)) return;
+        } else if (altShortcut && e.altKey && isAltRequired()) {
+            // Without this the browser can act on the key too: on a Mac Option+I, E and U start
+            // an accent (a dead key). On Windows and Linux, some browsers keep Alt+F and Alt+E
+            // for their menu and never send them here, so the labels show Alt+Shift+F and
+            // Alt+Shift+E there. Shift is not checked, so those reach the same code below.
+            e.preventDefault();
+        }
+
         if (keyCode === 'KeyI' || keyCode === 'KeyO') {
             const frame = Math.max(0, Math.min(Sit.frames - 1, Math.round(par.frame)));
             if (keyCode === 'KeyI') {
@@ -534,18 +590,33 @@ export function initKeyboard() {
 
         }
 
+        // A bare press of an Alt shortcut (E, C, X, a digit) gets here only to update the held
+        // keys, so it must not also flip a toggle on the same letter.
+        if (altShortcut && !altModifierOK(e)) return;
+
+        // An Alt shortcut is looked up by its key, not by e.key: Option+E on a Mac gives "Dead".
+        const toggleKey = altShortcut ? ALT_SHORTCUTS[keyCode].key.toLowerCase() : key;
+
         // now see if keycode is in the gui togglers array
-        let guiController = toggles[key]
+        let guiController = toggles[toggleKey]
+        if (guiController !== undefined) {
+            const value = guiController.getValue();
+            if (typeof value === "function") {
+                // A menu button (E, Extend to Ground): run it, as a click does. setValue(!value)
+                // would replace the method with false, and the button would then fail.
+                value.call(guiController.object);
+                guiController._callOnChange();
+            } else {
+                guiController.setValue(!value)
+            }
+        }
+
+        guiController = quickToggles[toggleKey]
         if (guiController !== undefined) {
             guiController.setValue(!guiController.getValue())
         }
 
-        guiController = quickToggles[key]
-        if (guiController !== undefined) {
-            guiController.setValue(!guiController.getValue())
-        }
-
-        const toggleData = genericToggles[key]
+        const toggleData = genericToggles[toggleKey]
         if (toggleData !== undefined) {
             toggleData.guiController.setValue(!toggleData.guiController.getValue())
         }

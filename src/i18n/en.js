@@ -2329,6 +2329,7 @@ const en = {
             centerSidebar: { label: "Center Sidebar", tooltip: "Enable center sidebar between split views (drag menus to the divider line)" },
             showAttribution: { label: "Show Attribution", tooltip: "Show map and elevation data source attribution overlay" },
             showFilename: { label: "Show Filename", tooltip: "Show the current video filename centered at the bottom of the viewport and exported videos" },
+            requireAltForShortcuts: { label: "Require Alt for Shortcuts", tooltip: "Keys that change the sitch or the screen need Alt (Option on a Mac), so a key pressed by accident does nothing: I and O (In and Out frame), F (full screen), U (menus), E (extend tracks to ground), C and X (move camera and target), ; and ' (Start Time) and 1 to 8 (view presets).\nTurn this off to use these keys without Alt." },
             startup: {
                 title: "New Sitch Startup",
                 tooltip: "How a new, empty Custom sitch begins. These do not change the sitch you are looking at.\nBuilt-in sitches and saved sitches keep their own units, camera and terrain.",
@@ -5193,6 +5194,27 @@ const en = {
         },
         cannotContinue: "This page could not get the list of files of the new version, so it cannot continue with them.\nUse Save and reload.",
         temporaryFailed: "The sitch could not be kept in this browser. It is still open on this page.",
+    },
+
+    // Shortcut keys that need Alt (Option on a Mac) while Settings > Require Alt for Shortcuts
+    // is on (src/AltShortcuts.js).
+    keyboard: {
+        altShortcut: {
+            // Shown for a moment when one of these keys is pressed without Alt.
+            hint: "Key {{key}} to {{action}} is now {{shortcut}}",
+            actions: {
+                setIn: "set In frame",
+                setOut: "set Out frame",
+                fullscreen: "toggle full screen",
+                toggleUI: "show or hide the menus",
+                extendToGround: "extend tracks to ground",
+                moveCamera: "move the camera",
+                moveTarget: "move the target",
+                startTimeBack: "decrease Start Time",
+                startTimeForward: "increase Start Time",
+                viewPreset: "switch view preset",
+            },
+        },
     },
 
     misc: {

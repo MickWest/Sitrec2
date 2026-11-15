@@ -84,7 +84,7 @@ Above,  we see the view from the look camera on the right. Three satellites are 
 
 To get a good sense of when and where (and how often) Starlink Horizon Flares happen, I recommend you play with the default setup.  Open the Time menu and drag the "Month" slider to see how the position of the flare band varies through the year with the seasons (due to the tilt of the Earth's axis).
 
-While doing this, you can move the look camera around by holding down "C" while moving the mouse. You can also adjust the camera altitude in the Camera menu. 
+While doing this, you can move the look camera around by holding down "Alt+C" while moving the mouse. You can also adjust the camera altitude in the Camera menu. 
 
 You will notice that since the sunward edge is always the same distance from the terminator, in northern summer, the flare band is much further south in the middle of the night.  You can visualise this by noting that the north pole is in constant daylight in summer. The flare band has a minimum distance it needs to be away from daylight, so the sunny north pole can be thought of as pushing the flare band south.
 
@@ -154,11 +154,11 @@ the date again and save.
 
 The location will either be a fixed location (on the ground), or a moving location (usually in the air). 
 
-If you don't know the exact location, just use the best guess. For a fixed location you can just move the camera with the "C" key, or enter a specific Lat/Lon in the camera menu (Tip: if you have a lat, lon pair, you can paste them both in the Lat box and the Lon will also be updated.)
+If you don't know the exact location, just use the best guess. For a fixed location you can just move the camera with "Alt+C", or enter a specific Lat/Lon in the camera menu (Tip: if you have a lat, lon pair, you can paste them both in the Lat box and the Lon will also be updated.)
 
 You can look up a city or street address using the "Lookup" option in the Camera menu. 
 
-The camera's altitude defaults to 6m (about 20 feet) [above ground level (AGL)](GIS.md#three-kinds-of-height), with the "Above Ground Level" box checked, to clear the inaccurate terrain. You might want to raise this a bit or lower it to eye level as you refine things. Hold Shift as well as "C" to move the camera and set it to eye level, which in Sitrec is 7 ft (about 2.1 m) above the ground. If you're recreating an aerial sighting without a track file (ADS-B, the position signal an aircraft broadcasts, or MISB FMV, video with embedded position metadata), then you should uncheck Above Ground Level, and set the altitude to whatever was reported, or a typical 30,000 feet if unknown (less for small planes)
+The camera's altitude defaults to 6m (about 20 feet) [above ground level (AGL)](GIS.md#three-kinds-of-height), with the "Above Ground Level" box checked, to clear the inaccurate terrain. You might want to raise this a bit or lower it to eye level as you refine things. Hold Shift as well as "Alt+C" to move the camera and set it to eye level, which in Sitrec is 7 ft (about 2.1 m) above the ground. If you're recreating an aerial sighting without a track file (ADS-B, the position signal an aircraft broadcasts, or MISB FMV, video with embedded position metadata), then you should uncheck Above Ground Level, and set the altitude to whatever was reported, or a typical 30,000 feet if unknown (less for small planes)
 
 If the camera is on a plane, then you can drag in the track (see [Loading and Filtering Tracks](Tracks.md)). The camera will automatically be set to follow that track if you've not edited anything yet. But you'll usually want to set the time first. So drag it in, then under the Camera menu, select the track from the "Position" drop-down (in the Location sub-folder).
 

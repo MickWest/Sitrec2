@@ -52,7 +52,7 @@ inputs.
    anchors and pitch overlay are defined in this frame and move with it. The launch
    point, *Kick Heading* (a compass bearing) and the broadcast camera do not, so set
    them again after you move the pitch.
-3. **Launch point** — move the Target to the kick spot: hold X and move the pointer
+3. **Launch point** — move the Target to the kick spot: hold Alt+X and move the pointer
    over a 3D view, with no mouse button pressed, or type its Lat, Lon and Alt. X
    keeps the altitude, so in a new sitch the Target stays 5000 m up. The ball
    bounces on a flat plane at the height of the launch point, not on the terrain,

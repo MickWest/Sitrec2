@@ -5,6 +5,7 @@ import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
 import {applyAffine, interpolatePosition, viewStabilizationMatrix} from "./CVideoData";
 import {EventManager} from "./CEventManager";
 import {isKeyHeld, KeyMan} from "./KeyBoardHandler";
+import {isAltRequired, registerBareKeyOwner} from "./AltShortcuts";
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils";
@@ -429,6 +430,9 @@ export class ObjectTracker {
                     setRenderOne(true);
                 }
             } else if ((key === "'" || key === ";")
+                // Alt+; and Alt+' nudge the Start Time while Alt is required (AltShortcuts.js);
+                // Point Track keeps the bare keys.
+                && !(isAltRequired() && data.event?.altKey)
                 && !this.holdLoopActive && !this.tracking) {
                 this.holdLoopActive = true;
                 this.runHoldLoop(key === "'" ? 'forward' : 'backward').catch(error => {
@@ -3093,6 +3097,11 @@ let renderHookView = null;
 let trackRenderHook = null;
 
 export function getPointTracks() { return [...pointTracks]; }
+
+// Point Track steps with a bare ; and ' while a track is editable, so those presses are not
+// accidents and get no "this key now needs Alt" hint (AltShortcuts.js).
+registerBareKeyOwner(code => (code === "Semicolon" || code === "Quote")
+    && pointTracks.some(track => track.enabled && track.editable));
 
 function hookTrackRendering(videoView) {
     if (renderHookView === videoView) return;

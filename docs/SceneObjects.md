@@ -176,7 +176,7 @@ ground and follows the terrain under it. Drag the object or either control point
 whole track rises.
 
 The control points take their frame numbers when you make the track, so set the In and Out frames
-first, with **Time → In Frame [I]** and **Time → Out Frame [O]**, or the **I** and **O** keys at
+first, with **Time → In Frame [I]** and **Time → Out Frame [O]**, or **Alt+I** and **Alt+O** at
 those frames. See
 [Keys for time and frames](TimeAndSync.md#keys-for-time-and-frames).
 

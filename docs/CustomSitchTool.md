@@ -169,9 +169,9 @@ You might not see the plane in the main view, but if you zoom in it's there. The
 
 ### Camera Heading: To Target
 
-To point the camera at a target, set **Camera Heading** to **To Target**. The target can be another track (see later), or a fixed point: set **Target Track** to **Manual** in the Target menu. You can then adjust the Latitude, Longitude and Altitude to a particular spot. This can be done by editing the numbers directly, or by holding down the "X" key while pointing at a spot on the ground.
+To point the camera at a target, set **Camera Heading** to **To Target**. The target can be another track (see later), or a fixed point: set **Target Track** to **Manual** in the Target menu. You can then adjust the Latitude, Longitude and Altitude to a particular spot. This can be done by editing the numbers directly, or by holding down "Alt+X" while pointing at a spot on the ground.
 
-When moving the target (or, later, the camera) the altitude is kept constant. Hold "C" to move a fixed camera the same way. Press the Shift key in addition to "X" to drop the target to 7 ft above the ground. For example:
+When moving the target (or, later, the camera) the altitude is kept constant. Hold "Alt+C" to move a fixed camera the same way. Press the Shift key in addition to "Alt+X" to drop the target to 7 ft above the ground. For example:
 ![Target on a pier, with a 737 model on the line of sight between the pier and the camera](docimages/traverse-target-on-pier.jpg)
 Here the target has been set on a pier. With the default method, "Target Object", the traverse object sits on the target. With a method such as "Constant Distance", it sits on the line of sight at that distance from the camera, as in this image.
 

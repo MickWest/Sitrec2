@@ -356,8 +356,8 @@ when you load it, and removed when you delete it.
 
 | Control | Default | What it does |
 |---|---|---|
-| **In Frame [I]** | 0 | The first frame of the In/Out range. Press **I** to set it to the current frame |
-| **Out Frame [O]** | The last frame | The last frame of the In/Out range. Press **O** to set it to the current frame |
+| **In Frame [I]** | 0 | The first frame of the In/Out range. Press **Alt+I** to set it to the current frame |
+| **Out Frame [O]** | The last frame | The last frame of the In/Out range. Press **Alt+O** to set it to the current frame |
 | **In-Out Pingpong** | Off | When on, playback goes forward to Out, then backward to In, and so on. When off, it goes back to In after Out. Video renders do the same, and leave out the audio when this is on |
 | **Time (sec)** | | The current frame as video seconds from the start (frame ÷ fps). It does not use Simulation Speed |
 | **Frame in Video** | | The current frame number |
@@ -445,18 +445,22 @@ movement is one frame.
 | `↑` / `↓` | Hold: move **backward** (`↑`) / **forward** (`↓`) at 10× normal speed. Pauses playback |
 | `,` / `.` | One frame back / forward, and pause |
 | `<` / `>` (Shift+`,` / Shift+`.`) | Previous / next stop on the timeline: a timeline marker, the In or Out frame, or a keyframe that a tool has marked. Does nothing if there is no stop in that direction |
-| `I` / `O` | Set the In / Out frame to the current frame |
+| `Alt`+`I` / `Alt`+`O` | Set the In / Out frame to the current frame |
 | `G` | **Go To.** Type a frame number to go there and pause. If that frame is outside the In/Out range, the In or Out frame moves to it. Or type a date and/or time (`15:20`, `17:33 UTC`, `Jan 6, 2020`) to set the Now Time. A time with no date keeps the date, and a date with no time keeps the time of day. A time sets the seconds and ms to 0 if you do not type them. A time is read in the zone the Time menu shows, unless you add `UTC` |
-| `;` / `'` (hold) | Move the Start Time back / forward by one second for each screen update. Hold `Shift` as well for ×10, or `Alt` for ×1000 |
+| `Alt`+`;` / `Alt`+`'` (hold) | Move the Start Time back / forward by one second for each screen update. Hold `Shift` as well for ×10 |
 
-`;` and `'` move the **Start Time**, so the current frame keeps its place and everything in
+These keys move the **Start Time**, so the current frame keeps its place and everything in
 the simulation moves in time. Watch stars, the Sun, or a satellite move into position while
 you hold the key.
 
-If Point Track is enabled, these keys also drive it: `'` tracks forward, and `;` rewinds and
-deletes the tracked points as it goes, user points included. A rewind with `;` also moves the
-Start Time back. The Start Time does not move while `'` is tracking, but the first hold of `'`
-can move it forward before tracking starts. See [Point Tracking](PointTrack.md).
+`Alt` is needed because **Sitrec → Settings → Require Alt for Shortcuts** is on by default
+(see [Keyboard Shortcuts](KeyboardShortcuts.md#keys-that-need-alt)). With it off, `;` and `'`
+work without Alt, and `Alt` makes them ×1000.
+
+Point Track uses `;` and `'` without Alt: `'` tracks forward, and `;` rewinds and deletes the
+tracked points as it goes, user points included. See [Point Tracking](PointTrack.md). With
+**Require Alt for Shortcuts** off, the two uses mix: a rewind with `;` also moves the Start Time
+back, and the first hold of `'` can move it forward before tracking starts.
 
 The full list of keys is in [Keyboard Shortcuts](KeyboardShortcuts.md).
 
@@ -478,7 +482,7 @@ The full list of keys is in [Keyboard Shortcuts](KeyboardShortcuts.md).
 4. Go to that frame. Then change the **Hour**, **Minute**, **Second** and **ms** sliders
    (or press **G** and type the time) until the simulation shows the same event on that
    frame.
-5. To move the time by a large amount, hold `;` or `'` and watch the look view. Each second
+5. To move the time by a large amount, hold `Alt`+`;` or `Alt`+`'` and watch the look view. Each second
    that you hold a key moves the time by tens of seconds. For a finer correction, use the
    **Second** and **ms** sliders.
 6. Check a second event near the other end of the video. If the first event lines up and
@@ -505,8 +509,8 @@ The rate you set is saved with the sitch.
 
 ### Trim to the interesting part
 
-1. Go to the first frame you want, and press **I**.
-2. Go to the last frame you want, and press **O**.
+1. Go to the first frame you want, and press **Alt+I**.
+2. Go to the last frame you want, and press **Alt+O**.
 
 Or drag the green and red lines on the playback bar. Playback now loops between the two
 frames (turn on **In-Out Pingpong** to go back and forth), and video renders include only
@@ -549,7 +553,7 @@ Use this for a video of the night sky that has no track to sync to, such as a ph
 2. Point the look view at the same part of the sky, and match the field of view.
    [Recreating a Starlink Situation](Starlink.md#recreating-a-starlink-situation) shows how.
 3. Raise **Vid Overlay Trans %** in the View menu to see the video over the look view.
-4. Hold `;` or `'`, or change the **Minute** and **Second** sliders, until the stars in the
+4. Hold `Alt`+`;` or `Alt`+`'`, or change the **Minute** and **Second** sliders, until the stars in the
    look view match the video.
 
 The sky turns 15° per hour, which is 0.25° per minute, so stars can show an error of minutes,

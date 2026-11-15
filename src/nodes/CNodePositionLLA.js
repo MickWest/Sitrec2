@@ -11,7 +11,8 @@ import {CNode} from "./CNode";
 import {CNodeTrack} from "./CNodeTrack";
 import {V3} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
-import {isKeyHeld} from "../KeyBoardHandler";
+import {altShortcutHeld, isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
+import {isAltShortcut} from "../AltShortcuts";
 import {adjustHeightAboveGround, elevationAtLL, getTilesPointBelow} from "../threeExt";
 import {getLocalUpVector} from "../SphericalMath";
 import {assert} from "../assert";
@@ -458,7 +459,12 @@ export class CNodePositionLLA extends CNodeTrack {
     update() {
         this._refineAGLToTiles();
         if (this.key) {
-            const posHeld = isKeyHeld(this.key.toLowerCase());
+            // C and X are Alt shortcuts (AltShortcuts.js). Read the physical key: on a Mac,
+            // Option+C gives "ç", so isKeyHeld('c') would never see it.
+            const code = "Key" + this.key.toUpperCase();
+            const posHeld = isAltShortcut(code)
+                ? isKeyCodeHeld(code) && altShortcutHeld()
+                : isKeyHeld(this.key.toLowerCase());
             if (posHeld) {
                 const cursorPos = getCursorPositionFromTopView();
                 if (cursorPos) {

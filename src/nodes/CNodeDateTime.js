@@ -1,7 +1,8 @@
 import {Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, setSitchEstablished, Sit, TrackManager} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
-import {isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
+import {altShortcutHeld, isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
+import {isAltRequired} from "../AltShortcuts";
 import {forceUpdateUIText} from "./CNodeViewUI";
 import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "../lil-gui-extras";
 import {assert} from "../assert";
@@ -1439,21 +1440,27 @@ export class CNodeDateTime extends CNode {
             this.refreshingUI = false;
         }
 
-        var speedscale = 1;
-        if (isKeyHeld('shift'))
-            speedscale *= 10
-        if (isKeyHeld('control'))
-            speedscale *= 100
-        if (isKeyHeld('alt'))
-            speedscale *= 1000
-        if (isKeyHeld('meta'))
-            speedscale *= 10000
+        // ; and ' nudge the Start Time. While "Require Alt for Shortcuts" is on (AltShortcuts.js)
+        // they need Alt, so Alt cannot also be the x1000 multiplier; only Shift (x10) is left.
+        // (Ctrl and Cmd never reach KeyMan, so those two multipliers have never had an effect.)
+        const altRequired = isAltRequired();
+        if (altShortcutHeld()) {
+            var speedscale = 1;
+            if (isKeyHeld('shift'))
+                speedscale *= 10
+            if (isKeyHeld('control'))
+                speedscale *= 100
+            if (!altRequired && isKeyHeld('alt'))
+                speedscale *= 1000
+            if (isKeyHeld('meta'))
+                speedscale *= 10000
 
-        if (isKeyCodeHeld('Semicolon')) {
-            this.AdjustStartTime(-1000*speedscale)
-        }
-        if (isKeyCodeHeld('Quote')) {
-            this.AdjustStartTime(1000*speedscale)
+            if (isKeyCodeHeld('Semicolon')) {
+                this.AdjustStartTime(-1000*speedscale)
+            }
+            if (isKeyCodeHeld('Quote')) {
+                this.AdjustStartTime(1000*speedscale)
+            }
         }
 
         // if (isKeyCodeHeld('BracketLeft')) {

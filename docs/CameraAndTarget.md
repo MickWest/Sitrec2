@@ -57,9 +57,9 @@ goes back to the Manual position.
 | *An imported track* | Each track you import is added to this list. In a new sitch, the first track you import is selected as the camera position. If that first import is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks first. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). After you set up the camera, time or position yourself, imported tracks do not change them, even after **Remove All Tracks**. |
 | *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to put the camera at the **Lat**, **Lon** and **Alt** of that object. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
-Holding **C** with the pointer over a 3D view moves the Manual camera position to the
+Holding **Alt+C** with the pointer over a 3D view moves the Manual camera position to the
 point under the pointer, and keeps its altitude. If the Position was following an imported track, this switches
-it back to **Manual**. **Shift+C** also puts the camera 7 ft above the ground.
+it back to **Manual**. **Alt+Shift+C** also puts the camera 7 ft above the ground.
 
 ### Heading sources (Camera → Heading → Camera Heading)
 
@@ -156,7 +156,7 @@ While it is on, it replaces the **Roll** value.
 Set **Camera → Location → Position** to **Orbit** to fly the camera in a circle. The circle is set in
 **Camera → Camera Tweaks** (see [below](#camera--camera-tweaks)). Orbit only moves the
 camera. To keep it looking at the center, also set **Camera Heading** to **To Target**
-and put the target at the same place with **Shift+X**, or on the same track.
+and put the target at the same place with **Alt+Shift+X**, or on the same track.
 
 ### Camera → Heading
 
@@ -334,8 +334,8 @@ is measured at it.
 | *An imported track* | Each imported track is added here. Select one to make it the target. If the first import into a new sitch is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks whether to use them as camera and target. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). |
 | *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to make the object the target. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
-Holding **X** with the pointer over a 3D view moves the fixed target to the point under the
-pointer, and keeps its altitude. **Shift+X** puts it 7 ft above the ground. The Target
+Holding **Alt+X** with the pointer over a 3D view moves the fixed target to the point under the
+pointer, and keeps its altitude. **Alt+Shift+X** puts it 7 ft above the ground. The Target
 Lat/Lon/Alt only have an effect when **Target Track** is **Manual** or **Manual +
 Wind**.
 
@@ -370,16 +370,16 @@ Wind**.
 
 1. Set **Camera → Location → Position** to **Manual**.
 2. Type the address or coordinates into **Lookup** and press Enter. The camera moves
-   there, at ground height, and the terrain follows. Or hold **Shift+C** with the pointer over the spot in the main
+   there, at ground height, and the terrain follows. Or hold **Alt+Shift+C** with the pointer over the spot in the main
    view, to put the camera 7 ft above the ground there.
 3. For a fixed height above the ground, tick **Above Ground Level** and set **Cam [C] Alt**
    to that height, for example 5.6 ft (1.7 m) for a standing person. The label shows the
    unit.
 4. Aim the camera in one of two ways:
    - Leave **Camera Heading** on **Manual** and set **Pan (Az)** and **Tilt (El)**.
-   - Or set **Target Track** to **Manual**, hold **Shift+X** over the thing the camera
+   - Or set **Target Track** to **Manual**, hold **Alt+Shift+X** over the thing the camera
      looks at, and set **Camera Heading** to **To Target**. Shift+X puts the target 7 ft
-     above the ground there. Plain **X** keeps the target's altitude, which is 5,000 m
+     above the ground there. Plain **Alt+X** keeps the target's altitude, which is 5,000 m
      (16,404 ft) in a new sitch.
 5. Set the field of view with **VFOV (deg)**, or type the phone's or camera's 35mm
    equivalent focal length into **35mm Equiv (mm)**. Look for this number in the
@@ -406,12 +406,12 @@ target does not move.
 ### Orbit around a point, for a presentation
 
 1. Put the center of the orbit somewhere the camera can circle:
-   - To circle a fixed place, set **Position** to **Manual** and hold **C** over the place
+   - To circle a fixed place, set **Position** to **Manual** and hold **Alt+C** over the place
      (or type it into **Lookup**). Leave **Camera → Camera Tweaks → Orbit Target** on
      **Manual Camera**.
    - To circle a moving object, choose its track in **Orbit Target**.
-2. Put the target at the same place: hold **Shift+X** over it with **Target Track** on
-   **Manual**, or choose the same track in **Target Track**. Plain **X** keeps the
+2. Put the target at the same place: hold **Alt+Shift+X** over it with **Target Track** on
+   **Manual**, or choose the same track in **Target Track**. Plain **Alt+X** keeps the
    target's altitude, which is 5,000 m (16,404 ft) in a new sitch.
 3. Set **Orbit Radius (m)**, **Orbit Altitude (m)**, **Start Angle (°)** and **Orbit
    Period (s)** in **Camera → Camera Tweaks**.

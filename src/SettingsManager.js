@@ -162,6 +162,10 @@ export function sanitizeSettings(settings) {
         sanitized.showFilename = settings.showFilename;
     }
 
+    if (settings.requireAltForShortcuts !== undefined && typeof settings.requireAltForShortcuts === "boolean") {
+        sanitized.requireAltForShortcuts = settings.requireAltForShortcuts;
+    }
+
     // "" = no selection (the classic look), "dark" or "light". See Theme.js.
     if (settings.theme !== undefined && ["", "dark", "light"].includes(settings.theme)) {
         sanitized.theme = settings.theme;
@@ -463,6 +467,7 @@ export async function initializeSettings() {
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay
             showFilename: true, // Show the current video filename in the bottom overlay
+            requireAltForShortcuts: true, // Shortcut keys that change things need Alt/Option (AltShortcuts.js)
             language: "en", // UI language
             theme: "", // UI theme: "" = no selection (classic look), "dark" or "light" (Theme.js)
 

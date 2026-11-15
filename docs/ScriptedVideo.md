@@ -82,7 +82,7 @@ cyan lines are edges of the look camera's field of view.
 The sitch's own playhead advances linearly across the whole scripted duration, from the
 sitch's **In** frame to its **Out** frame, so the world (an aircraft flying its
 track, a satellite moving, the sun setting) animates *while* the camera moves. In and Out mark the
-part of the sitch that plays. Set them with the `I` and `O`
+part of the sitch that plays. Set them with the `Alt`+`I` and `Alt`+`O`
 [keys](TimeAndSync.md#keys-for-time-and-frames). By default they are the first and last frames.
 To control which moment of the world each shot shows, see [World time](#world-time).
 

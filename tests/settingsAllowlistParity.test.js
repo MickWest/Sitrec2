@@ -58,7 +58,7 @@ describe('settings allowlist parity', () => {
         const phpSource = fs.readFileSync(path.join(ROOT, 'sitrecServer', 'settings.php'), 'utf8');
         const keys = [
             'enableOldAIModels', 'byokSitrecFocused', 'centerSidebar', 'showAttribution', 'showFilename',
-            'startupLocation', 'startupBuildings',
+            'requireAltForShortcuts', 'startupLocation', 'startupBuildings',
         ];
 
         for (const key of keys) {

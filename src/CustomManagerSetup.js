@@ -22,6 +22,7 @@ import {
     TrackManager
 } from "./Globals";
 import {toggler} from "./KeyBoardHandler";
+import {ALT_SHORTCUTS, altModifierOK, isAltRequired, isAltShortcut} from "./AltShortcuts";
 import {setupHorizonExtractorMenu} from "./CHorizonExtractor";
 import {importADSBTraceDialog} from "./ADSBTraceFetch";
 import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
@@ -2616,7 +2617,16 @@ export const setupMethods = {
             })
 
         EventManager.addEventListener("keydown", (data) => {
-            const keypress = data.key.toLowerCase();
+            // While "Require Alt for Shortcuts" is on, only Alt+1 to Alt+8 on the number row
+            // switch presets (AltShortcuts.js). Read the physical key: on a Mac Option+1 gives
+            // "¡". With the setting off, any digit works, as before.
+            let keypress;
+            if (isAltRequired()) {
+                if (!isAltShortcut(data.keyCode) || !altModifierOK(data.event)) return;
+                keypress = ALT_SHORTCUTS[data.keyCode].key;
+            } else {
+                keypress = data.key.toLowerCase();
+            }
             // if it's a number key, then switch to the corresponding view preset
             // in this.viewPreset
             if (keypress >= '0' && keypress <= '9') {

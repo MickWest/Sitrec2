@@ -12,7 +12,7 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 
 1. Load a video of the night sky and open **Video → Star Tracker**.
 2. If trees, buildings or burned-in text are in the frame, mask them first. See [Masking out the ground](#masking-out-the-ground).
-3. Set the **In** and **Out** markers on the timeline (press **I** and **O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
+3. Set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
 4. Click **Star Tracker Analysis**.
 5. Wait. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, and with the resolution and busyness of the footage. Press **Enough (solve what we have)** at any point to stop scanning and solve what has been measured so far.
 
@@ -53,7 +53,7 @@ To check the match, compare the stars in the look view with the stars in the vid
   - *brightness* sigma, used by **Detect threshold** — how much the sky's brightness flickers from pixel to pixel. A detection must stand this far above the local sky.
   - *position* sigma, used by everything that judges movement — how much a well-measured point wanders between frames, in pixels. This is the one **Find Candidate Stars** reports on the Status line.
 - **PSF** — point spread function; how big a single star's blob is in pixels. Cameras and focus settings differ, so this is measured rather than assumed.
-- **In/Out range** — the In and Out markers on the timeline, the same pair every other Sitrec analysis uses. Set them with the **I** and **O** keys at the current frame, with **Time → In Frame [I]** and **Out Frame [O]**, or by dragging the markers.
+- **In/Out range** — the In and Out markers on the timeline, the same pair every other Sitrec analysis uses. Set them with **Alt+I** and **Alt+O** at the current frame, with **Time → In Frame [I]** and **Out Frame [O]**, or by dragging the markers.
 - **RA/Dec** — right ascension and declination: longitude and latitude on the sky. A fixed address for a star, independent of where you are or when you look.
 - **optical axis** — the point in the image the lens looks straight out through. Normally the centre of the picture, but **not** in footage that has been cropped off-centre.
 - **plate solve** — working out where a picture of the sky is pointing by identifying the stars in it, with no starting guess. That is what [Identify](#identifying-the-stars) does.

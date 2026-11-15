@@ -10,7 +10,7 @@ Standards Board) metadata, and the optional simulations of analog video and of f
 
 ## Quick export
 
-1. Set the In and Out frames (`I` and `O`) around the part you want.
+1. Set the In and Out frames (`Alt`+`I` and `Alt`+`O`) around the part you want.
 2. In **Video → Video Render & Export**, press **Render Viewport Video**.
 3. The render dialog opens. Leave it as it is and press **Render**.
 
@@ -37,7 +37,7 @@ It advances the same frame sequence as the others and captures the screen at eac
 the result is the same clip, not a screencast. A-B in a label or tooltip means the In/Out range.
 
 For a side-by-side of video and simulation, use **Render Viewport Video** and set up the
-layout first with the view presets (`1`–`8`).
+layout first with the view presets (`Alt`+`1` to `Alt`+`8`).
 
 The renders do not include every mark on screen. Viewport renders and a single-view render of the
 video view include the Video Readout, annotations, the Motion Analysis overlay and, while
@@ -302,10 +302,10 @@ The fade needs a loaded video, and *Render Video View* must be a view with that 
 
 A few things that make more difference than the settings do:
 
-1. **Set the layout first.** Use a view preset (`1`–`8`), then hold `Q` to fine-tune. The viewport
+1. **Set the layout first.** Use a view preset (`Alt`+`1` to `Alt`+`8`), then hold `Q` to fine-tune. The viewport
    render captures that layout. Every render also stamps the Sitrec version at the top right and
    the map and data attribution at the bottom right, except *Render Source Video*.
-2. **Set the In/Out range** (`I` and `O`) so you export the part that matters.
+2. **Set the In/Out range** (`Alt`+`I` and `Alt`+`O`) so you export the part that matters.
 3. **Turn on *Wait for background loading*** so the terrain is fully resolved.
 4. **Check the frame rate.** At normal speed the output runs at the sitch's own frame rate.
    Speeding playback up past 1× caps the output at 60 fps (dropping frames rather than

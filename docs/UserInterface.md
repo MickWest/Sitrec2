@@ -219,7 +219,7 @@ An icon whose control is off is drained of color and dimmed, so a glance along t
 
 Free Look is also the one icon that stays on screen when the header is hidden. It sits exactly where it would be on the bar, and it is a working button: press it and you are back out of the mode. With a mouse you will usually not need to — moving the pointer up to it brings the bar in around it, and you press the real one — but on a touch screen, where there is no hover to bring the bar back, it is the way out. Nothing shows there when Free Look is off.
 
-Because those sources are suspended, touching any of them switches Free Look off first: change anything under Camera → Location or Camera → Heading — or press **C** to drop the camera on the point under the cursor — and the camera comes back off the mouse, with **Free look disabled** shown briefly over the look view. Nothing is lost: the camera stays where you flew it, and the control you just reached for takes effect from there.
+Because those sources are suspended, touching any of them switches Free Look off first: change anything under Camera → Location or Camera → Heading — or press **Alt+C** to drop the camera on the point under the cursor — and the camera comes back off the mouse, with **Free look disabled** shown briefly over the look view. Nothing is lost: the camera stays where you flew it, and the control you just reached for takes effect from there.
 
 Camera → FOV (Zoom) is the exception, because the field of view is not part of the pose and is never suspended. VFOV, HFOV, 35mm Equiv and Shift + the wheel all keep working while you fly, so you can frame what you have flown to without leaving the mode.
 

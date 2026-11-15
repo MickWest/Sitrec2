@@ -90,7 +90,10 @@ export function SetupMouseHandler() {
         if (e.repeat) return;
         if (e.ctrlKey || e.metaKey) return;
         const key = e.key.toLowerCase();
-        if (key !== 'c' && key !== 'x' && key !== 'v' && key !== 'b') return;
+        // C and X by their physical key: they take Alt (AltShortcuts.js), and Option+C on a
+        // Mac gives "ç".
+        const positionKey = e.code === 'KeyC' || e.code === 'KeyX' || key === 'v' || key === 'b';
+        if (!positionKey) return;
         const active = document.activeElement;
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
         const view = getTopViewWithCursor();

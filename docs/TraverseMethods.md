@@ -79,7 +79,7 @@ The method's Fit Diagnostics folder (e.g. "Constant Velocity Fit Diagnostics") r
 | **Analysis Snapshot (created by Analyze)** | — | (none) | The exact track of the gallery result you applied with **Use exact “*name*”**, stored as a snapshot. It is not re-fitted; to change an assumption, run Analyze again. | Whatever that result assumed | Nothing new — it replays an analysis result |
 
 **In/Out range.** Every Global Fit method fits the sightlines inside the
-In/Out range (the I/O keys) when one is set, and holds its endpoint
+In/Out range (Alt+I / Alt+O) when one is set, and holds its endpoint
 positions outside it, so no motion is claimed there. The
 traverse analysis gallery fits the same range, so a fit applied from the
 gallery reproduces the same solution. Setting In/Out re-fits the selected

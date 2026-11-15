@@ -94,7 +94,7 @@ This table gives the surface behind the numbers you read:
 | Number or action | Terrain drawn | Under Google 3D tiles |
 |---|---|---|
 | Altitude in **Above Ground Level** mode, and the **Traverse Alt (AGL)** readout | (3) | (4) where a usable tile is loaded, otherwise (3) |
-| A point picked in a view: the cursor, `C`, `X` | (5) | (4), or (5) where the pick misses the tiles |
+| A point picked in a view: the cursor, `Alt`+`C`, `Alt`+`X` | (5) | (4), or (5) where the pick misses the tiles |
 | A camera or object on a track, kept above the ground | (3) | (4) where a usable tile is loaded, otherwise (3) |
 | **Lock Altitude** with **Height From** set to Ground, and track altitudes imported as AGL | (3) | (3) |
 | Traverse analysis: the underground test and the ground contact modes | (3) | (3) |

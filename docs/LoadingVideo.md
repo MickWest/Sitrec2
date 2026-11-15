@@ -136,7 +136,7 @@ where you put it until you change the view preset.
 
 A video in the second view does not define the sitch timeline. Its menu entries have
 **(2)** after the name. **Video → Lock to In Frame (2)** plays it relative to the In frame
-(set with the **I** key): its first frame is shown when the playhead reaches the In frame.
+(set with **Alt+I**): its first frame is shown when the playhead reaches the In frame.
 
 ### Time and location in a video file
 
@@ -503,11 +503,12 @@ While **Edit Mode** is on, these keys pick a tool:
 With the Select tool, **Delete** or **Backspace** removes the selected stroke. The toolbar also
 has **Undo last stroke** (Ctrl+Z) and **Clear all** buttons.
 
-> **These keys also reach Sitrec's normal shortcuts.** While Edit Mode is on, a tool key does
-> not stop the global action for the same key. For example, **I** also sets the **In frame**,
-> and **E** also toggles extending tracks to the ground. See
-> [Keyboard Shortcuts](KeyboardShortcuts.md). Turn Edit Mode off when you have finished
-> drawing.
+> **Some tool keys also reach Sitrec's normal shortcuts.** While Edit Mode is on, a tool key
+> does not stop the global action for the same key. For example, **B** also sets the end of the
+> V/B measurement. With **Sitrec → Settings → Require Alt for Shortcuts** off, more keys do this:
+> **I** also sets the **In frame**, and **E** also toggles extending tracks to the ground. See
+> [Keyboard Shortcuts](KeyboardShortcuts.md#keys-that-need-alt). Turn Edit Mode off when you
+> have finished drawing.
 
 ---
 

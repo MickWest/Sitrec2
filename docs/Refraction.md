@@ -207,7 +207,7 @@ Refraction changes where things are *drawn*. These stay geometric:
 - Lines of sight, and the traverses built on them. Each line is straight (it is drawn lifted,
   like everything else in the scene)
 - Horizon distances in Sitrec's calculations. They do not change with the refraction settings
-- Most ground picks, such as the `C` and `X` keys and the right-click menu. They follow the
+- Most ground picks, such as the `Alt`+`C` and `Alt`+`X` keys and the right-click menu. They follow the
   straight ray through the cursor, so at long range they land beyond the ground drawn under it
 
 These results do depend on refraction, because they match the drawn scene or the drawn sky:

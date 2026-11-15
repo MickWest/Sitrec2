@@ -63,8 +63,8 @@ pass in one second of frames: 30 for a 30× time-lapse. It does not change how f
 plays. *Playback Speed* is how fast the frames advance when you play. It does not change the time
 of any frame.
 
-**In and Out frames** — the first and last frames of the interval you are analysing, set with `I`
-and `O`. Every global fit and the whole traverse analysis use only the frames in this **In/Out
+**In and Out frames** — the first and last frames of the interval you are analysing, set with `Alt`+`I`
+and `Alt`+`O`. Every global fit and the whole traverse analysis use only the frames in this **In/Out
 range**. A-B in a label means the In/Out range.
 
 **Frustum** — the pyramid of space a camera can see. The **Crosses Frustum** option in **Filter

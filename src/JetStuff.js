@@ -104,6 +104,7 @@ import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {Frame2Az, Frame2El, jetPitchFromFrame} from "./JetUtils";
 import {MakeTraverseNodesMenu} from "./MakeTraverseNodesMenu";
+import {shortcutLabel} from "./AltShortcuts";
 import {Ball, EOSU, PODBack, PodFrame} from "./nodes/ATFLIRVars";
 import {
     aSphere,
@@ -279,20 +280,25 @@ export function UpdateHUD(text="") {
     // keyInfo += navigator.platform+"<br>"
 
     if (par.showKeyboardShortcuts) {
+        // shortcutLabel() writes "Opt+F" / "Alt+Shift+F" while Settings > Require Alt for Shortcuts
+        // is on, else just "F" (AltShortcuts.js). This runs every frame, so the overlay
+        // follows the setting at once.
+        const k = shortcutLabel;
         keyInfo = text +
             "Q - Move/Edit Views<br>" +
-            "F - Full Screen<br>" +
-            "U - Toggle UI (menus)<br>" +
+            k("F") + " - Full Screen<br>" +
+            k("U") + " - Toggle UI (menus)<br>" +
             "Num-1 - Z Axis Snap<br>" +
             "Num-7 - Y Axis Snap<br>" +
             "Num-3 - X Axis Snap<br>" +
             "Num-9 - 180° view toggle<br>" +
             "Num-. - Reset Camera<br>" +
-            "< - Frame Back<br>" +
-            "> - Frame Forward<br>" +
+            ", - Frame Back<br>" +
+            ". - Frame Forward<br>" +
+            "< / > - Previous/Next marker, In/Out or keyframe<br>" +
             "G - Go To frame/time/coords/place<br>" +
-            "I - Set In Frame<br>" +
-            "O - Set Out Frame<br>" +
+            k("I") + " - Set In Frame<br>" +
+            k("O") + " - Set Out Frame<br>" +
             "Space Play/Pause<br>" +
             "Left - Backwards<br>" +
             "Right - Forwards<br>" +

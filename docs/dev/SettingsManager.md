@@ -165,6 +165,7 @@ The defaults below are defined in `initializeSettings()`. Accepted values are de
 | `centerSidebar` | Boolean coercion | `false` | Enable the center sidebar |
 | `showAttribution` | Boolean coercion | `true` | Show map/elevation attribution |
 | `showFilename` | Boolean coercion | `true` | Show the current video filename overlay |
+| `requireAltForShortcuts` | Boolean coercion | `true` | Shortcut keys that change the sitch or the screen need Alt (Option on a Mac) |
 | `language` | Lowercase two-letter code | `en` | Interface language |
 | `envOverride` | Text of 20,000 characters or fewer | `""` | The user's SITREC_ ENV Override (see below) |
 
