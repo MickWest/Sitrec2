@@ -1,37 +1,26 @@
-// Faster tooltips for the view header-bar buttons (CUIBar).
+// Styled tooltips for the view header and toolbar buttons (CUIBar).
 //
-// Sitrec's tooltips are all plain `title` attributes — Controller.prototype.tooltip in
-// lil-gui-extras.js sets domElement.title, and the hand-built panels write title="..."
-// inline. The delay before a NATIVE tooltip appears belongs to the browser (about a
-// second in Chrome) and no CSS property or JS setting can shorten it. The only lever is
-// to suppress the native tooltip and draw our own.
-//
-// That is done ONLY for the header-bar buttons: glyphs with no words, where the tooltip is
-// the only way to learn what a button does. Everything else, menu items included, keeps
-// the browser's own tooltip.
-//
-// One delegated listener borrows the hovered button's `title` (removing the attribute is
-// what stops the browser drawing its own), shows a styled div after TOOLTIP_DELAY_MS, and
-// hands the attribute back on the way out.
+// These buttons keep their text in data-tooltip, with an empty title to suppress native
+// tooltips (including inherited titles). Menu items keep the browser's own tooltips.
 
 // How long the pointer must rest on a button before its tooltip appears.
-export const TOOLTIP_DELAY_MS = 250;
+export const TOOLTIP_DELAY_MS = 1500;
 
 // Once a tooltip has been shown, moving to another button within this window shows the
 // next one with no delay at all. This is the usual desktop-UI behavior, and it is what
 // actually makes the bar feel fast when you scan along its row of buttons.
 export const TOOLTIP_WARM_MS = 600;
 
-// The elements that get the fast tooltip: CUIBar's icon buttons, and the "peek" copies of
+// The elements that get the styled tooltip: CUIBar's icon buttons, and the "peek" copies of
 // them that stand in while the bar is hidden.
-const FAST_TOOLTIP_SELECTOR = ".view-uibar-icon, .view-uibar-peek";
+const TOOLTIP_SELECTOR = ".view-uibar-icon, .view-uibar-peek";
 
 let tipEl = null;
 let showTimer = null;
 let coolTimer = null;
 let warm = false;               // true = the next tooltip appears immediately
 
-let hostEl = null;              // the element whose title we have borrowed
+let hostEl = null;              // the hovered button
 let hostText = "";
 let addedAria = false;          // true if the aria-label below is ours to remove
 
@@ -49,23 +38,33 @@ function ensureTip() {
     return tipEl;
 }
 
-// Take the title off the element so the browser will not draw its own tooltip. The
-// attribute is also the element's accessible name, so stand in for it while it is gone.
-function borrow(el, text) {
+// Use this for every update, including mirrored controls repainted during a hover.
+export function setTooltip(el, text) {
+    const value = text ?? "";
+    if (el.dataset.tooltip !== value) el.dataset.tooltip = value;
+    if (el.getAttribute("title") !== "") el.setAttribute("title", "");
+    if (el === hostEl && hostText !== value) {
+        hostText = value;
+        if (addedAria) el.setAttribute("aria-label", value);
+        if (!value) hide();
+        else if (tipEl?.classList.contains("visible")) {
+            tipEl.textContent = value;
+            position();
+        }
+    }
+}
+
+function activate(el) {
     hostEl = el;
-    hostText = text;
-    el.removeAttribute("title");
+    hostText = el.dataset.tooltip;
     if (!el.hasAttribute("aria-label") && !el.hasAttribute("aria-labelledby")) {
-        el.setAttribute("aria-label", text);
+        el.setAttribute("aria-label", hostText);
         addedAria = true;
     }
 }
 
-function giveBack() {
+function deactivate() {
     if (hostEl !== null) {
-        // Only restore if nothing has set a title in the meantime: a toggle button can swap
-        // its own title as it changes state, and that newer text must win.
-        if (!hostEl.hasAttribute("title")) hostEl.setAttribute("title", hostText);
         if (addedAria) hostEl.removeAttribute("aria-label");
     }
     hostEl = null;
@@ -75,12 +74,9 @@ function giveBack() {
 
 // The header-bar button under `node`, if it has a tooltip to show.
 function findHost(node) {
-    const el = (node && node.closest) ? node.closest(FAST_TOOLTIP_SELECTOR) : null;
+    const el = (node && node.closest) ? node.closest(TOOLTIP_SELECTOR) : null;
     if (el === null) return null;
-    // The button whose title we borrowed has none while its tip is up; it is still the host.
-    if (el === hostEl) return el;
-    const title = el.getAttribute("title");
-    return (title !== null && title.trim() !== "") ? el : null;
+    return el.dataset.tooltip?.trim() ? el : null;
 }
 
 function position() {
@@ -119,7 +115,7 @@ function hide() {
         clearTimeout(showTimer);
         showTimer = null;
     }
-    giveBack();
+    deactivate();
     if (tipEl !== null) tipEl.classList.remove("visible");
     if (warm) {
         if (coolTimer !== null) clearTimeout(coolTimer);
@@ -146,7 +142,7 @@ function onOver(e) {
     if (el === hostEl) return;
     hide();
     if (el === null) return;
-    borrow(el, el.getAttribute("title"));
+    activate(el);
     if (warm) show();
     else showTimer = setTimeout(show, TOOLTIP_DELAY_MS);
 }

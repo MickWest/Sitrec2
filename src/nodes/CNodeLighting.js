@@ -5,6 +5,7 @@ import {CNode} from "./CNode";
 import * as LAYER from "../LayerMasks";
 import {updateNightTexture} from "../Globe";
 import {t} from "../i18n";
+import {sharedMenuKey} from "../ViewUIBarMenus";
 
 // by default this will live in one node "lighting"
 export class CNodeLighting extends CNode {
@@ -94,7 +95,8 @@ export class CNodeLighting extends CNode {
 
         this._presetControllers.ambientIntensity =
             this.addGUIValue("ambientIntensity", 0, 2, 0.01, t("lighting.ambientIntensity.label"))
-                .tooltip(t("lighting.ambientIntensity.tooltip"));
+                .tooltip(t("lighting.ambientIntensity.tooltip"))
+                .shareAs(sharedMenuKey("ambientIntensity"));
         this._presetControllers.IRAmbientIntensity =
             this.addGUIValue("IRAmbientIntensity", 0, 2, 0.01, t("lighting.irAmbientIntensity.label"))
                 .tooltip(t("lighting.irAmbientIntensity.tooltip"));

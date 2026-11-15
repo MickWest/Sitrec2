@@ -908,7 +908,8 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
             title: "Move the Sitrec camera",
             description:
                 "Move the visible Sitrec camera to a validated geodetic latitude, longitude, "
-                + "and altitude in meters. Does not save or upload the situation.",
+                + "and altitude in meters, and drop a pin at the location. Use name for the "
+                + "location part of the user's request. Does not save or upload the situation.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -924,6 +925,10 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
                         type: "number", minimum: -1000, maximum: 100000000,
                         description: "Altitude in meters using the current Sitrec camera convention; defaults to 0.",
                     },
+                    name: {
+                        type: "string", maxLength: MAX_IDENTIFIER_LENGTH,
+                        description: "The requested location only, without navigation instructions, dates or times. Used as the pin label; defaults to coordinates.",
+                    },
                 },
                 required: ["lat", "lon"],
                 additionalProperties: false,
@@ -931,18 +936,20 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
             annotations: {readOnlyHint: false, untrustedContentHint: false},
         }, async (input, signal) => {
             const invalid = validateObject(input, {
-                allowed: ["lat", "lon", "alt"], required: ["lat", "lon"],
+                allowed: ["lat", "lon", "alt", "name"], required: ["lat", "lon"],
             })
                 ?? validateFiniteNumber(input.lat, "lat", -90, 90)
                 ?? validateFiniteNumber(input.lon, "lon", -180, 180)
                 ?? (input.alt === undefined
                     ? null
-                    : validateFiniteNumber(input.alt, "alt", -1000, 100000000));
+                    : validateFiniteNumber(input.alt, "alt", -1000, 100000000))
+                ?? (input.name === undefined ? null : validateString(input.name, "name"));
             if (invalid) return invalid;
             const notReady = requireReady(deps);
             if (notReady) return notReady;
 
             const requested = {lat: input.lat, lon: input.lon, alt: input.alt ?? 0};
+            if (input.name !== undefined) requested.name = input.name;
             const response = await callAPI(deps, "gotoLLA", requested, signal);
             if (!response.success) return response;
             try {

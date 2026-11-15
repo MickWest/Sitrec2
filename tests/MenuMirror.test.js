@@ -48,6 +48,30 @@ afterEach(() => {
 });
 
 describe("value and side effect", () => {
+    test.each(["registered", "direct"])("a %s slider mirror resets to the source's current default", (kind) => {
+        const state = {light: 0.35};
+        const source = makeGUI().add(state, "light", 0, 2, 0.01);
+        source.setValue(0.75);
+        registerMirrorSource("k", source);
+        const twin = kind === "registered" ? mirrorMenuItem("k", makeGUI()) : source.mirrorTo(makeGUI());
+        const change = jest.fn(), finish = jest.fn();
+        source.onChange(change).onFinishChange(finish);
+
+        const reset = () => twin.$name.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}));
+        reset();
+        expect(state.light).toBe(0.35);
+        expect(Number(source.$input.value)).toBe(0.35);
+        expect(Number(twin.$input.value)).toBe(0.35);
+        expect(change).toHaveBeenCalledTimes(1);
+        expect(finish).toHaveBeenCalledTimes(1);
+
+        source._defaultValue = 0.5;
+        reset();
+        expect(state.light).toBe(0.5);
+        expect(change).toHaveBeenCalledTimes(2);
+        expect(finish).toHaveBeenCalledTimes(2);
+    });
+
     test("a boolean twin shares the source's value and runs its side effect exactly once", () => {
         const state = {flag: false};
         const sideEffect = jest.fn();

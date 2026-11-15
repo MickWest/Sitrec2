@@ -1059,7 +1059,6 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.addVFRFixIcon();
         }
         this.vfrFixController.tooltip(tooltip);
-        if (this.vfrFixIcon) this.vfrFixIcon.title = tooltip;
         this.vfrFixController.updateDisplay();
     }
 

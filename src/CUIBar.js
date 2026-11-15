@@ -1,6 +1,7 @@
 import GUI from "./js/lil-gui.esm";
 import {Globals} from "./Globals";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
+import {setTooltip} from "./Tooltips";
 
 // Everything on a bar that is a thing in its own right rather than backdrop. A menu SLOT (not
 // the lil-gui root inside it) because the slot is the tab's box; the dropdown hangs outside it
@@ -21,7 +22,7 @@ const DROPDOWN_MARGIN_PX = 8;    // breathing room between the menu and the wind
 const DROPDOWN_MIN_PX = 80;      // never squash a low-docked view's menu to nothing
 
 /**
- * CUIBar — a per-view header / UI bar (Blender-style "area header").
+ * CUIBar — a per-view header or vertical tool bar.
  *
  * An OVERLAY strip floating above the top edge of a view's content. It NEVER insets the
  * canvas: the viewport always renders full-size and the bar is drawn on top (shown when
@@ -41,6 +42,7 @@ const DROPDOWN_MIN_PX = 80;      // never squash a low-docked view's menu to not
 export class CUIBar {
     constructor(host, options = {}) {
         this.host = host;
+        this.vertical = options.vertical ?? false;
         this.menus = [];
         this.icons = [];
         this.onPinToggle = null;
@@ -88,6 +90,21 @@ export class CUIBar {
         this.spacer.style.minWidth = '0';
         this.right = section('flex-end');
         bar.append(this.left, this.spacer, this.right);
+        if (this.vertical) {
+            bar.classList.add('view-toolbar');
+            Object.assign(bar.style, {
+                top: 'calc(var(--sitrec-header-h, 26px) + 8px)', left: '8px',
+                width: '48px', height: 'auto', padding: '4px', flexDirection: 'column',
+                border: '1px solid var(--sitrec-border-area, rgba(255,255,255,0.18))',
+                borderRadius: '6px', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                transition: 'opacity 0.2s ease',
+            });
+            for (const section of [this.left, this.leftIcons, this.right]) {
+                Object.assign(section.style, {flexDirection: 'column', alignItems: 'stretch', gap: '4px'});
+            }
+            this.leftIcons.style.overflow = 'visible';
+            this.spacer.style.display = 'none';
+        }
         host.appendChild(bar);
 
         // Swallow the mouse events the document-level view handlers act on, so clicking the
@@ -245,12 +262,16 @@ export class CUIBar {
         btn.className = 'view-uibar-icon';
         btn.type = 'button';
         btn.innerHTML = html;
-        if (tooltip) { btn.title = tooltip; btn.setAttribute('aria-label', tooltip); }
+        if (tooltip) { setTooltip(btn, tooltip); btn.setAttribute('aria-label', tooltip); }
         if (action) btn.dataset.uibarAction = action;
         Object.assign(btn.style, {
             border: 'none', background: 'transparent', color: 'inherit',
             cursor: 'pointer', font: '13px sans-serif', padding: '0 6px',
             opacity: '0.7', pointerEvents: 'auto', borderRadius: '3px',
+        });
+        if (this.vertical) Object.assign(btn.style, {
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: '38px', height: '40px', padding: '0', fontSize: '24px',
         });
         btn.addEventListener('pointerenter', () => { btn._uibarHover = true; btn.style.opacity = '1'; });
         btn.addEventListener('pointerleave', () => { btn._uibarHover = false; btn.style.opacity = idleOpacity(btn); });
@@ -338,7 +359,7 @@ export class CUIBar {
         // One height for all of them, so the "on" highlight is the same band whether the icon
         // is a 15px drawing or an 11px line of text. WIDTH is left to the content: an icon that
         // says "100%" is wider than the bar is tall, which is the point of writing it out.
-        btn.style.height = '18px';
+        btn.style.height = this.vertical ? '40px' : '18px';
         // Tighter than the text chrome icons on the right, so a row of them packs.
         btn.style.padding = '0 3px';
         // The peek reads the CONTROL, not the button, and runs the same action: see _addPeek.
@@ -386,7 +407,7 @@ export class CUIBar {
         btn.style.display = 'none';
         btn.style.alignItems = 'center';
         btn.style.justifyContent = 'center';
-        btn.style.height = '18px';
+        btn.style.height = this.vertical ? '40px' : '18px';
         btn.style.padding = '0 3px';
         const paint = () => {
             if (!onTwin) return;
@@ -428,10 +449,11 @@ export class CUIBar {
     // header-menu row, the icon and the slider are faces of one value, and a change from any of
     // them - or from a sitch load or the API, through the twin's .listen() - moves all the others.
     // The icon lights while the value is not `offValue`.
+    // With toggle:false, clicking opens the slider without changing its value.
     //
     // While the slider is showing, the bar counts it as an open menu (hasOpenMenu), so moving
     // the pointer down onto it does not fade the bar out from under it.
-    addSliderIcon(key, {html, action, label, tooltip, offValue = 0, onValue = 0.5, left = true} = {}) {
+    addSliderIcon(key, {html, action, label, tooltip, offValue = 0, onValue = 0.5, left = true, toggle = true} = {}) {
         let twin = null;
         let lastOn;                            // the value it last held while on
 
@@ -440,8 +462,13 @@ export class CUIBar {
             const min = twin?._min ?? -Infinity, max = twin?._max ?? Infinity;
             return Math.min(max, Math.max(min, v));
         };
-        const click = () => {
+        const click = (event) => {
             if (!twin) return;
+            if (!toggle) {
+                popup.show();
+                if (event?.detail === 0) input.focus();
+                return;
+            }
             if (isOn()) twin.setValue(offValue);
             else twin.setValue(clamp(lastOn ?? onValue));
         };
@@ -450,7 +477,7 @@ export class CUIBar {
         btn.style.display = 'none';
         btn.style.alignItems = 'center';
         btn.style.justifyContent = 'center';
-        btn.style.height = '18px';
+        btn.style.height = this.vertical ? '40px' : '18px';
         btn.style.padding = '0 3px';
 
         // The popup hangs from the BAR, not from the icon strip, which clips; it is placed under
@@ -476,7 +503,24 @@ export class CUIBar {
         input.style.cursor = 'pointer';
         const readout = document.createElement('span');
         Object.assign(readout.style, {font: '11px sans-serif', minWidth: '2.6em', textAlign: 'right'});
-        el.append(input, readout);
+        let caption;
+        if (this.vertical) {
+            Object.assign(el.style, {width: '230px', padding: '10px', marginTop: '0', flexDirection: 'column', alignItems: 'stretch'});
+            caption = document.createElement('span');
+            caption.style.font = '600 12px sans-serif';
+            const row = section('flex-start');
+            row.style.gap = '8px';
+            Object.assign(input.style, {flex: '1', minWidth: '0', height: '24px'});
+            row.append(input, readout);
+            el.append(caption, row);
+        } else el.append(input, readout);
+        for (const target of [caption, readout]) {
+            target?.addEventListener('dblclick', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                twin?.resetToDefault();
+            });
+        }
         // The whole bar is a drag handle for the view: a press on the slider must not start one.
         el.addEventListener('pointerdown', (e) => e.stopPropagation());
         this.bar.appendChild(el);
@@ -497,11 +541,31 @@ export class CUIBar {
             input.step = twin._step > 0 ? String(twin._step) : 'any';
             if (Number(input.value) !== v) input.value = String(v);
             readout.textContent = Number(v).toFixed(decimals());
+            const name = label ?? twin._name;
+            input.setAttribute('aria-label', name);
+            if (caption) caption.textContent = name;
+            if (!toggle) {
+                btn.removeAttribute('aria-pressed');
+                btn.style.filter = 'none';
+                btn._uibarIdleOpacity = '0.9';
+                btn.style.opacity = btn._uibarHover ? '1' : '0.9';
+                btn.style.background = popup.open ? 'var(--sitrec-hover, #4f4f4f)' : 'transparent';
+            }
         };
         const popup = {el, open: false};
         const place = () => {
             const bar = this.bar.getBoundingClientRect(), b = btn.getBoundingClientRect();
             const w = el.offsetWidth;
+            if (this.vertical) {
+                const host = this.host.getBoundingClientRect();
+                const right = Math.min(host.right, window.innerWidth) - 4;
+                el.style.maxWidth = Math.max(100, right - Math.max(host.left, 0) - 4) + 'px';
+                const x = Math.max(host.left + 4, Math.min(bar.right + 6, right - el.offsetWidth));
+                const y = Math.max(host.top, Math.min(b.top, Math.min(host.bottom, window.innerHeight) - el.offsetHeight - 4));
+                el.style.left = (x - bar.left) + 'px';
+                el.style.top = (y - bar.top) + 'px';
+                return;
+            }
             const x = b.left - bar.left + b.width / 2 - w / 2;
             el.style.left = Math.max(2, Math.min(bar.width - w - 2, x)) + 'px';
         };
@@ -515,6 +579,8 @@ export class CUIBar {
             place();
             el.style.opacity = '1';
             popup.open = true;
+            btn.setAttribute('aria-expanded', 'true');
+            sync();
             if (opening) this.onMenuStateChange?.();
         };
         popup.close = (now = false) => {
@@ -524,36 +590,54 @@ export class CUIBar {
                 fadeTimer = null;
                 el.style.display = 'none';
                 if (popup.open) { popup.open = false; this.onMenuStateChange?.(); }
+                btn.setAttribute('aria-expanded', 'false');
+                sync();
             };
             el.style.opacity = '0';
             if (now) finish(); else fadeTimer = setTimeout(finish, POPUP_FADE_MS);
         };
         const scheduleHide = () => {
-            if (dragging || hovering > 0 || hideTimer) return;
+            if (dragging || hovering > 0 || hideTimer || btn.matches(':focus-visible') || el.querySelector(':focus-visible')) return;
             hideTimer = setTimeout(() => { hideTimer = null; popup.close(); }, POPUP_HIDE_DELAY_MS);
         };
         for (const target of [btn, el]) {
             target.addEventListener('pointerenter', () => { hovering++; popup.show(); });
             target.addEventListener('pointerleave', () => { hovering = Math.max(0, hovering - 1); scheduleHide(); });
+            target.addEventListener('focusin', () => popup.show());
+            target.addEventListener('focusout', () => queueMicrotask(scheduleHide));
         }
+        btn.setAttribute('aria-expanded', 'false');
+        el.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            btn.focus();
+            popup.close(true);
+        });
         // A drag that leaves the slider keeps it open until the button is released.
+        const finishDrag = () => {
+            dragging = false;
+            window.removeEventListener('pointerup', finishDrag);
+            window.removeEventListener('pointercancel', finishDrag);
+            scheduleHide();
+        };
         input.addEventListener('pointerdown', () => {
             dragging = true;
-            window.addEventListener('pointerup', () => { dragging = false; scheduleHide(); }, {once: true});
+            window.addEventListener('pointerup', finishDrag);
+            window.addEventListener('pointercancel', finishDrag);
         });
         input.addEventListener('input', () => {
             if (!twin || twin._disabled) return;
             twin.setValue(clamp(parseFloat(input.value)));
         });
         input.addEventListener('change', () => twin?._callOnFinishChange());
+        popup.dispose = () => { finishDrag(); popup.close(true); };
         (this._popups ??= []).push(popup);
 
         this._toggleHost().addMirror(key, {
             onMirror: (t) => {
                 twin = t;
                 lastOn = undefined;
-                bindControlIcon(btn, t, {label, tooltip});
-                andThen(t, 'updateDisplay', sync);
+                bindControlIcon(btn, t, {label, tooltip, onPaint: sync});
                 andThen(t, 'destroy', () => popup.close(true));
                 sync();
             },
@@ -706,8 +790,8 @@ export class CUIBar {
                 // Borrowed on the way in rather than at build time: bindControlIcon writes them
                 // when the source turns up, which is normally after the peek was made.
                 if (show) {
-                    ghost.title = btn.title;
-                    ghost.setAttribute('aria-label', btn.getAttribute('aria-label') ?? btn.title);
+                    setTooltip(ghost, btn.dataset.tooltip);
+                    ghost.setAttribute('aria-label', btn.getAttribute('aria-label') ?? btn.dataset.tooltip ?? '');
                     ghost.setAttribute('aria-pressed', 'true');
                 }
             }
@@ -881,7 +965,7 @@ export class CUIBar {
         }
         this.shown = false;
         for (const {ghost} of this._peeks ?? []) ghost.remove();
-        for (const popup of this._popups ?? []) popup.close(true);
+        for (const popup of this._popups ?? []) popup.dispose?.();
         this._popups = null;
         this._peeks = null;
         this.bar.remove();
@@ -911,7 +995,7 @@ function paintIcon(btn, on) {
 function bindControlIcon(btn, twin, {value, label, tooltip, onPaint} = {}) {
     const paint = () => {
         const name = tooltip ?? label ?? twin._name ?? '';
-        btn.title = tooltip ?? (twin._tooltip ? `${name} — ${twin._tooltip}` : name);
+        setTooltip(btn, tooltip ?? (twin._tooltip ? `${name} — ${twin._tooltip}` : name));
         btn.setAttribute('aria-label', name);
         btn.disabled = !!twin._disabled;
         btn.style.cursor = btn.disabled ? 'default' : 'pointer';

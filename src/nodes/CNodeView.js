@@ -14,6 +14,8 @@ import {ViewMan} from "../CViewManager";
 import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar, hudClipPath} from "../CUIBar";
+import {createMainViewToolbar} from "../CViewToolbar";
+import {setTooltip} from "../Tooltips";
 import {FRIENDLY_VIEW_NAMES, populateViewUIBarIcons, populateViewUIBarMenu} from "../ViewUIBarMenus";
 import {isKeyHeld} from "../KeyBoardHandler";
 import {par} from "../par";
@@ -273,6 +275,10 @@ class CNodeView extends CNode {
             // Phase 3: per-view header overlay (hover-reveal + pin). Additive chrome —
             // does NOT inset the canvas or change geometry/rendering/serialization.
             this.createViewHeader(v);
+            if (this.id === 'mainView' && this.uiBar) {
+                this.toolbarPinned = v.pinToolbar ?? false;
+                this.toolBar = createMainViewToolbar(this);
+            }
 
             const visibleToSet = this.visible;
             this.visible = undefined; // force update
@@ -747,7 +753,7 @@ class CNodeView extends CNode {
     //     }
     // }
 
-    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight","headerPinned"];
+    toSerialCNodeView = ["left","top","width","height","visible","doubled","preDoubledLeft","preDoubledTop","preDoubledWidth","preDoubledHeight","headerPinned","toolbarPinned"];
 
 
 
@@ -817,6 +823,7 @@ class CNodeView extends CNode {
         if (this.uiBar) {
             this.setHeaderPinned(this.headerPinned);
         }
+        this.toolBar?.setPinned(this.toolbarPinned);
 
         // Don't restore fullscreen here — that's deferred to
         // restoreFullscreenFromMods() which runs after ALL mods are applied,
@@ -852,6 +859,8 @@ class CNodeView extends CNode {
         this._removeRevealListener?.();
         this._removeRevealListener = null;
         this._cancelHeaderReveal();
+        this.toolBar?.dispose();
+        this.toolBar = null;
 
         // Dispose the per-view header/UI bar (destroys its hosted lil-gui menus) so they
         // don't leak on sitch reload. Owns its own DOM removal; null it so nothing reuses it.
@@ -1858,7 +1867,7 @@ class CNodeView extends CNode {
             this._popUnloadWired = true;
             window.addEventListener("pagehide", () => { if (this._poppedWindow && !this._poppedWindow.closed) this._poppedWindow.close(); });
         }
-        if (this._popIcon) this._popIcon.title = "Dock the window back";
+        if (this._popIcon) setTooltip(this._popIcon, "Dock the window back");
     }
 
     dockWindow() {
@@ -1878,7 +1887,7 @@ class CNodeView extends CNode {
         this.windowed = false;
         this._updateOwnDOM();
         setRenderOne(true);
-        if (this._popIcon) this._popIcon.title = "Pop out into a window";
+        if (this._popIcon) setTooltip(this._popIcon, "Pop out into a window");
     }
 
 }

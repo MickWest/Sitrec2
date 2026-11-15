@@ -1,4 +1,5 @@
 import {CNodeViewText} from "./CNodeViewText";
+import {setTooltip} from "../Tooltips";
 import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, withTestUser} from "../Globals";
 import {SITREC_APP, SITREC_SERVER, isNLULoggingUser} from "../configUtils";
 import {sitrecAPI} from "../CSitrecAPI";
@@ -532,7 +533,8 @@ class CNodeViewChat extends CNodeViewText {
             // opacity — so a live microphone stays fully lit when the pointer moves away.
             btn.dataset.uibarPinned = listening ? 'true' : 'false';
             btn.dataset.barPinned = listening ? 'true' : 'false';
-            btn.title = title;
+            if (btn === this.voiceButton) setTooltip(btn, title);
+            else btn.title = title;
             btn.setAttribute('aria-label', title);
         }
 

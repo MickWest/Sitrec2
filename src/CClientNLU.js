@@ -821,7 +821,8 @@ class CClientNLU {
                         slots: {
                             lat: located.lat,
                             lon: located.lon,
-                            alt: located.alt ?? 0
+                            alt: located.alt ?? 0,
+                            name: text
                         }
                     };
                 },
@@ -841,6 +842,13 @@ class CClientNLU {
                     // Returning null lets _tryMatch fall through to the later patterns.
                     const first = location.split(/\s+/)[0].toLowerCase();
                     if (NOT_A_PLACE_AFTER_BARE_GO.has(first) || COMMAND_KEYWORDS.includes(first)) {
+                        return null;
+                    }
+                    // Let the model separate longer requests. Otherwise their time or
+                    // next command becomes part of both the geocoder query and pin label.
+                    const nextCommand = location.match(/\s(?:and|then)\s+(\w+)/i)?.[1]?.toLowerCase();
+                    if ((nextCommand && COMMAND_KEYWORDS.includes(nextCommand))
+                        || /\s(?:at\s+(?:\d|noon\b|midnight\b)|on\s+\d)|\b(?:today|tomorrow|yesterday|tonight)\b/i.test(location)) {
                         return null;
                     }
                     return {intent: "GOTO_NAMED_LOCATION", slots: {location}};
@@ -1110,7 +1118,7 @@ class CClientNLU {
                 return sitrecAPI.call("setDateTime", {dateTime: slots.dateTime});
 
             case "GOTO_LLA":
-                return sitrecAPI.call("gotoLLA", {lat: slots.lat, lon: slots.lon, alt: slots.alt});
+                return sitrecAPI.call("gotoLLA", {lat: slots.lat, lon: slots.lon, alt: slots.alt, name: slots.name});
 
             case "GOTO_NAMED_LOCATION":
                 return this._geocodeAndGoto(slots.location);
@@ -1176,7 +1184,7 @@ class CClientNLU {
             const data = await response.json();
             if (data && data.length > 0) {
                 const {lat, lon} = data[0];
-                return sitrecAPI.call("gotoLLA", {lat: parseFloat(lat), lon: parseFloat(lon), alt: 0});
+                return sitrecAPI.call("gotoLLA", {lat: parseFloat(lat), lon: parseFloat(lon), alt: 0, name: locationName});
             }
             return {success: false, error: `Location not found: ${locationName}`, needsLLM: true};
         } catch (e) {

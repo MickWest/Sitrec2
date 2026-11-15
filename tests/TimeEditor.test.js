@@ -126,7 +126,7 @@ test("rows go from the date down to the paste field, and no row is in a closed s
     expect(editor.el("paste").placeholder).toBe("Paste a date & time");
 });
 
-test("Enter in the paste field sets the time, and Now once is still there", () => {
+test("Enter in the paste field sets the time, and Now is still there", () => {
     const paste = editor.el("paste");
     paste.value = "2025-03-04 05:06:07.089Z";
     paste.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
@@ -136,7 +136,7 @@ test("Enter in the paste field sets the time, and Now once is still there", () =
     paste.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
     expect(editor.el("error").textContent).not.toBe("");
     expect(state.now.toISOString()).toBe("2025-03-04T05:06:07.089Z");
-    expect(editor.root.querySelector('[data-action="now"]').textContent).toBe("Now once");
+    expect(editor.root.querySelector('[data-action="now"]').textContent).toBe("Now");
 });
 
 test("wheel scrolling over a focused digit does not change time", () => {

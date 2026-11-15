@@ -1,4 +1,5 @@
 import {CNodeView} from "./CNodeView";
+import {setTooltip} from "../Tooltips";
 import {guiShowHide, setRenderOne} from "../Globals";
 import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
 import {ViewMan} from "../CViewManager";
@@ -262,7 +263,7 @@ class CNodeNotes extends CNodeView {
         if (this.modeIcon) {
             this.modeIcon.style.display = links ? '' : 'none';
             this.modeIcon.innerHTML = editing ? '\u{1F517}' : '\u270E';
-            this.modeIcon.title = tip;
+            setTooltip(this.modeIcon, tip);
             this.modeIcon.setAttribute('aria-label', tip);
         }
 

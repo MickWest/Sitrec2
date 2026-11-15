@@ -268,6 +268,14 @@ function linkTwin(source, twin, opts) {
         forceUpdateDisplay(source);
     });
     twin.onFinishChange(() => source._callOnFinishChange());
+    // A later-created mirror must reset to the source's default, including any
+    // updates to that default, rather than the value held when the copy was built.
+    if (typeof source.resetToDefault === "function") {
+        twin.resetToDefault = function () {
+            if (!this._disabled) source.resetToDefault();
+            return this;
+        };
+    }
     const destroy = twin.destroy;
     twin.destroy = function (...args) {
         connection.twins.delete(this);

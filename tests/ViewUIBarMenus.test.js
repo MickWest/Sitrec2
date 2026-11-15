@@ -449,7 +449,7 @@ describe("populateViewUIBarIcons", () => {
         // The explanation is BORROWED from the control; the NAME is the menu row's short label,
         // which is not always what the control calls itself (the compass overlay's own switch
         // is named "compassMain").
-        expect(iconOf(view, "los").title).toBe("Lines of Sight — Show lines of sight");
+        expect(iconOf(view, "los").dataset.tooltip).toBe("Lines of Sight — Show lines of sight");
     });
 
     test("a staged icon cycles off, on, on with its stage, off, and both rows drive it", () => {
@@ -665,7 +665,7 @@ describe("populateViewUIBarIcons", () => {
         const icon = iconOf(view, "zoom");
         expect(icon.getAttribute("aria-pressed")).toBe("false");
         // Its own wording, because "Video Zoom %" does not describe what pressing it does.
-        expect(icon.title).toMatch(/^Video zoom 100%/);
+        expect(icon.dataset.tooltip).toMatch(/^Video zoom 100%/);
 
         icon.click();
         expect(state.zoom).toBe(100);
@@ -703,7 +703,7 @@ describe("populateViewUIBarIcons", () => {
             const {state, icon} = overlay(0.6);
             expect(icon.style.display).toBe("flex");
             expect(icon.getAttribute("aria-pressed")).toBe("true");
-            expect(icon.title).toMatch(/^Video overlay/);
+            expect(icon.dataset.tooltip).toMatch(/^Video overlay/);
 
             icon.click();
             expect(state.t).toBe(0);
@@ -799,7 +799,7 @@ describe("populateViewUIBarIcons", () => {
 
         const view = fakeBar("lookView");
         populateViewUIBarIcons(view);
-        expect(iconOf(view, "compass").title).toBe("Compass — Show/Hide the view: compassLook");
+        expect(iconOf(view, "compass").dataset.tooltip).toBe("Compass — Show/Hide the view: compassLook");
         expect(iconOf(view, "compass").getAttribute("aria-label")).toBe("Compass");
     });
 

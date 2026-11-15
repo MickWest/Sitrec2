@@ -43,6 +43,7 @@ import {TimelineMarkers} from "./TimelineMarkers";
 import {editTimelineMarkers, resetInOut} from "./TimelineMenu";
 import {t} from "./i18n";
 import {trackLinkSummaries} from "./TrackObjectLinks";
+import {FeatureManager} from "./CFeatureManager";
 
 // A timeline marker as it goes back to a caller, which can be the chat model. A label can
 // come from a shared sitch, so it is returned as a label only (one line, limited length), as
@@ -268,17 +269,18 @@ class CSitrecAPI {
         this.debug = isLocal;
 
         this.docs = {
-            gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt. Alt is the height above the ground in meters (optional, defaults to 2). Parameters: lat (float), lon (float), alt (float, optional).",
+            gotoLLA: "Move the camera to the location specified by Lat/Lon/Alt and drop a named pin there. Alt is the height above the ground in meters (optional, defaults to 2). Parameters: lat (float), lon (float), alt (float, optional), name (string, optional: the location part of the user's request).",
             setDateTime: "Set the date and time for the simulation. Parameter: dateTime (ISO 8601 string).",
         };
 
         this.api = {
             gotoLLA: {
-                doc: "Move the camera to the specified latitude and longitude, at a height above the ground. It turns on Above Ground Level for the camera.",
+                doc: "Move the camera to the specified latitude and longitude, at a height above the ground, and drop a pin on the ground there. It turns on Above Ground Level for the camera. Supply name using only the location from the user's request, without navigation instructions, dates, times or other commands.",
                 params: {
                     lat: "Latitude in degrees (float)",
                     lon: "Longitude in degrees (float)",
-                    alt: "Height above the ground in meters, not above sea level (float, optional, defaults to 2)"
+                    alt: "Height above the ground in meters, not above sea level (float, optional, defaults to 2)",
+                    name: "Pin label: the location as requested by the user, e.g. London for 'go to London at noon tomorrow' (string, optional; defaults to the coordinates)"
                 },
                 fn: (v) => {
                     const camera = NodeMan.get("fixedCameraPosition");
@@ -289,7 +291,8 @@ class CSitrecAPI {
                     if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) {
                         return { success: false, error: "lat and lon are required, in degrees" };
                     }
-                    camera.gotoLLA(v.lat, v.lon, v.alt)
+                    camera.gotoLLA(v.lat, v.lon, v.alt);
+                    FeatureManager.addLocationPin({lat: v.lat, lon: v.lon, name: v.name});
                     return { success: true };
                 }
             },

@@ -47,7 +47,7 @@ tool letters in **Edit Mode** and the Point Track keys `;` and `'` work without 
 | `←` / `→` | Step back / forward; hold to run continuously |
 | `↑` / `↓` | Scrub quickly backward / forward (10× speed) |
 | `<` and `>` (Shift+`,` / Shift+`.`) | Jump to the previous / next **timeline stop**: a timeline marker, the **In** or **Out** frame, or a **keyframe** a tool has published. Does nothing if there is no stop in that direction — it deliberately does not fall back to single-stepping. Right-click the timeline to add markers (see [Time, Frames and Syncing](TimeAndSync.md#the-playback-bar)) |
-| `G` | Go To: prompts for a frame number (jumps there and pauses; a frame outside the In/Out range becomes the new In or Out frame), a date and/or time (`12pm`, `15:20`, `17:33 UTC`, `12/25`, `Jan 6, 2020`), a coordinate in any format, a place name to fly the camera to, or the two or three lines of a TLE, which are loaded as a satellite. Pasting text onto Sitrec (Ctrl/Cmd+V outside a text field) runs it through the same parser |
+| `G` | Go To: prompts for a frame number (jumps there and pauses; a frame outside the In/Out range becomes the new In or Out frame), a date and/or time (`12pm`, `15:20`, `17:33 UTC`, `12/25`, `Jan 6, 2020`), a coordinate in any format, a place name to fly the camera to, or the two or three lines of a TLE, which are loaded as a satellite. Going to a location also drops a pin labeled with the requested place or coordinates. Pasting text onto Sitrec (Ctrl/Cmd+V outside a text field) runs it through the same parser |
 | `Alt`+`I` | Set the **In** frame (start of the In/Out range) |
 | `Alt`+`O` | Set the **Out** frame (end of the In/Out range) |
 

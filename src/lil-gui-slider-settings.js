@@ -191,6 +191,13 @@ NumberController.prototype.displayZeroThreshold = function(threshold) {
 // position (which reads the raw, log-space value) and displayText() for the input
 // text (which honours _displayZeroThreshold), so one implementation covers both.
 
+NumberController.prototype.resetToDefault = function() {
+    if (this._disabled) return this;
+    this.setValue(this._defaultValue);
+    this._callOnFinishChange();
+    return this;
+};
+
 const originalInitSlider = NumberController.prototype._initSlider;
 NumberController.prototype._initSlider = function() {
     originalInitSlider.call(this);
@@ -209,7 +216,7 @@ NumberController.prototype._initSlider = function() {
     const resetToDefault = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.setValue(this._defaultValue);
+        this.resetToDefault();
     };
 
     const suppressContextMenu = (e) => e.preventDefault();

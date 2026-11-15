@@ -13,7 +13,7 @@ test("a template gets its text, tooltip, placeholder and label from keys", () =>
         + '<input data-i18n-placeholder="timeEditor.paste.placeholder" data-i18n-label="timeEditor.paste.label">';
     expect(localizeElements(root)).toBe(root);
     expect(root.getAttribute("aria-label")).toBe("Date and time editor");
-    expect(root.querySelector("button").textContent).toBe("Now once");
+    expect(root.querySelector("button").textContent).toBe("Now");
     expect(root.querySelector("button").title).toBe("Set the current frame to the real clock once, and stay paused");
     expect(root.querySelector("input").placeholder).toBe("Paste a date & time");
     expect(root.querySelector("input").getAttribute("aria-label")).toBe("Paste date and time");

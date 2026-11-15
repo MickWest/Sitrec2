@@ -785,27 +785,15 @@ export const menuMethods = {
                 // Close the menu first
                 closeMenu();
 
-                // Create a unique feature ID. CNodeFeatureMarker registers in NodeMan
-                // and FeatureManager mirrors that id, so NodeMan is the registry to check.
-                const featureID = NodeMan.UniqueName(`feature_${Date.now()}`);
-
                 // Create the feature at the ground location
-                const featureNode = FeatureManager.addFeature({
-                    id: featureID,
-                    text: "New Feature",
-                    positionLLA: {
-                        lat: lat,
-                        lon: lon,
-                        alt: alt  // Will conform to ground
-                    }
-                });
+                const featureNode = FeatureManager.addLocationPin({lat, lon, alt, name: "New Feature"});
 
                 // Open the editing menu with focus on the text field. The view is
                 // where the pin can then be dragged around.
                 FeatureManager.showFeatureEditMenu(featureNode, mouseX, mouseY, true,
                     sourceViewID ? ViewMan.get(sourceViewID, false) : null);
 
-                console.log(`Created feature ${featureID} at ${lat}, ${lon}, ${alt}m`);
+                console.log(`Created feature ${featureNode.id} at ${lat}, ${lon}, ${alt}m`);
             },
             addBuilding: () => {
                 closeMenu();

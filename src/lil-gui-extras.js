@@ -290,7 +290,7 @@ function allowTooltipsOnDisabledRows() {
 }
 
 // adding a tooltip to a controller.
-// A plain `title` attribute, drawn by the browser. (src/Tooltips.js draws its own faster
+// A plain `title` attribute, drawn by the browser. (src/Tooltips.js draws its own styled
 // tip only for the view header-bar buttons, not for menu items.)
 Controller.prototype.tooltip = function (tooltip) {
     allowTooltipsOnDisabledRows();

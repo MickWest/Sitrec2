@@ -343,6 +343,14 @@ describe('WebMCP execution', () => {
         });
     });
 
+    test('passes a requested place name to the shared navigation API', async () => {
+        const move = findTool(createTools(), 'sitrec_goto_lla');
+        const result = await move.execute({lat: 51.5, lon: -0.12, name: 'London'});
+        expect(result.success).toBe(true);
+        expect(mockHandleAPICall).toHaveBeenCalledWith({fn: 'gotoLLA',
+            args: {lat: 51.5, lon: -0.12, alt: 0, name: 'London'}}, 'webmcp');
+    });
+
     test('lists only bounded catalog entries and loads only an exact returned id', async () => {
         const tools = createTools();
         const list = await findTool(tools, 'sitrec_list_sitches').execute({query: 'gimbal'});

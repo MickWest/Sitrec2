@@ -12,6 +12,7 @@ import {EventManager} from "./CEventManager";
 import {goToLatLon, resolveLocationString} from "./CoordinateInput";
 import {applyDateTimeString} from "./DateTimeParser";
 import {importPastedTLE} from "./TLEPaste";
+import {FeatureManager} from "./CFeatureManager";
 
 // A single bare number - anything else is treated as a location, not a frame.
 // Decimals are accepted (and truncated) because the old number-only prompt did
@@ -88,5 +89,6 @@ export async function applyGoToString(text) {
     if (location === null) return false;
 
     goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+    FeatureManager.addLocationPin({...location, name: text});
     return true;
 }

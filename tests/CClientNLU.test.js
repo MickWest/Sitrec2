@@ -20,6 +20,7 @@ jest.mock('../src/nodes/CNode3DObject', () => ({
 }));
 
 import {clientNLU} from '../src/CClientNLU';
+import {sitrecAPI} from '../src/CSitrecAPI';
 
 describe('CClientNLU parsing', () => {
     describe('SET_VALUE patterns', () => {
@@ -346,6 +347,32 @@ describe('CClientNLU parsing', () => {
     });
 
     describe('GOTO patterns', () => {
+        test('longer requests reach the model instead of becoming a place name', () => {
+            for (const text of ['go to London at noon tomorrow', 'go to Paris at 12pm', 'go to London and set fov to 60']) {
+                expect(clientNLU.parse(text).intent).not.toBe('GOTO_NAMED_LOCATION');
+            }
+        });
+
+        test('passes the requested coordinates as the pin label, without the command', async () => {
+            await clientNLU.execute(clientNLU.parse('go to 40.7128, -74.0060'));
+            expect(sitrecAPI.call).toHaveBeenLastCalledWith('gotoLLA', {
+                lat: 40.7128, lon: -74.006, alt: 0, name: '40.7128, -74.0060',
+            });
+        });
+
+        test('keeps the requested place name instead of the geocoder display name', async () => {
+            const originalFetch = global.fetch;
+            global.fetch = jest.fn().mockResolvedValue({json: async () => [{lat: '51.5', lon: '-0.12', display_name: 'London, England, United Kingdom'}]});
+            try {
+                await clientNLU.execute(clientNLU.parse('move to London'));
+                expect(sitrecAPI.call).toHaveBeenLastCalledWith('gotoLLA', {
+                    lat: 51.5, lon: -0.12, alt: 0, name: 'London',
+                });
+            } finally {
+                global.fetch = originalFetch;
+            }
+        });
+
         test('parses "go to 40.7128, -74.0060"', () => {
             const result = clientNLU.parse('go to 40.7128, -74.0060');
             expect(result.intent).toBe('GOTO_LLA');

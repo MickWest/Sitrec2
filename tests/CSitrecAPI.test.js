@@ -143,8 +143,13 @@ jest.mock('../src/nodes/CNodeViewUI', () => ({
     forceUpdateUIText: jest.fn(),
 }));
 
+jest.mock('../src/CFeatureManager', () => ({
+    FeatureManager: {addLocationPin: jest.fn()},
+}));
+
 import {sitrecAPI} from '../src/CSitrecAPI.js';
 import {TimelineMarkers} from '../src/TimelineMarkers';
+import {FeatureManager} from '../src/CFeatureManager';
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -178,6 +183,27 @@ beforeEach(() => {
 
 afterAll(() => {
     global.fetch = originalFetch;
+});
+
+describe('CSitrecAPI location pins', () => {
+    test('places the named pin on the ground, independent of camera height', async () => {
+        const camera = {gotoLLA: jest.fn()};
+        mockNodeGet.mockReturnValue(camera);
+        const result = await sitrecAPI.call('gotoLLA', {lat: 51.5, lon: -0.12, alt: 1500, name: 'London'});
+        expect(result.success).toBe(true);
+        expect(camera.gotoLLA).toHaveBeenCalledWith(51.5, -0.12, 1500);
+        expect(FeatureManager.addLocationPin).toHaveBeenCalledTimes(1);
+        expect(FeatureManager.addLocationPin).toHaveBeenCalledWith({lat: 51.5, lon: -0.12, name: 'London'});
+    });
+
+    test('invalid coordinates neither move the camera nor create a pin', async () => {
+        const camera = {gotoLLA: jest.fn()};
+        mockNodeGet.mockReturnValue(camera);
+        const result = await sitrecAPI.call('gotoLLA', {lat: NaN, lon: -0.12, name: 'London'});
+        expect(result.result.success).toBe(false);
+        expect(camera.gotoLLA).not.toHaveBeenCalled();
+        expect(FeatureManager.addLocationPin).not.toHaveBeenCalled();
+    });
 });
 
 describe('CSitrecAPI importMedia', () => {

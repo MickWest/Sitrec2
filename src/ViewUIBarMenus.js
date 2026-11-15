@@ -114,6 +114,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "timeDisplay", name: "Time Display"},
         {slot: "mainViewScale", name: "Object Scale"},
         {slot: "fov", name: "Field of View"},
+        {slot: "ambientIntensity", name: "Ambient Light", shared: true},
         {slot: "yCompress", name: "Y-Compress"},
         {slot: "showSatellites", name: "Satellites", shared: true, folder: "nightSky"},
         {slot: "starNames", name: "Star/Planet Names", folder: "nightSky"},

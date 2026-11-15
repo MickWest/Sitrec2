@@ -1663,7 +1663,7 @@ const en = {
             tooltip: "Paste or type an ISO date and time, for example 2026-11-08 21:30:00.000Z. Include Z for UTC or an offset; otherwise the selected zone is used. Enter applies.",
         },
         nowOnce: {
-            label: "Now once",
+            label: "Now",
             tooltip: "Set the current frame to the real clock once, and stay paused",
         },
         status: {
@@ -4732,6 +4732,7 @@ const en = {
         northUp: "North Up",
         yCompress: "Y-Compress",
         fov: "Field of View",
+        ambientIntensity: "Ambient Light",
         starNames: "Star/Planet Names",
         onlyPlanets: "Planets Only",
         equatorialGrid: "Equatorial Grid",
@@ -5436,6 +5437,11 @@ const en = {
         },
     },
 
+    viewToolbar: {
+        label: "View tools",
+        pin: "Keep this toolbar visible. Unpin to let it fade when you leave the tools.",
+        ambientTooltip: "Adjust ambient light. This is the same setting as Lighting → Ambient Intensity.",
+    },
     lighting: {
         ambientIntensity: {
             label: "Ambient Intensity",

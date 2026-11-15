@@ -3,7 +3,7 @@ import {getInteractiveViewAt} from "./ViewUtils";
 import {CManager} from "./CManager";
 import {showConfirm} from "./showError";
 import {CNodeFeatureMarker} from "./nodes/CNodeLabels3D";
-import {Globals, NodeMan, setRenderOne, UndoManager} from "./Globals";
+import {Globals, markSitchDirty, NodeMan, setRenderOne, UndoManager} from "./Globals";
 import {Raycaster} from "three";
 import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
@@ -61,6 +61,19 @@ class CFeatureManager extends CManager {
         console.log(`Added feature marker: ${options.text} at (${options.positionLLA.lat}, ${options.positionLLA.lon}, ${options.positionLLA.alt})`);
         
         return featureNode;
+    }
+
+    // Navigation uses the same saved, editable markers as Drop Pin, without
+    // opening an editor when the requested place already supplies the label.
+    addLocationPin({lat, lon, alt = 0, name}) {
+        const feature = this.addFeature({
+            id: NodeMan.UniqueName(`feature_${Date.now()}`),
+            text: (typeof name === "string" ? name.trim() : "") || `${lat}, ${lon}`,
+            positionLLA: {lat, lon, alt},
+        });
+        markSitchDirty();
+        setRenderOne(true);
+        return feature;
     }
 
     /**
