@@ -161,7 +161,7 @@ For time-lapse videos, you can adjust the simulation speed. To play back faster 
 
 ## The View Header
 
-Move the mouse to the top edge of a view and, after a moment, a thin header bar fades in, with the view's name on the left and a few icons on the right (⛶ fullscreen, 📌 pin, and ✕ close). Text panels such as Notes also have ⧉ pop out. Pin the header to keep it on screen. Graphs, editors and other panels start with their header already showing. The header is also the drag handle: drag it to move the view, no `Q` needed. Double-clicking an **empty** part of the bar toggles fullscreen, the same as the ⛶ icon.
+Move the mouse to the top edge of a view and, after a moment, a thin header bar fades in, with the view's name on the left and a few icons on the right (⛶ fullscreen, 📌 pin, and ✕ close). Text panels such as Notes also have ⧉ pop out. Pin the header to keep it on screen. In the main, look and video views the header is drawn over the picture: it does not move or resize the picture, so while it shows it hides a thin strip at the top. Graphs, editors and other panels start with their header already showing. The header is also the drag handle: drag it to move the view, no `Q` needed. Double-clicking an **empty** part of the bar toggles fullscreen, the same as the ⛶ icon.
 
 ### Header menus
 
@@ -205,7 +205,7 @@ Next to the name, the busiest of those are repeated as one-click icons.
 
 **Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout and the **video overlay** button after it. **Video** adds the data panel for its own. Each of the three bars ends with a video camera icon, **Render Single View Video**, which exports that view as a video file.
 
-**Video** also has **100%**, which sets the video zoom to 1:1 and stays lit while it is there. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
+**Video** also has **100%**, which sets the video zoom to 100% and stays lit while it is there. At 100% the whole frame fits in the view, as large as it can be. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
 
 An icon whose control is off is drained of color and dimmed, so a glance along the header tells you what the view is showing. They are the same controls again, not a third copy — click the icon or the menu row, it makes no difference — and an icon whose control does not exist here (no compass, no night sky, no clock drawn on this view) is simply absent.
 

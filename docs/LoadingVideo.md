@@ -317,8 +317,8 @@ offsets no longer fit the turned picture.
 | Right-click | Open **Video Adjustments** as a menu at the pointer |
 | Double-click | Reset the zoom to 100% and center the image |
 
-The zoom is also **View → Video Zoom %** (5% to 2000%). You cannot pan past the edge of the
-image.
+The zoom is also **View → Video Zoom %** (5% to 2000%). At 100% the whole frame fits in the
+view, as large as it can be. You cannot pan past the edge of the image.
 
 Hold **Q** and drag to move or resize the video view itself. See
 [Keyboard Shortcuts](KeyboardShortcuts.md).

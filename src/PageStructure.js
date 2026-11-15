@@ -187,7 +187,16 @@ export function areControlsHidden() {
     return controlsHidden;
 }
 
-const MENU_BAR_HEIGHT = 25;
+// The menu bar is a strip MENU_BAR_HEIGHT px high with a line of MENU_BAR_BORDER px under it
+// (CGuiMenuBar draws both, as #menuBarBlackBar). MENU_BAR_BOTTOM is the first row below that
+// line, and it is where the views start (ViewMan.topPx).
+//
+// One definition, because these used to be three numbers in three files: 24 for the views, 25
+// here and 25 + 1 for the bar. The views then started 2 px inside the bar, which painted over
+// their top two rows. A video at 100% zoom fills its view exactly, so it lost its top edge.
+export const MENU_BAR_HEIGHT = 25;
+export const MENU_BAR_BORDER = 1;
+export const MENU_BAR_BOTTOM = MENU_BAR_HEIGHT + MENU_BAR_BORDER;
 
 function createSidebar(id, side) {
     const sidebar = document.createElement('div');

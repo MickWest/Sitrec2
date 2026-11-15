@@ -1,5 +1,5 @@
 import {CManager} from "./CManager";
-import {setupPageStructure} from "./PageStructure";
+import {MENU_BAR_BOTTOM, setupPageStructure} from "./PageStructure";
 import {isConsole} from "./configUtils";
 
 class CViewManager extends CManager {
@@ -13,7 +13,9 @@ class CViewManager extends CManager {
         this.fullscreenSuppressed = new Set();
         if (!isConsole) { // will not be used in console mode, so just an empty singleton
             setupPageStructure();
-            this.topPx = 24;
+            // Below the menu bar AND its bottom line. CGuiMenuBar sets this again when the bar
+            // is shown or moves (_updateMenuBarPosition), from the same constant.
+            this.topPx = MENU_BAR_BOTTOM;
             this.leftPx = 0;
             this.screenOffsetX = 0;  // Container's screen X offset (updated when sidebars appear)
             this.container = document.getElementById("Content")

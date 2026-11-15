@@ -24,7 +24,10 @@ import {
     removeMenuFromCenterSidebar,
     removeMenuFromLeftSidebar,
     removeMenuFromRightSidebar,
-    toggleControlsVisibility
+    toggleControlsVisibility,
+    MENU_BAR_BORDER,
+    MENU_BAR_BOTTOM,
+    MENU_BAR_HEIGHT
 } from "./PageStructure";
 import {getTextWidth} from "./lil-gui-slider-settings";
 import {updateGUIRootListeners} from "./GUIRootRegistry";
@@ -937,7 +940,7 @@ export class CGuiMenuBar {
         // to avoid re-entrancy on a half-placed folder.
         this._folderBatchDepth = 0;
 
-        this.barHeight = 25; // height of the menu bar
+        this.barHeight = MENU_BAR_HEIGHT; // height of the menu bar, without the line under it
 
         // Z-index management for bringing clicked menus to front
         this.baseZIndex = 5000; // Base z-index for menu divs
@@ -992,7 +995,7 @@ export class CGuiMenuBar {
         bar.style.height = this.barHeight + "px"; // one pixel more than the menu title divs
         bar.style.width = "100%";
         bar.style.backgroundColor = "black";
-        bar.style.borderBottom = "1px solid grey";
+        bar.style.borderBottom = MENU_BAR_BORDER + "px solid grey";
         bar.style.zIndex = 8999; // visual bar, just under the high-z menu surfaces
         bar.style.pointerEvents = "none";
         bar.id = "menuBarBlackBar";
@@ -1258,16 +1261,18 @@ export class CGuiMenuBar {
         // When in browser full-screen mode without banners, add 10px spacing from top
         const topOffset = (isFullScreen && !getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE)) ? 10 : 0;
 
+        // The views start at MENU_BAR_BOTTOM: below the bar AND the line under it. The bar
+        // height alone leaves the top row of each view under that line.
         if (getEnvBool("BANNER_ACTIVE", process.env.BANNER_ACTIVE)) {
             // With banner, position below it
             this.bar.style.top = getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT) + "px";
             this.menuBar.style.top = getEnv("BANNER_HEIGHT", process.env.BANNER_HEIGHT) + "px";
-            ViewMan.topPx = this.barHeight;
+            ViewMan.topPx = MENU_BAR_BOTTOM;
         } else {
             // Without banner, use the top offset (10px in full-screen mode, 0px otherwise)
             this.bar.style.top = topOffset + "px";
             this.menuBar.style.top = topOffset + "px";
-            ViewMan.topPx = this.barHeight + topOffset;
+            ViewMan.topPx = MENU_BAR_BOTTOM + topOffset;
         }
 
         ViewMan.updateSize();
