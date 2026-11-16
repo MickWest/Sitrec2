@@ -247,6 +247,7 @@ describe("docs on disk", () => {
         "dev/AuditLogging.md",              // structured server events and operator logging responsibilities
         "dev/VulnerabilityHandling.md",     // triage, root cause and response times
         "dev/CustomTerrainSources.md",      // map/elevation source configuration
+        "dev/SatelliteCatalogStorage.md",   // server satellite catalog cache: Parquet storage and PyArrow setup
         "dev/Deploying-on-a-VPS.md",        // VPS deployment with Podman and Caddy
         "dev/Deploying-on-GitHub-Pages.md", // the serverless build on GitHub Pages
         "dev/FileRehosting.md",             // rehosting + server auth

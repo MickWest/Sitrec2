@@ -25,7 +25,7 @@ const pairs = Object.entries(aliases);
 const GATE_FLAG = "isSecureBuild";
 const GATED_FILES = [
     "src/index.js",
-    "src/CClientNLU.js",
+    "src/LocationSearch.js",
     "src/nodes/CNodeDisplayWindField.js",
     "src/nodes/WindSources.js",
 ];

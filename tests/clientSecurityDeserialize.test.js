@@ -38,6 +38,9 @@ function harness() {
         deserializeVideoQPGraph: async () => {}, deserializeVideoTonalGraph: async () => {},
         deserializePointTrackFrequencyGraph: async () => {}, deserializeVideoNoisePattern: async () => {},
         applyFlightLightweightGating() {},
+        // the end of a load restores the standard menu layout (ViewingMenuLayout.js)
+        guiMenus: {},
+        applyViewingMenuLayout: jest.fn(),
         checkAndOfferTLERefresh: async () => {},
         // The real rule for which sitch shows an intro, and a stub for the box itself.
         templateIntroText: require('../src/SitchTemplateInstructions').templateIntroText,

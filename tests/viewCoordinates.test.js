@@ -159,9 +159,15 @@ test("a point widget picks in a letterboxed look view and keeps that camera acro
     const view = makeView();
     const main = {...makeView(), id: "mainView", _effectivelyVisible: false};
     ViewMan.get.mockImplementation(id => ({mainView: main, lookView: view})[id]);
+    // PointEditorWidget refuses a pick that the globe hides (GlobeOcclusion.js), so put
+    // the scene 1 km above the surface on +Y, where the mocked local up is correct.
+    // At makeView's toy origin, the camera and the object would be inside the Earth.
+    const surface = new Vector3(0, 6378137 + 1000, 0);
+    view.camera.position.add(surface);
+    view.camera.updateMatrixWorld(true);
     const widget = new PointEditorWidget(view.camera);
     const object = new Object3D();
-    object.position.set(10, 0, 0);
+    object.position.set(10, 0, 0).add(surface);
     widget.attach(object);
     widget.setAltitudeLocked(true, -1);
     const [x, y] = viewToClient(view, ...projectWorldToView(view, object.position));

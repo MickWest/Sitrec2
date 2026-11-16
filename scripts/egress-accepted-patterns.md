@@ -163,6 +163,19 @@ entry here: an id, what the code does, where the data goes, the release, and its
 - **Limits:** the name of that local file only, and only when the user selects Export CSV. The
   track name in a URL, an upload, a shared link, a log or a server request is a finding.
 
+### `navigation-pins-in-sitch` — accepted 2.199.0
+- **Code:** `src/CFeatureManager.js` (`addLocationPin`), called from `src/GoTo.js`
+  (`applyGoToString`, the G prompt and pasted text), `src/CSitrecAPI.js` (`gotoLLA`) and
+  `src/CClientNLU.js`. When the user goes to a place name or a coordinate, Sitrec drops a
+  feature pin there. Its label is the place text that the user gave (or the coordinates), and it
+  is the same visible, editable and deletable pin that Drop Pin makes.
+- **Data:** the pin's label and position, as part of the sitch. They leave only through the
+  actions that already send a sitch: the user's own save, export or share. No new destination and
+  no new request.
+- **Limits:** a pin that is visible in the scene and is saved only with the sitch. The pin's
+  label or position in a URL parameter, a log, a request of its own, telemetry, or any send
+  that the user did not start is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

@@ -124,7 +124,7 @@ const gatedHostLiterals = [
     // src/nodes/CNodeDisplayWindField.js, fetchOpenMeteoUV (WindSources.js drops the option)
     'api.open-meteo.com',
     'historical-forecast-api.open-meteo.com',
-    // src/CClientNLU.js, _geocodeAndGoto
+    // src/LocationSearch.js, lookupNominatimLocation
     'nominatim.openstreetmap.org',
 ];
 

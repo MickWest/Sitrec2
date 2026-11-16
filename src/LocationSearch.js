@@ -1,3 +1,5 @@
+import {isSecureBuild} from "./configUtils";
+
 // Keep the default geocoder's result checks in one place for Go To, chat, and
 // coordinate fields. Search rank describes scale; importance is prominence,
 // not confidence that the result matches the user's words.
@@ -77,6 +79,10 @@ export function selectNominatimLocation(query, results) {
 
 /** Default configured resolver. Custom providers can still supply their own. */
 export async function lookupNominatimLocation(query) {
+    // The secure build makes no geocoding request. resolveLocationString() also
+    // checks this; the check here covers any caller that bypasses it
+    // (see docs/dev/Secure-Build.md).
+    if (isSecureBuild) return null;
     if (typeof query !== "string" || !query.trim()) return null;
     try {
         const params = new URLSearchParams({

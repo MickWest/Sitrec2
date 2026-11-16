@@ -647,6 +647,7 @@
     {"endpoint": "object_helpers.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "s3_client.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "gpData.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "gpParquet.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "ai_models.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "ai_log.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "curlGetRequest.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
