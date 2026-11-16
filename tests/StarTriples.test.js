@@ -155,6 +155,45 @@ describe("identifyBrightTriples", () => {
         expect(res.best.nMissing).toBe(0);
     });
 
+    test("in a rich field, only the best candidate stars take part", () => {
+        // The bright objects in the frame, and 2000 faint dots all over it. A name is supported
+        // by any candidate star near where the fit puts it, so with every dot taking part a
+        // wrong fit collects support by chance. The bright objects can only be the brightest
+        // dots: the faint ones take no part, and every name is right.
+        const objects = sky(7, 40, 150, 20, 70);
+        const vfov = 40;
+        const real = seen(objects, camera(150, 20, 12, vfov, W, H), W, H, 3);
+        const rand = rng(77);
+        const faint = Array.from({length: 2000}, (_, k) => ({x: W * rand(), y: H * rand(), mag: 4 + 3 * rand(),
+            index: real.length + k, truth: null}));
+        const args = {stars: [...real, ...faint], objects, width: W, height: H, maxFovDeg: diagFov(vfov)};
+        const res = identifyBrightTriples(args);
+        expect(res.ok).toBe(true);
+        expect(res.counts.candidateStars).toBe(TRIPLE_DEFAULTS.maxCandidateStars);
+        for (const m of res.best.matches) expect(m.object.label).toBe(m.star.truth);
+        expect(res.best.matches).toHaveLength(real.length);
+        // With every dot taking part, the answer has more names, and they are wrong.
+        const all = identifyBrightTriples({...args, options: {maxCandidateStars: Infinity}});
+        expect(all.best.matches.length).toBeGreaterThan(real.length);
+        expect(all.best.matches.filter((m) => m.object.label === m.star.truth)).toHaveLength(0);
+    });
+
+    test("a star added by hand always takes part", () => {
+        // It has no magnitude, so it cannot be ranked - and the user said it is a star.
+        const objects = sky(7, 40, 150, 20, 70);
+        const vfov = 40;
+        const real = seen(objects, camera(150, 20, 12, vfov, W, H), W, H, 3);
+        const byHand = {...real[0], mag: NaN};
+        const rand = rng(78);
+        const faint = Array.from({length: 300}, (_, k) => ({x: W * rand(), y: H * rand(), mag: 4 + 3 * rand(),
+            index: real.length + k, truth: null}));
+        const res = identifyBrightTriples({stars: [byHand, ...real.slice(1), ...faint], objects,
+            width: W, height: H, maxFovDeg: diagFov(vfov)});
+        expect(res.ok).toBe(true);
+        expect(res.best.matches.map((m) => m.star.index)).toContain(byHand.index);
+        for (const m of res.best.matches) expect(m.object.label).toBe(m.star.truth);
+    });
+
     test("too few dots or objects is a reason, not a guess", () => {
         const objects = sky(5, 10, 0, 0, 30);
         expect(identifyBrightTriples({stars: [{x: 1, y: 1, mag: 1, index: 0}], objects, width: W, height: H, maxFovDeg: 90}).reason)

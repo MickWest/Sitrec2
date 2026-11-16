@@ -20,6 +20,7 @@ import {
     buildQuadIndex,
     solveField,
     fitSimilarityRobust,
+    rankPointSources,
 } from "../src/starTrack/StarIdentify";
 import {mulberry32} from "../src/starTrack/StarSynthetic";
 
@@ -433,6 +434,68 @@ describe("StarIdentify blind solve", () => {
     test("too few stars refuses honestly", async () => {
         const result = await solveField([{x: 1, y: 1}, {x: 2, y: 2}], catalog, [index]);
         expect(result.ok).toBe(false);
+    });
+});
+
+describe("StarIdentify point-source ranking", () => {
+    // Forty faint stars on a grid, too far apart to count as clutter, with peak SNRs from 30
+    // to 69. Each test adds its own special detections to them.
+    const W = 4000;
+    const faint = Array.from({length: 40}, (_, k) => ({
+        x: 250 + 450 * (k % 8), y: 300 + 500 * Math.floor(k / 8),
+        mag: -6 - k / 40, snr: 30 + k, extent: 6 + (k % 2), elongation: 1.2, saturated: 0,
+    }));
+    const rank = (special) => {
+        const all = [...faint, ...special];
+        return rankPointSources(all, W).map((i) => all[i].name ?? "faint");
+    };
+
+    test("a clipped star is ranked by its flux, ahead of every unclipped star", () => {
+        // The peak of a clipped star stops at the clip level, so its peak SNR says how quiet
+        // the sky around it is and nothing of the star. Both clipped stars here have a lower
+        // peak SNR than the best unclipped one, and the brighter of the two has the lowest.
+        const order = rank([
+            {name: "clipped", x: 3800, y: 2900, mag: -9.5, snr: 60, extent: 12, elongation: 1.1, saturated: 0.2},
+            {name: "clipped, brighter", x: 3800, y: 100, mag: -10, snr: 55, extent: 13, elongation: 1.1, saturated: 0.25},
+            {name: "unclipped, best peak", x: 100, y: 2900, mag: -7, snr: 200, extent: 7, elongation: 1.1, saturated: 0},
+        ]);
+        expect(order.slice(0, 3)).toEqual(["clipped, brighter", "clipped", "unclipped, best peak"]);
+    });
+
+    test("a clipped star is as wide as clipped stars are", () => {
+        // Clipping spreads a bright star: 12 and 13 px against faint stars of 6 and 7. The bar
+        // for an unclipped detection is 1.75 x 7 = 12.25 px, and against it the wider clipped
+        // star is not a point source. A clipped detection is compared with the clipped ones.
+        const pair = [
+            {name: "clipped", x: 3800, y: 2900, mag: -9.5, snr: 60, extent: 12, elongation: 1.1, saturated: 0.2},
+            {name: "clipped, brighter", x: 3800, y: 100, mag: -10, snr: 55, extent: 13, elongation: 1.1, saturated: 0.25},
+        ];
+        expect(rank(pair)).toContain("clipped, brighter");
+        expect(rank(pair.map(({saturated, ...rest}) => rest))).not.toContain("clipped, brighter");
+        // A clipped blob three times as wide as those is still not a point source.
+        const lamp = {name: "lamp", x: 100, y: 2900, mag: -12, snr: 60, extent: 40, elongation: 1.1, saturated: 0.1};
+        expect(rank([...pair, lamp])).not.toContain("lamp");
+    });
+
+    test("a clipped blob on noisy ground stays in the peak ranking", () => {
+        // Lit ground clips too, and it has more flux than any star. Its peak SNR is low, because
+        // the ground around it is noisy: below the image's median, it is ranked by that peak,
+        // after the stars, and not by its flux.
+        const order = rank([
+            {name: "clipped", x: 3800, y: 2900, mag: -9.5, snr: 60, extent: 12, elongation: 1.1, saturated: 0.2},
+            {name: "lit leaf", x: 100, y: 2900, mag: -11, snr: 8, extent: 7, elongation: 1.3, saturated: 0.3},
+        ]);
+        expect(order[0]).toBe("clipped");
+        expect(order[order.length - 1]).toBe("lit leaf");
+    });
+
+    test("with positions and magnitudes only, the ranking is by magnitude", () => {
+        const bare = faint.map(({x, y, mag}) => ({x, y, mag}));
+        const order = rankPointSources(bare, W);
+        expect(order).toHaveLength(bare.length);
+        for (let k = 1; k < order.length; k++) {
+            expect(bare[order[k]].mag).toBeGreaterThanOrEqual(bare[order[k - 1]].mag);
+        }
     });
 });
 

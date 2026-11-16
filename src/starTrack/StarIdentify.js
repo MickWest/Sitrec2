@@ -70,9 +70,10 @@ export const STAR_IDENTIFY_DEFAULTS = {
 
     // Quad anchors are held to a tighter standard than mere detection: they must look like POINT
     // SOURCES. Extent is capped relative to THIS image's median detection, so the bar carries
-    // across sensors and focal lengths instead of encoding one camera's pixel scale; elongation
-    // is capped below the detector's own admission limit, so an anchor must be rounder than
-    // merely acceptable. See the anchor selection in solveFieldInner for what this is for.
+    // across sensors and focal lengths instead of encoding one camera's pixel scale (a clipped
+    // detection is compared with the median CLIPPED one); elongation is capped below the
+    // detector's own admission limit, so an anchor must be rounder than merely acceptable. See
+    // rankPointSources for what this is for.
     quadMaxExtentMedians: 1.75,
     quadMaxElongation: 2.0,
 
@@ -453,6 +454,123 @@ function lookupCode(index, code, tol) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Which detections are the brightest stars
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The detections a pattern search starts from, best first, as indexes into `imageStars`.
+ *
+ * A pattern search works only from the BRIGHTEST stars: an index holds each bright catalog star
+ * with its nearest bright neighbours, so a detection that is not one of the brightest stars has
+ * no pattern there to match. This function decides which detections those are, for every caller
+ * that asks: the quad search (its anchors), Bright Triples (the dots it makes triangles from)
+ * and the adjustment optimizer (the anchors it scores). Each of them once had its own copy of the
+ * rule.
+ *
+ * Three tests, in this order.
+ *
+ * 1. SKY, NOT TEXTURE. Terrestrial clutter - lit foliage, a contrail - detects as dozens of
+ *    bright blobs packed together, and on a real twilight photo those blobs WERE the brightest
+ *    "stars", so every quad the solver built was anchored in a tree. A detection whose
+ *    neighbourhood holds several times the image's average density is left out; it can still be
+ *    matched and named by verification and refinement. The bar is RELATIVE, so a genuinely rich
+ *    star field - which is dense everywhere - keeps its anchors.
+ *
+ * 2. A POINT SOURCE: compact and round. Measured on a twilight photo with a treeline (4032x3024,
+ *    1047 detections): taking the 25 brightest by flux put 24 of them in the foliage. Lit leaves
+ *    are bright because a clump is LARGE, and integrated flux rewards exactly that, while a star
+ *    is compact with a high peak. On that image, ranking by peak SNR alone leaves 12 of 25 in
+ *    the trees; restricting to compact detections alone leaves 19; doing both leaves 1. This is
+ *    a SEPARATE defence from the density test, which that image defeats: the sky was itself
+ *    densely detected (median 14 neighbours), so the foliage at ~50 never reached the 4x-median
+ *    bar and nothing was excluded at all.
+ *
+ * 3. BRIGHTEST FIRST - by peak SNR, except where the picture CLIPS. A star's peak can go no
+ *    higher than the clip level, so above it the peak SNR is the clip level over the local noise
+ *    and says nothing of the star. Measured on a phone night photo of the Summer Triangle
+ *    (4032x3024, 442 detections, 383 of them catalog stars): every star brighter than about
+ *    magnitude 4 peaked at 235-254 out of 255, and peak SNR gave Vega 183, Altair 152 and a
+ *    magnitude 4.5 star 287. Of the 25 anchors, 9 were magnitude 4.0 or brighter and 1 was
+ *    brighter than 3.0. The index for a field that wide holds no star fainter than 4.0, so no
+ *    image quad had a catalog quad to match, and the solve failed on a field where the true
+ *    pose matches 387 stars. A clipped star does keep growing in one measure: its light spreads
+ *    over more pixels, so its total flux still rises with brightness. Clipped detections are
+ *    therefore ranked by flux, ahead of every unclipped one. On that photo: 21 of 25 anchors at
+ *    magnitude 4.0 or brighter, 8 brighter than 3.0, and the field solves.
+ *
+ *    The width test of step 2 compares a clipped detection with the other CLIPPED ones. Against
+ *    the median of all detections it removed Vega, Altair and Deneb (14-15 px against a bar of
+ *    12.25): a clipped star is wider than a faint one because it is brighter, not because it is
+ *    a leaf clump.
+ *
+ *    Lit ground clips too, and by flux it outranks every star. What tells it from a star is the
+ *    noise around it: see `clipped` below. Measured on five phone night photos (231 to 1412
+ *    detections, 2 to 15 clipped blobs that are not stars in each): with that test none of them
+ *    is one of the 25 anchors, and without it 4 are on one photo and 2 on another. The anchors
+ *    at magnitude 4.0 or brighter go from 9, 15, 13, 10 and 5 of 25 to 21, 17, 21, 20 and 18.
+ *
+ * `snr`, `extent`, `elongation` and `saturated` are optional. Callers that do not measure them -
+ * the headless tests, anything feeding bare {x, y, mag} - get a ranking by magnitude that admits
+ * every shape.
+ *
+ * @param {Array<{x:number, y:number, mag:number, snr?:number, extent?:number,
+ *   elongation?:number, saturated?:number}>} imageStars - `mag` is instrumental (smaller is
+ *   brighter); `saturated` is the fraction of the blob's pixels at the clip level
+ * @param {number} width - the frame's long side, px: the clutter radius is a fraction of it
+ * @param {object} [opts] - overrides of STAR_IDENTIFY_DEFAULTS
+ * @returns {number[]} every detection that passes tests 1 and 2, in the order of test 3
+ */
+export function rankPointSources(imageStars, width, opts = {}) {
+    const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
+    const medianOf = (values) => (values.length
+        ? [...values].sort((a, b) => a - b)[values.length >> 1] : undefined);
+
+    const clutterR2 = (0.04 * width) ** 2;
+    const neighborCounts = imageStars.map((s) => {
+        let c = 0;
+        for (const t of imageStars) {
+            if (t === s) continue;
+            if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < clutterR2) c++;
+        }
+        return c;
+    });
+    // The typical density is the MEDIAN, not the mean: the clutter's own inflated counts would
+    // otherwise raise a mean-based bar right past themselves.
+    const clutterMax = Math.max(4, 4 * (medianOf(neighborCounts) ?? 0));
+
+    // Clipped, and ON SKY. A clipped blob has the highest peak the picture can hold, so a peak
+    // SNR below the image's typical one means the ground around it is far noisier than sky: a
+    // lit leaf or a wall. Such a blob stays in the peak ranking, near its end. So does one with
+    // no flux to be ranked by.
+    const typicalSnr = medianOf(imageStars.map((s) => s.snr).filter((v) => Number.isFinite(v)));
+    const clipped = (s) => s.saturated > 0 && Number.isFinite(s.mag)
+        && (typicalSnr === undefined || s.snr >= typicalSnr);
+    const extentsOf = (stars) => stars.map((s) => s.extent).filter((v) => Number.isFinite(v));
+    const extentBar = (stars) => {
+        const typical = medianOf(extentsOf(stars));
+        return typical === undefined ? Infinity : O.quadMaxExtentMedians * typical;
+    };
+    const maxExtent = extentBar(imageStars);
+    const maxExtentClipped = extentBar(imageStars.filter(clipped));
+    const pointLike = (s) =>
+        (!Number.isFinite(s.extent) || s.extent <= (clipped(s) ? maxExtentClipped : maxExtent))
+        && (!Number.isFinite(s.elongation) || s.elongation <= O.quadMaxElongation);
+
+    // Ascending sort throughout, so magnitude (smaller is brighter) and negated SNR agree on
+    // "best first" without a second code path.
+    const measuredSnr = imageStars.some((s) => Number.isFinite(s.snr));
+    const rankOf = measuredSnr
+        ? (s) => (Number.isFinite(s.snr) ? -s.snr : Infinity)
+        : (s) => (s.mag ?? 0);
+
+    return imageStars
+        .map((s, i) => (clipped(s) ? [0, s.mag, i] : [1, rankOf(s), i]))
+        .filter(([, , i]) => neighborCounts[i] <= clutterMax && pointLike(imageStars[i]))
+        .sort((p, q) => p[0] - q[0] || p[1] - q[1])
+        .map((p) => p[2]);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------------------------
 
@@ -629,64 +747,8 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
     const bounds = O.bounds
         ?? [minX - 4 * tolPx, minY - 4 * tolPx, maxX + 4 * tolPx, maxY + 4 * tolPx];
 
-    // Quad stars must look like SKY: isolated points, not texture. Terrestrial clutter - lit
-    // foliage, a contrail - detects as dozens of bright blobs packed together, and on a real
-    // twilight photo those blobs WERE the brightest "stars", so every quad the solver built
-    // was anchored in a tree. A detection whose neighbourhood holds several times the image's
-    // average density is excluded from quad building; it can still be matched and named by
-    // verification and refinement. The bar is RELATIVE, so a genuinely rich star field - which
-    // is dense everywhere - keeps its anchors.
-    const clutterR2 = (0.04 * width) ** 2;
-    const neighborCounts = imageStars.map((s) => {
-        let c = 0;
-        for (const t of imageStars) {
-            if (t === s) continue;
-            if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < clutterR2) c++;
-        }
-        return c;
-    });
-    // The typical density is the MEDIAN, not the mean: the clutter's own inflated counts would
-    // otherwise raise a mean-based bar right past themselves.
-    const sortedCounts = [...neighborCounts].sort((a, b) => a - b);
-    const medianNeighbors = sortedCounts[sortedCounts.length >> 1] ?? 0;
-    const clutterMax = Math.max(4, 4 * medianNeighbors);
-
-    // The image quads are built from the best POINT SOURCES, not the brightest detections.
-    //
-    // Measured on a twilight photo with a treeline (4032x3024, 1047 detections): taking the 25
-    // brightest by flux put 24 of them in the foliage, and every surviving quad was anchored in
-    // a tree. Lit leaves are bright because a clump is LARGE, and integrated flux rewards
-    // exactly that, while a star is compact with a high peak. On that image, ranking by peakSNR
-    // alone leaves 12 of 25 anchors in the trees; restricting to compact detections alone leaves
-    // 19; doing both leaves 1. Both halves are therefore kept.
-    //
-    // This is a SEPARATE defence from the density test above, which that image defeats: the sky
-    // was itself densely detected (median 14 neighbours), so the foliage at ~50 never reached
-    // the 4x-median bar and nothing was excluded at all.
-    //
-    // `snr`, `extent` and `elongation` are optional. Callers that do not measure them - the
-    // headless tests, anything feeding bare {x, y, mag} - fall back to ranking by magnitude and
-    // to admitting every shape, which is exactly the previous behaviour.
-    const extents = imageStars.map((s) => s.extent).filter((v) => Number.isFinite(v));
-    const maxExtent = extents.length
-        ? O.quadMaxExtentMedians * [...extents].sort((a, b) => a - b)[extents.length >> 1]
-        : Infinity;
-    const pointLike = (s) =>
-        (!Number.isFinite(s.extent) || s.extent <= maxExtent)
-        && (!Number.isFinite(s.elongation) || s.elongation <= O.quadMaxElongation);
-    // Ascending sort throughout, so magnitude (smaller is brighter) and negated SNR agree on
-    // "best first" without a second code path.
-    const measuredSnr = imageStars.some((s) => Number.isFinite(s.snr));
-    const rankOf = measuredSnr
-        ? (s) => (Number.isFinite(s.snr) ? -s.snr : Infinity)
-        : (s) => (s.mag ?? 0);
-
-    const brightIdx = imageStars
-        .map((s, i) => [rankOf(s), i])
-        .filter(([, i]) => neighborCounts[i] <= clutterMax && pointLike(imageStars[i]))
-        .sort((p, q) => p[0] - q[0])
-        .slice(0, O.imageQuadStars)
-        .map((p) => p[1]);
+    // The image quads are built from the brightest POINT SOURCES: see rankPointSources.
+    const brightIdx = rankPointSources(imageStars, width, O).slice(0, O.imageQuadStars);
     const bpts = brightIdx.map((i) => [imageStars[i].x, imageStars[i].y]);
     const tri = triples(O.imageNeighbors);
 

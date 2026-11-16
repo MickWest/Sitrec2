@@ -28,6 +28,7 @@ import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator"
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
+import {TRIPLE_DEFAULTS} from "./StarTriples";
 import {identifyBrightTriplesOffThread} from "./StarTriplesOffThread";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
@@ -2020,13 +2021,14 @@ function releaseStarTrackCamera() {
  * `peakSNR` is how far the blob's PEAK stands above the local noise, which is what separates a
  * star from lit foliage: a leaf clump is bright because it is large, so it carries a big
  * integrated flux with an unremarkable peak. `extent` and `elongation` say whether the blob is
- * the compact round shape a point source makes.
+ * the compact round shape a point source makes. `saturated` is the fraction of the blob's pixels
+ * at the clip level: above zero, the peak has stopped measuring brightness (rankPointSources).
  *
  * Returns an empty object when the detector records are unavailable, so the caller simply omits
  * the fields and the solver falls back to ranking by brightness.
  */
 function pointSourceStats(track) {
-    const snr = [], extent = [], elongation = [];
+    const snr = [], extent = [], elongation = [], saturated = [];
     for (const o of track?.obs ?? []) {
         const s = o.src;
         if (!s) continue;
@@ -2035,12 +2037,14 @@ function pointSourceStats(track) {
             extent.push(Math.max(s.width, s.height));
         }
         if (Number.isFinite(s.elongation)) elongation.push(s.elongation);
+        if (Number.isFinite(s.saturatedFrac)) saturated.push(s.saturatedFrac);
     }
     const median = (a) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : undefined);
     const out = {};
     if (snr.length) out.snr = median(snr);
     if (extent.length) out.extent = median(extent);
     if (elongation.length) out.elongation = median(elongation);
+    if (saturated.length) out.saturated = median(saturated);
     return out;
 }
 
@@ -3578,10 +3582,16 @@ export async function identifyByBrightTriples(opts = {}) {
     const stars = r.solved.classified
         .filter((c) => ((c.klass2D ?? c.klass) === "star" || nearlySteady(c)) && c.position
             && !r.disabledStars?.has(c.index) && (Number.isFinite(c.magnitude) || c.manual))
-        .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
+        // With the point-source measurements, as for identify: they say which candidate stars
+        // are the brightest point sources, and only those take part (maxCandidateStars).
+        .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index,
+            ...pointSourceStats(r.solved.tracks[c.index])}));
     const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
     const maxFovDeg = 2 * Math.atan(Math.tan(vfov * D2R / 2) * Math.hypot(1, r.videoW / r.videoH)) / D2R;
-    setStatus(`${lead}Bright Triples: ${stars.length} candidate stars, ${objects.length} objects `
+    const taking = Math.min(stars.length, TRIPLE_DEFAULTS.maxCandidateStars);
+    const starCount = taking < stars.length
+        ? `the ${taking} best of ${stars.length} candidate stars` : `${stars.length} candidate stars`;
+    setStatus(`${lead}Bright Triples: ${starCount}, ${objects.length} objects `
         + `brighter than mag ${limit}${params.tripleAboveHorizon ? " above the horizon" : " in the whole sky"}`);
     await yieldToBrowser();
     if (result !== r) return false;
@@ -3589,7 +3599,7 @@ export async function identifyByBrightTriples(opts = {}) {
     // In a worker, behind the Star Tracker's progress window, which can stop it. Building the
     // catalog triples is about a sixth of the time, matching the rest.
     let aborted = false;
-    initProgress({title: "Bright Triples", filename: `${objects.length} objects, ${stars.length} candidate stars`,
+    initProgress({title: "Bright Triples", filename: `${objects.length} objects, ${starCount}`,
         showAbort: true, onAbort: () => { aborted = true; }});
     const t0 = performance.now();
     let res;

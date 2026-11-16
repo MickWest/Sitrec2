@@ -12,20 +12,38 @@
  * same, so a triple in the video has the code of the same triple on the sky. Of the two ways
  * to put the far pair, the one with the third point nearer the first (x + y <= 1) is used.
  *
- * Each catalog triple that is no wider than the camera's widest angle gets a code. Each image
- * triple from the brightest candidate stars is compared with them all; a close code proposes
- * three names. The proposal is fitted as a pinhole camera (fitManualPlate), and the fit then
- * projects every bright object into the frame: one that lands on another candidate star
- * supports it, and one that lands in the frame with no star there counts against it.
+ * Each catalog triple that is no wider than the camera's widest angle gets a code. Only the
+ * best candidate stars take part (candidatePool). Each image triple from the best of those is
+ * compared with every catalog triple; a close code proposes three names. The proposal is fitted
+ * as a pinhole camera (fitManualPlate), and the fit then projects every bright object into the
+ * frame: one that lands on another candidate star of the pool supports it, and one that lands
+ * in the frame with no such star there counts against it.
  */
-import {gnomonic, raDecToVec, tangentBasis} from "./StarIdentify";
+import {gnomonic, raDecToVec, rankPointSources, tangentBasis} from "./StarIdentify";
 import {fitManualPlate} from "./StarManualFit";
 import {applyTransform, invertTransform} from "./StarMatch";
 
 const D2R = Math.PI / 180;
 
 export const TRIPLE_DEFAULTS = {
-    // The brightest candidate stars that form image triples. 12 stars give 220 triples.
+    // The candidate stars that take part at all: the best point sources, then the brightest of
+    // the others (candidatePool). A bright object can only be one of the brightest dots, and a
+    // name is supported by a dot within matchTolFrac of where the fit puts it - so with every
+    // candidate star taking part, a rich field supports any answer by chance. Measured on two
+    // phone night photos (442 and 537 candidate stars, 9 and 11 of them true objects): of the
+    // 12 brightest by flux, 7 and 10 were lit ground, and the answer was 19 and 20 names, none
+    // right. With the 12 best point sources and every candidate star still supporting:
+    // 17 and 20 names, none right. With only the 30 best point sources taking part: 8 and 10
+    // names, all right, fitted to 0.4 and 0.1 px, and the next answer 7 and 6 names.
+    //
+    // 30 is from a sweep over five such photos (231 to 1412 candidate stars). At 20, 30 and 40
+    // the answer is right on four of them; at 30 it leads the next answer by at least one name
+    // on each, at 40 it ties on one, at 60 it is wrong on one more and at 80 on a third. The
+    // fifth photo is wrong at every size (8 names, none right, 31 objects missing): the answers
+    // are ranked by the count of names, and its true answer has only 6.
+    // A clip with 30 candidate stars or fewer is not changed by this.
+    maxCandidateStars: 30,
+    // The best of those, which form image triples. 12 stars give 220 triples.
     maxImageStars: 12,
     // A side within this fraction of the longest one may be the longest in the other picture,
     // so the image triple is also tried with that side as the far pair.
@@ -164,11 +182,27 @@ function projectObjects(model, objects) {
 }
 
 /**
+ * The candidate stars that take part, best first: the point sources in the quad search's own
+ * order (rankPointSources), then the others, brightest first. No more than `max`, and a star
+ * added by hand is always one of them: it has no magnitude, so it goes last, as it always did.
+ */
+function candidatePool(stars, longSide, max) {
+    const measured = stars.filter((s) => Number.isFinite(s.mag));
+    const byHand = stars.filter((s) => !Number.isFinite(s.mag));
+    const ranked = rankPointSources(measured, longSide).map((i) => measured[i]);
+    const isRanked = new Set(ranked);
+    const others = measured.filter((s) => !isRanked.has(s)).sort((a, b) => a.mag - b.mag);
+    return [...[...ranked, ...others].slice(0, Math.max(0, max - byHand.length)), ...byHand];
+}
+
+/**
  * Identify a few bright dots by triples.
  *
  * @param {object} args
  * @param {Array<{x:number, y:number, mag:number, index:number}>} args.stars - candidate stars in
- *   reference-chart pixels; mag is instrumental (smaller is brighter), NaN for a star added by hand
+ *   reference-chart pixels; mag is instrumental (smaller is brighter), NaN for a star added by
+ *   hand. The optional snr, extent, elongation and saturated of rankPointSources say which of
+ *   them are point sources; without them the brightest take part
  * @param {Array<{label:string, raDeg:number, decDeg:number, mag:number}>} args.objects - the
  *   planets and bright stars above the horizon, in J2000 (catalog-frame) positions
  * @param {number} args.width - frame width, px
@@ -183,11 +217,11 @@ function projectObjects(model, objects) {
  */
 export function identifyBrightTriples({stars, objects, width, height, maxFovDeg, options = {}, onProgress = null}) {
     const o = {...TRIPLE_DEFAULTS, ...options};
-    const counts = {imageStars: 0, objects: objects.length, catalogTriples: 0, imageTriples: 0,
-        codeMatches: 0, fitted: 0};
-    // Brightest first; a star added by hand has no magnitude and goes last.
-    const byMag = (a, b) => (Number.isFinite(a.mag) ? a.mag : Infinity) - (Number.isFinite(b.mag) ? b.mag : Infinity);
-    const img = [...stars].sort(byMag).slice(0, o.maxImageStars);
+    const counts = {candidateStars: 0, imageStars: 0, objects: objects.length, catalogTriples: 0,
+        imageTriples: 0, codeMatches: 0, fitted: 0};
+    const pool = candidatePool(stars, Math.max(width, height), o.maxCandidateStars);
+    const img = pool.slice(0, o.maxImageStars);
+    counts.candidateStars = pool.length;
     counts.imageStars = img.length;
     if (img.length < 3) return {ok: false, reason: `needs 3 candidate stars, found ${img.length}`, candidates: [], counts};
     const objs = objects.map((ob) => ({...ob, dir: raDecToVec(ob.raDeg * D2R, ob.decDeg * D2R)}));
@@ -230,7 +264,7 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
                             raDeg: p.object.raDeg, decDeg: p.object.decDeg})), center, width);
                         counts.fitted++;
                         if (!fit.ok || fit.rmsPx > fitTol) continue;
-                        candidates.push({...verify(fit, pairs, stars, objs, width, height, matchTol), codeDist});
+                        candidates.push({...verify(fit, pairs, pool, objs, width, height, matchTol), codeDist});
                     }
                 }
                 if (onProgress) onProgress("match", counts.imageTriples / nImageTriples);

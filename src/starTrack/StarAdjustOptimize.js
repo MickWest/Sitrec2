@@ -35,7 +35,7 @@ import {isLocal} from "../configUtils";
 import {par} from "../par";
 import {backgroundAt, detectSources, estimateBackground, gaussianBlur, lumaFromRGBA, rejectReason,
     STAR_DETECT_DEFAULTS} from "./StarDetect";
-import {STAR_IDENTIFY_DEFAULTS} from "./StarIdentify";
+import {STAR_IDENTIFY_DEFAULTS, rankPointSources} from "./StarIdentify";
 import {captureStarTrackerResult, getStarTrackerTweaks, restoreStarTrackerResult,
     scoreStarTrackerIdentification, setStarOptimizeMenuBuilder, setStarTrackerTweaks,
     starTrackerAppliesAdjustments, starTrackerAutoSigma, starTrackerDetectOptions,
@@ -345,7 +345,6 @@ function scoreStarField(px, opts, mask, ref) {
 
     const nAnchor = STAR_IDENTIFY_DEFAULTS.imageQuadStars;
     const extents = accepted.map((s) => Math.max(s.width, s.height));
-    const extentMedian = median(extents) ?? 1;
 
     // Per-detection credit: how much the fixed reference says is really there, times how much the
     // blob looks like the reference's own stars. Roundness and relative size are NOT factors here -
@@ -367,26 +366,15 @@ function scoreStarField(px, opts, mask, ref) {
         unsupported += 1 - evidence;
     }
 
-    // The identifier's anchor selection, reproduced: isolation, then shape, then brightness order.
-    // (StarIdentify.js - clutterR2/clutterMax, pointLike, rankOf by -snr, slice to imageQuadStars.)
-    const clutterR2 = (0.04 * px.W) ** 2;
-    const neighbours = accepted.map((s) => {
-        let c = 0;
-        for (const t of accepted) {
-            if (t === s) continue;
-            if ((t.x - s.x) ** 2 + (t.y - s.y) ** 2 < clutterR2) c++;
-        }
-        return c;
-    });
-    const clutterMax = Math.max(4, 4 * (median(neighbours) ?? 0));
-    const anchorIdx = [];
-    for (let i = 0; i < n; i++) {
-        if (neighbours[i] > clutterMax) continue;
-        if (extents[i] > STAR_IDENTIFY_DEFAULTS.quadMaxExtentMedians * extentMedian) continue;
-        if (accepted[i].elongation > STAR_IDENTIFY_DEFAULTS.quadMaxElongation) continue;
-        anchorIdx.push(i);
-    }
-    anchorIdx.sort((a, b) => accepted[b].peakSNR - accepted[a].peakSNR);
+    // The identifier's anchor selection itself, not a copy of it: isolation, then shape, then
+    // brightness order. The magnitude follows the tracker's rule for the same record
+    // (instrumentalMagnitude in StarSolve.js): a clean aperture, else the isophotal flux.
+    const anchorIdx = rankPointSources(accepted.map((s, i) => {
+        const flux = s.apertureFlux > 0 && s.apertureComplete && !s.apertureContaminated
+            ? s.apertureFlux : (s.flux > 0 ? s.flux : s.apertureFlux);
+        return {x: s.x, y: s.y, snr: s.peakSNR, extent: extents[i], elongation: s.elongation,
+            saturated: s.saturatedFrac, mag: flux > 0 ? -2.5 * Math.log10(flux) : NaN};
+    }), Math.max(px.W, px.H));
     let anchorSum = 0;
     for (let k = 0; k < Math.min(nAnchor, anchorIdx.length); k++) anchorSum += credit[anchorIdx[k]];
     const A = anchorSum / nAnchor;
