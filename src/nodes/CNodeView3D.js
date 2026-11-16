@@ -38,6 +38,7 @@ import {
     Sit
 } from "../Globals";
 import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} from "../LocalFrame";
+import {withVisibleMeasurements} from "./CNodeDisplaySkyOverlay";
 import {ATMOSPHERE_PROJECTION_GLSL, atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms, withMaterialAtmosphere} from "../atmosphere/MaterialAtmosphere";
 import {renderFisheyeMask, isFisheyeCamera, atmosphereFisheyeLens} from "../FisheyeProjection";
@@ -75,7 +76,7 @@ import {
     WebGLRenderTarget
 } from "three";
 import {forceFilterChange, scaleArrows, scaleBuildingHandles, updateTrackPositionIndicator} from "../threeExt";
-import {updateObjectMoveWidget} from "../CObjectMoveWidget";
+import {updateObjectMoveWidget, withObjectMoveWidgetVisible} from "../CObjectMoveWidget";
 import {CNodeViewCanvas} from "./CNodeViewCanvas";
 import {CNode} from "./CNode";
 import {getCameraNode} from "./CNodeCamera";
@@ -1355,10 +1356,10 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     renderAtmosphereScene(scene, camera = this.camera, {reflectionPlane} = {}) {
-        const renderWorld = () => {
+        const renderWorld = () => withVisibleMeasurements(camera, () => withObjectMoveWidgetVisible({camera}, () => {
             const softDepth = this.softDepthPass ??= new SoftDepthPass();
             return softDepth.render(this.renderer, scene, camera, () => this.renderer.render(scene, camera));
-        };
+        }));
         if (!this.effectiveAerialPerspective) {
             return withMaterialAtmosphere(scene, null, renderWorld, this.renderer);
         }

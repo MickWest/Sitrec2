@@ -4,6 +4,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
 require_once __DIR__ . '/gpData.php';
+require_once __DIR__ . '/gpParquet.php';
 
 // SECURITY: every response from this script is data or a plain-text message. Without this,
 // an early exit() would go out as PHP's default text/html.
@@ -67,7 +68,7 @@ if (!preg_match("/^\d{4}-\d{2}-\d{2}$/", $request)) {
 }
 
 // Whitelist the allowed types explicitly
-$allowed_types = ["", "LEO", "ALL", "SLOW", "LEOALL", "CUSTOM"];
+$allowed_types = ["", "LEO", "ALL", "CURRENT", "SLOW", "LEOALL", "CUSTOM"];
 
 $type = isset($_GET["type"]) ? $_GET["type"] : "";
 if (!in_array($type, $allowed_types, true)) {
@@ -90,13 +91,13 @@ if (!in_array($windowDays, $allowedWindowDays, true)) {
 // calculate nextDay in the same form: the end of the window
 $nextDay = date('Y-m-d', strtotime($request . ' +' . $windowDays . ' days'));
 
-// Ask Space-Track for only the columns we actually use.
+// Keep orbital elements, catalog metadata and provenance, without duplicate TLE text.
 //
 // Its default CSV is 40 columns, quoted, and carries TLE_LINE0/1/2 in addition
 // to the OMM elements they encode - a single LEO date runs to ~57 MB, several
 // times the equivalent 3LE. Most of that is duplication and bookkeeping.
 //
-// Beyond the twelve fields SGP4 needs, four are kept deliberately. The cache is
+// Beyond the twelve fields SGP4 needs, metadata is kept deliberately. The cache is
 // permanent and this archive is expensive to rebuild against a rate-limited
 // API, so dropping a column now would cost a full re-fetch to recover later:
 //
@@ -121,9 +122,12 @@ $nextDay = date('Y-m-d', strtotime($request . ' +' . $windowDays . ' days'));
 //                  later one; for an object launched just after the time that
 //                  would put it in orbit before its own launch. Sets cached
 //                  before this column was added lack it and keep that fallback.
+// These columns distinguish a complete metadata cache from older reduced sets.
+$gpMetadataFields = ['DECAY_DATE', 'COUNTRY_CODE', 'SITE', 'GP_ID', 'FILE', 'MEAN_ELEMENT_THEORY', 'EPHEMERIS_TYPE'];
 $predicates = "/predicates/OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,EPOCH,CREATION_DATE,"
     . "MEAN_MOTION,ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,"
-    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE,LAUNCH_DATE";
+    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE,LAUNCH_DATE,"
+    . implode(',', $gpMetadataFields);
 
 // the default STARLINK query
 $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~" . $predicates;
@@ -146,7 +150,13 @@ if ($type == "SLOW") {
 
 // override for ALL query
 if ($type == "ALL") {
-    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/decay_date/null-val/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
+    // Include objects that were orbiting then, even if they have since decayed.
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv" . $predicates;
+}
+
+if ($type == "CURRENT") {
+    // The full current catalog includes payloads, rocket bodies and debris.
+    $url = "https://www.space-track.org/basicspacedata/query/class/gp/decay_date/null-val/EPOCH/>now-30/orderby/NORAD_CAT_ID/format/csv" . $predicates;
 }
 
 // CUSTOM TLE handling
@@ -205,13 +215,27 @@ if ($type == "CUSTOM" && !getenv('CACHE_CUSTOM_TLE')) {
 // A window other than the standard two days is a different query, so it gets
 // its own file; the two-day name is unchanged, so the existing archive is kept.
 $baseFileName = $request . $type . ($windowDays === 2 ? "" : "_d" . $windowDays);
+// ALL now uses orbit epochs and includes objects that decayed after the date.
+if ($type === "ALL") $baseFileName .= "_epochs";
+if ($type === "CURRENT") $baseFileName = "current_all";
 $cachedCSV = $starlink_cache . $baseFileName . ".csv";
+$cachedParquet = $starlink_cache . $baseFileName . ".v1.parquet";
 $cachedTLE = $starlink_cache . $baseFileName . ".tle";
 $cachedZIP = $starlink_cache . $baseFileName . ".tle.zip";
 
 // Historical element sets for a past date never change, so let clients hold
 // onto them.
-$cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
+$cacheMaxAge = $type === "CURRENT" ? 3600 : 30 * 24 * 60 * 60;
+// A newly fetched provisional set must also revalidate when its window settles.
+$settled = strtotime($request . ' +' . ($windowDays + GP_SETTLE_MARGIN_DAYS) . ' days');
+if ($type !== "CURRENT" && time() < $settled) $cacheMaxAge = min($cacheMaxAge, $settled - time());
+$cacheUsable = function ($file) use ($type, $request, $windowDays, $gpMetadataFields) {
+    // Upgrade lazily once, keeping the old entry as the failure fallback below.
+    if ($type !== "CUSTOM" && !gpCacheHasColumns($file, $gpMetadataFields)) return false;
+    if ($type !== "CURRENT") return gpCacheIsUsable($file, $request, $windowDays);
+    $entry = gpCacheEntry($file);
+    return $entry !== null && time() - filemtime($entry) < 3600;
+};
 
 // Any cached copy is used, whatever format it is in, and we only go to
 // Space-Track when we have nothing. Historical element sets for a past date
@@ -227,19 +251,36 @@ $cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 // of its own date was fetched before Space-Track had finished publishing, and
 // is missing much of what exists now. Such an entry is re-fetched once, after
 // which its mtime puts it outside the settle window and it is trusted for good.
-if ($caching) {
-    // Prefer the CSV cache - it is the only format that can hold everything.
-    if (gpCacheIsUsable($cachedCSV, $request, $windowDays)) {
-        serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
+$serveExistingCache = function ($mayConvert = false) use ($cacheUsable, $cachedCSV, $cachedParquet, $cachedZIP, $cachedTLE, $zipIt, $baseFileName, $cacheMaxAge, $type, $request, $windowDays) {
+    if ($type !== 'CUSTOM' && gpParquetIsValid($cachedParquet)
+        && ($type === 'CURRENT' ? time() - filemtime($cachedParquet) < 3600
+            : gpCacheIsUsable($cachedParquet, $request, $windowDays))) {
+        header('X-Sitrec-Cache: HIT');
+        $age = $type === 'CURRENT' ? max(0, 3600 - (time() - filemtime($cachedParquet))) : $cacheMaxAge;
+        serveGPParquet($cachedParquet, $age);
+    }
+    if ($cacheUsable($cachedCSV)) {
+        $wantsParquet = $type !== 'CUSTOM' && ($_GET['format'] ?? '') === 'parquet';
+        // Hold the lock for CSV reads too: migration may remove the CSV while
+        // an older client is starting its response. Parallel callers convert once.
+        if ($type !== 'CUSTOM' && !$mayConvert) return false;
+        header('X-Sitrec-Cache: HIT');
+        $entry = gpCacheEntry($cachedCSV);
+        $remainingAge = $cacheMaxAge;
+        if ($type === "CURRENT") $remainingAge = max(0, 3600 - (time() - filemtime($entry)));
+        if ($wantsParquet && convertGPCacheToParquet($cachedCSV, $cachedParquet)) {
+            serveGPParquet($cachedParquet, $remainingAge);
+        }
+        serveGPCached($cachedCSV, $cachedCSV, $remainingAge);
     }
 
     if ($zipIt) {
-        if (gpCacheIsUsable($cachedZIP, $request, $windowDays)) {
+        if ($cacheUsable($cachedZIP)) {
             header("Location: " . $cachedZIP);
             exit();
         }
 
-        if (gpCacheIsUsable($cachedTLE, $request, $windowDays)) {
+        if ($cacheUsable($cachedTLE)) {
             if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
                 unlink($cachedTLE);
                 header("Location: " . $cachedZIP);
@@ -249,12 +290,30 @@ if ($caching) {
             }
         }
     } else {
-        if (gpCacheIsUsable($cachedTLE, $request, $windowDays)) {
+        if ($cacheUsable($cachedTLE)) {
             header("Location: " . $cachedTLE);
             exit();
         }
     }
+    return false;
+};
+if ($caching) {
+    $serveExistingCache();
+    // Only one request may fill/refresh this set. Waiters recheck after acquiring
+    // the lock, so simultaneous autoloads do not repeat an upstream download.
+    $cacheLock = @fopen($cachedCSV . '.lock', 'c');
+    if ($cacheLock === false || !flock($cacheLock, LOCK_EX)) {
+        http_response_code(503);
+        exit("ERROR: Could not lock satellite cache");
+    }
+    register_shutdown_function(function () use ($cacheLock) {
+        flock($cacheLock, LOCK_UN);
+        fclose($cacheLock);
+    });
+    clearstatcache();
+    $serveExistingCache(true);
 }
+header('X-Sitrec-Cache: MISS');
 
 // We only reach here with a cached file present if that file was judged
 // provisional. Keep it as a fallback: refreshing it is an improvement, not a
@@ -263,11 +322,14 @@ if ($caching) {
 // failure path below would fail a request that used to succeed.
 $provisionalFallback = null;
 $provisionalIsCSV = false;
+$provisionalIsParquet = false;
 if ($caching) {
-    foreach ([[$cachedCSV, true], [$cachedZIP, false], [$cachedTLE, false]] as $candidate) {
-        if (file_exists($candidate[0])) {
+    foreach ([[$cachedParquet, false], [$cachedCSV, true], [$cachedZIP, false], [$cachedTLE, false]] as $candidate) {
+        if ($candidate[0] === $cachedParquet && !gpParquetIsValid($cachedParquet)) continue;
+        if (gpCacheEntry($candidate[0]) !== null) {
             $provisionalFallback = $candidate[0];
             $provisionalIsCSV = $candidate[1];
+            $provisionalIsParquet = $candidate[0] === $cachedParquet;
             break;
         }
     }
@@ -278,12 +340,15 @@ if ($caching) {
  * otherwise fail as before. Does not return.
  */
 function gpFailSoft($message) {
-    global $provisionalFallback, $provisionalIsCSV, $cacheMaxAge;
+    global $provisionalFallback, $provisionalIsCSV, $provisionalIsParquet, $cacheMaxAge;
     if ($provisionalFallback !== null) {
+        header('X-Sitrec-Cache: STALE');
+        header('Cache-Control: no-cache');
         error_log("proxyStarlink: refresh failed, serving provisional cached copy "
             . $provisionalFallback . " - " . $message);
+        if ($provisionalIsParquet) serveGPParquet($provisionalFallback, 0);
         if ($provisionalIsCSV) {
-            serveGPCached($provisionalFallback, $provisionalFallback, $cacheMaxAge);
+            serveGPCached($provisionalFallback, $provisionalFallback, 0);
         }
         header("Location: " . $provisionalFallback);
         exit();
@@ -420,11 +485,9 @@ if ($type == "" && strpos($firstDataLine, "STARLINK") === false) {
     gpFailSoft('ERROR: Expected STARLINK data but got: ' . substr($firstDataLine, 0, 100) . '. Request: ' . $request);
 }
 
-// Freshly downloaded data is OMM CSV, cached as a single .csv.gz. Note that
-// TLE_ZIP_ENABLED no longer applies here: gzip Content-Encoding compresses at
-// least as well, is decompressed by the browser itself, and so avoids pulling
-// JSZip into the client just to read a catalogue. The setting still governs the
-// legacy .tle files already in the cache.
+// Stage the upstream CSV as gzip, then publish verified typed Parquet. The CSV
+// remains usable if the converter is unavailable. TLE_ZIP_ENABLED still governs
+// legacy .tle files; it does not apply to either modern cache format.
 if ($caching) {
     if (!writeGPCache($cachedCSV, $data)) {
         exit("ERROR: Failed to write GP cache file");
@@ -445,6 +508,9 @@ if ($caching) {
         }
     }
 
+    if ($type !== 'CUSTOM' && convertGPCacheToParquet($cachedCSV, $cachedParquet)) {
+        serveGPParquet($cachedParquet, $cacheMaxAge);
+    }
     serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
 } else {
     header('Vary: Accept-Encoding');

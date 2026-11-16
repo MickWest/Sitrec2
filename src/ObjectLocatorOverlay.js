@@ -1,5 +1,6 @@
 import {Sphere, Vector3} from "three";
 import {projectWorldToView, viewToClient, worldUnitsPerPixel} from "./ViewUtils";
+import {isPointOccludedByGlobe} from "./GlobeOcclusion";
 
 const sphere = new Sphere();
 const position = new Vector3();
@@ -24,6 +25,7 @@ export function updateObjectLocatorRings(view, nodes) {
             // Mark the object's origin, where the move widget is attached. Use its
             // bounding sphere (including model offsets and scale) only for the fade.
             position.setFromMatrixPosition(node.group.matrixWorld);
+            if (isPointOccludedByGlobe(view.camera.position, position)) continue;
             const projected = projectWorldToView(view, position);
             if (!projected) continue;
             const [x, y] = viewToClient(view, ...projected);

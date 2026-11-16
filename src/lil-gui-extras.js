@@ -1743,6 +1743,19 @@ export class CGuiMenuBar {
 
     }
 
+    dockToSidebar(gui, side = "left") {
+        if (isInLeftSidebar(gui)) removeMenuFromLeftSidebar(gui);
+        if (isInRightSidebar(gui)) removeMenuFromRightSidebar(gui);
+        if (side === "right") addMenuToRightSidebar(gui);
+        else addMenuToLeftSidebar(gui);
+        gui.mode = side === "right" ? "SIDEBAR_RIGHT" : "SIDEBAR_LEFT";
+        gui.lockOpenClose = false;
+        gui.open();
+        gui.lockOpenClose = true;
+        this.applyModeStyles(gui);
+        this.hideEmpty();
+    }
+
     restoreToBar(newGUI) {
         for (const menu of [...this.persistentMenus]) {
             if (menu._parentGUI === newGUI) menu.destroy();
@@ -2568,25 +2581,13 @@ export class CGuiMenuBar {
             const menuRight = menuLeft + newGUI.domElement.offsetWidth;
 
             if (hasDragged && menuLeft < 0) {
-                addMenuToLeftSidebar(newGUI);
-                newGUI.mode = "SIDEBAR_LEFT";
-                newGUI.lockOpenClose = false;
-                newGUI.open();
-                newGUI.lockOpenClose = true;
-                this.applyModeStyles(newGUI);
-                this.hideEmpty();
+                this.dockToSidebar(newGUI, "left");
                 event.preventDefault();
                 return;
             }
 
             if (hasDragged && menuRight > viewportWidth) {
-                addMenuToRightSidebar(newGUI);
-                newGUI.mode = "SIDEBAR_RIGHT";
-                newGUI.lockOpenClose = false;
-                newGUI.open();
-                newGUI.lockOpenClose = true;
-                this.applyModeStyles(newGUI);
-                this.hideEmpty();
+                this.dockToSidebar(newGUI, "right");
                 event.preventDefault();
                 return;
             }
@@ -3123,23 +3124,13 @@ export class CGuiMenuBar {
                 const menuRight = menuLeft + gui.domElement.offsetWidth;
 
                 if (hasDragged && menuLeft < 0) {
-                    addMenuToLeftSidebar(gui);
-                    gui.mode = "SIDEBAR_LEFT";
-                    gui.lockOpenClose = false;
-                    gui.open();
-                    gui.lockOpenClose = true;
-                    this.applyModeStyles(gui);
+                    this.dockToSidebar(gui, "left");
                     event.preventDefault();
                     return;
                 }
 
                 if (hasDragged && menuRight > viewportWidth) {
-                    addMenuToRightSidebar(gui);
-                    gui.mode = "SIDEBAR_RIGHT";
-                    gui.lockOpenClose = false;
-                    gui.open();
-                    gui.lockOpenClose = true;
-                    this.applyModeStyles(gui);
+                    this.dockToSidebar(gui, "right");
                     event.preventDefault();
                     return;
                 }

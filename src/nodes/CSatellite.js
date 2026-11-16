@@ -1,3 +1,4 @@
+import {isSatelliteParquet, satelliteCatalogURL} from "../SatelliteCatalogSource";
 import {Color} from "three";
 import {V3} from "../threeUtils";
 import {SITREC_SERVER} from "../configUtils";
@@ -24,9 +25,7 @@ import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../Sa
 import {applySatelliteSizes, ensureSatelliteSizesLoaded} from "../SatelliteSizes";
 import {satelliteMatchesSearch} from "../StarlinkViewing";
 import {SatelliteSimulation, SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
-
-// The Earth's rotation rate, rad/s, about the ECEF z axis.
-const EARTH_ROTATION_RATE = 7.292115e-5;
+import {SatelliteCatalogLoader} from "../SatelliteCatalogLoader";
 
 /**
  * CSatellite handles all satellite-related functionality
@@ -739,10 +738,13 @@ export class CSatellite {
      * @returns {CTLEData} the data just loaded
      */
     replaceTLE(tle) {
+        const catalog = tle instanceof CTLEData ? tle : new CTLEData(tle);
         this.removeSatellites();
         this._renderTLEData = undefined;
         this.simulation.invalidateCatalog();
-        this.TLEData = new CTLEData(tle);
+        this.TLEData = catalog;
+        this.tleFilterResults = null;
+        this.tleFilterFrameData = null;
         this.TLEData.satData.forEach(sat => {
             sat.ecef = V3();
         });
@@ -755,7 +757,7 @@ export class CSatellite {
         if (!this.exportTLEButton) {
             const obj = {
                 exportTLE: () => {
-                    const tleText = tle;
+                    const tleText = this.TLEData.rawText;
                     saveAs(new Blob([tleText]), this.satelliteExportFilename());
                 }
             };
@@ -1058,7 +1060,7 @@ export class CSatellite {
      * Calculate satellite ECEF position for a given date
      */
     calcSatECEF(sat, date) {
-        // Null under 100 km (in the atmosphere) and over 40,000 km (an error).
+        // Shared propagation checks apply to every orbit class, including HEO.
         return satelliteECEF(sat, date, Globals.equatorRadius, Globals.polarRadius);
     }
 
@@ -1185,11 +1187,20 @@ export class CSatellite {
 
         let validCount = 0;
         let visibleCount = 0;
+        const frameFilter = !this.usingSimulatedSatellites && this.tleFilterFrameData;
+        const sampleIndex = frameFilter ? this._nearestSampleIndex(timeMS) : -1;
         const maxTLEAgeDays = 90;
         const maxTLEAgeMS = maxTLEAgeDays * 24 * 60 * 60 * 1000;
 
         for (let i = 0; i < numSats; i++) {
             const satData = this.renderTLEData.satData[i];
+            // The denominator is the active selection, including any time-based
+            // filter. Filtered-out objects are not failed orbit predictions.
+            const frameVisibility = frameFilter?.perSat?.[i];
+            satData.tleFrameHidden = frameVisibility === 'off'
+                || (Array.isArray(frameVisibility) && !frameVisibility[sampleIndex]);
+            const selected = satData.visible && !satData.tleFrameHidden;
+            if (selected) visibleCount++;
             // The cache is dropped if the satrecs array is replaced or grows (merged TLEs).
             const satrecs = satData.satrecs;
             let satrec;
@@ -1217,9 +1228,6 @@ export class CSatellite {
                 this.removeSatSunArrows(satData);
                 this.lightCloud.setBrightness(i, 0);
                 this.lightCloud.setPosition(i, 1000000000, 0, 0);
-                if (satData.visible) {
-                    visibleCount++;
-                }
                 continue;
             }
             satData.outOfRange = false;
@@ -1255,75 +1263,61 @@ export class CSatellite {
             }
 
             if (satData.ecefA !== null && satData.ecefB !== null) {
-                // The positions are Earth-fixed, so their difference is speed
-                // relative to the rotating Earth. The limits below are about
-                // ORBITAL (inertial) speed, so add the Earth's rotation back
-                // (omega x r, about the ECEF z axis). Without it a geostationary
-                // satellite, nearly still over the ground, reads a few hundred m/s
-                // and is rejected, though its orbital speed is about 3,075 m/s.
-                const dt = (satData.timeB - satData.timeA) / 1000;
-                const velocity = Math.hypot(
-                    (satData.ecefB.x - satData.ecefA.x) / dt - EARTH_ROTATION_RATE * satData.ecefA.y,
-                    (satData.ecefB.y - satData.ecefA.y) / dt + EARTH_ROTATION_RATE * satData.ecefA.x,
-                    (satData.ecefB.z - satData.ecefA.z) / dt);
+                // Both endpoints passed SGP4 and position validation. Fixed
+                // speed bounds would discard valid eccentric and high orbits.
+                var t = (timeMS - satData.timeA) / (satData.timeB - satData.timeA);
+                satData.ecef.lerpVectors(satData.ecefA, satData.ecefB, t);
 
-                if (velocity < 2500 || velocity > 11000) {
-                    satData.invalidPosition = true;
+                // Apparent (refraction-corrected) sightline from the
+                // observer — used only for rendering and picking. The
+                // physical satData.ecef stays geometric so flare
+                // reflection, Earth-shadow, ground arrows and co-location
+                // checks still see the real satellite location.
+                if (!satData.ecefApparent) satData.ecefApparent = satData.ecef.clone();
+                if (refractionEnabled) {
+                    applyPreparedObserverRefraction(satData.ecef, refractionPrep, satData.ecefApparent);
                 } else {
-                    var t = (timeMS - satData.timeA) / (satData.timeB - satData.timeA);
-                    satData.ecef.lerpVectors(satData.ecefA, satData.ecefB, t);
+                    satData.ecefApparent.copy(satData.ecef);
+                }
 
-                    // Apparent (refraction-corrected) sightline from the
-                    // observer — used only for rendering and picking. The
-                    // physical satData.ecef stays geometric so flare
-                    // reflection, Earth-shadow, ground arrows and co-location
-                    // checks still see the real satellite location.
-                    if (!satData.ecefApparent) satData.ecefApparent = satData.ecef.clone();
-                    if (refractionEnabled) {
-                        applyPreparedObserverRefraction(satData.ecef, refractionPrep, satData.ecefApparent);
-                    } else {
-                        satData.ecefApparent.copy(satData.ecef);
+                this.lightCloud.setPosition(i, satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
+                satData.invalidPosition = false;
+                if (satData.currentPosition) {
+                    satData.currentPosition.copy(satData.ecef);
+                } else {
+                    satData.currentPosition = satData.ecef.clone();
+                }
+
+                if (satData.spriteText) {
+                    satData.spriteText.position.set(satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
+                }
+
+                let arrowsDrawn = false;
+                const inRange = satData.ecefA.distanceTo(lookPos) < this.arrowRange * 1000;
+                const arrowVisible = selected && inRange &&
+                    (!this.labelLookVisible || satData.visibleInLook) &&
+                    (!this.labelFlares || satData.isFlaring) &&
+                    (!this.labelLit || satData.isLit);
+
+                if (arrowVisible) {
+                    if (this.showSatelliteTracks && options.satelliteTrackGroup) {
+                        let dir = satData.ecefB.clone().sub(satData.ecefA).normalize();
+                        DebugArrow(satData.name + "_t", dir, satData.ecef, 500000, "#FFFF00", true, options.satelliteTrackGroup, 20, LAYER.MASK_LOOKRENDER);
+                        arrowsDrawn = true;
+                        satData.hasArrowsNeedingCleanup = true;
                     }
 
-                    this.lightCloud.setPosition(i, satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
-                    satData.invalidPosition = false;
-                    if (satData.currentPosition) {
-                        satData.currentPosition.copy(satData.ecef);
-                    } else {
-                        satData.currentPosition = satData.ecef.clone();
+                    if (this.showSatelliteGround && options.satelliteGroundGroup) {
+                        let A = satData.ecefA.clone();
+                        let B = getPointBelow(A);
+                        DebugArrowAB(satData.name + "_g", A, B, "#00FF00", true, options.satelliteGroundGroup, 20, LAYER.MASK_LOOKRENDER);
+                        arrowsDrawn = true;
+                        satData.hasArrowsNeedingCleanup = true;
                     }
+                }
 
-                    if (satData.spriteText) {
-                        satData.spriteText.position.set(satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
-                    }
-
-                    let arrowsDrawn = false;
-                    const inRange = satData.ecefA.distanceTo(lookPos) < this.arrowRange * 1000;
-                    const arrowVisible = satData.visible && inRange && 
-                        (!this.labelLookVisible || satData.visibleInLook) &&
-                        (!this.labelFlares || satData.isFlaring) &&
-                        (!this.labelLit || satData.isLit);
-                    
-                    if (arrowVisible) {
-                        if (this.showSatelliteTracks && options.satelliteTrackGroup) {
-                            let dir = satData.ecefB.clone().sub(satData.ecefA).normalize();
-                            DebugArrow(satData.name + "_t", dir, satData.ecef, 500000, "#FFFF00", true, options.satelliteTrackGroup, 20, LAYER.MASK_LOOKRENDER);
-                            arrowsDrawn = true;
-                            satData.hasArrowsNeedingCleanup = true;
-                        }
-
-                        if (this.showSatelliteGround && options.satelliteGroundGroup) {
-                            let A = satData.ecefA.clone();
-                            let B = getPointBelow(A);
-                            DebugArrowAB(satData.name + "_g", A, B, "#00FF00", true, options.satelliteGroundGroup, 20, LAYER.MASK_LOOKRENDER);
-                            arrowsDrawn = true;
-                            satData.hasArrowsNeedingCleanup = true;
-                        }
-                    }
-
-                    if (!arrowsDrawn) {
-                        this.removeSatelliteArrows(satData);
-                    }
+                if (!arrowsDrawn) {
+                    this.removeSatelliteArrows(satData);
                 }
             } else {
                 satData.invalidPosition = true;
@@ -1337,23 +1331,7 @@ export class CSatellite {
                 satData.hiddenInLookView = satData.ecef.distanceTo(camSatState.ecef) < 500;
             }
 
-            // Per-frame TLE filter: if "any frame in range" precalculated data exists,
-            // check whether this satellite is visible at the current time.
-            let tleFrameHidden = false;
-            if (!this.usingSimulatedSatellites && this.tleFilterFrameData && satData.visible && !satData.invalidPosition) {
-                const fd = this.tleFilterFrameData.perSat[i];
-                if (fd === 'off') {
-                    tleFrameHidden = true;
-                } else if (Array.isArray(fd)) {
-                    // 'changeable' — find nearest sample for current time
-                    const idx = this._nearestSampleIndex(timeMS);
-                    tleFrameHidden = !fd[idx];
-                }
-                // 'on' → always visible, no action needed
-            }
-
-            satData.tleFrameHidden = tleFrameHidden;
-            if (satData.invalidPosition || !satData.visible || tleFrameHidden) {
+            if (satData.invalidPosition || !selected) {
                 this.removeSatSunArrows(satData);
                 this.lightCloud.setBrightness(i, 0);
                 this.lightCloud.setPosition(i, 1000000000, 0, 0);
@@ -1361,9 +1339,6 @@ export class CSatellite {
                 validCount++;
             }
 
-            if (satData.visible) {
-                visibleCount++;
-            }
         }
 
         this.lightCloud.markPositionsNeedUpdate();
@@ -1479,30 +1454,22 @@ export class CSatellite {
      * Internal method to update satellites of a specific type
      */
     updateSats(satType) {
-        let startTime = new Date(GlobalDateTimeNode.dateStart);
+        const startTime = new Date(GlobalDateTimeNode.dateNow);
 
-        const now = new Date();
-        const someTimeAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
-        if (startTime > someTimeAgo) {
-            startTime = someTimeAgo;
-        }
-
-        // The query spans [D, D + days], centred on the start. A CUSTOM source
-        // substitutes the date into its own URL and has no window to widen.
+        // Center history on the playhead. A CUSTOM source receives the viewing
+        // date itself; it defines its own window.
         const days = satType === "CUSTOM" ? GP_QUERY_WINDOW_DAYS : gpHistoryWindowDays(startTime);
-        startTime.setUTCDate(startTime.getUTCDate() - days / 2);
+        if (satType !== "CUSTOM") startTime.setUTCDate(startTime.getUTCDate() - days / 2);
 
         this.loadDatedTLEWithRetry(startTime, satType, 0, days);
     }
 
     loadDatedTLEWithRetry(startTime, satType, retryCount, days = GP_QUERY_WINDOW_DAYS) {
         const maxRetries = 3;
-        const daysBackPerRetry = 3;
 
         const dateStr = startTime.toISOString().split('T')[0];
         const nonStandard = days !== GP_QUERY_WINDOW_DAYS;
-        const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr + "&type=" + satType
-            + (nonStandard ? "&days=" + days : "");
+        const url = satelliteCatalogURL(SITREC_SERVER, dateStr, satType, nonStandard ? days : undefined);
         const id = "starLink_" + dateStr + ".tle";
 
         console.log(`Getting satellites from ${url} (attempt ${retryCount + 1})`);
@@ -1522,7 +1489,7 @@ export class CSatellite {
         });
 
         if (retryCount > 0) {
-            updateProgress({ retryInfo: { attempt: retryCount, maxRetries, daysBack: retryCount * daysBackPerRetry } });
+            updateProgress({status: `Retrying the same date (attempt ${retryCount + 1})`});
         } else {
             updateProgress({ status: "Connecting to server..." });
         }
@@ -1551,14 +1518,6 @@ export class CSatellite {
                     // Likely a text error message
                     const text = new TextDecoder().decode(buffer).trim();
                     if (text.startsWith("ERROR:")) {
-                        if (retryCount < maxRetries) {
-                            const newStartTime = new Date(startTime);
-                            newStartTime.setDate(newStartTime.getDate() - daysBackPerRetry);
-                            console.log(`Server error: ${text}`);
-                            console.log(`Retrying with date ${newStartTime.toISOString().split('T')[0]} (attempt ${retryCount + 2}/${maxRetries + 1})`);
-                            this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1, days);
-                            return;
-                        }
                         hideProgress();
                         showError("TLE Loading Error: " + text);
                         return;
@@ -1579,10 +1538,7 @@ export class CSatellite {
                 }
 
                 if (error.message.startsWith("SERVER_ERROR_") && retryCount < maxRetries) {
-                    const newStartTime = new Date(startTime);
-                    newStartTime.setDate(newStartTime.getDate() - daysBackPerRetry);
-                    console.log(`${error.message}, retrying with date ${newStartTime.toISOString().split('T')[0]} (attempt ${retryCount + 2}/${maxRetries + 1})`);
-                    this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1, days);
+                    this.loadDatedTLEWithRetry(startTime, satType, retryCount + 1, days);
                     return;
                 }
 
@@ -1596,7 +1552,7 @@ export class CSatellite {
         return fetch(url, { signal });
     }
 
-    async readResponseWithProgress(response, total, signal) {
+    async readResponseWithProgress(response, total, signal, onProgress) {
         const reader = response.body.getReader();
         const chunks = [];
         let loaded = 0;
@@ -1614,7 +1570,9 @@ export class CSatellite {
                 chunks.push(value);
                 loaded += value.length;
                 
-                if (total > 0) {
+                if (onProgress) {
+                    onProgress(loaded);
+                } else if (total > 0) {
                     updateProgress({ loaded, total });
                 } else {
                     updateProgress({ status: `Downloaded ${(loaded / 1024).toFixed(0)} KB...` });
@@ -1636,7 +1594,26 @@ export class CSatellite {
         return allChunks.buffer;
     }
 
-    processTLEData(id, buffer, tleSource = null, tleAction = undefined) {
+    createCatalogLoader(automatic) {
+        this.catalogLoader = new SatelliteCatalogLoader({
+            automatic,
+            fetchCatalog: async (request, signal, onProgress) => {
+                const response = await fetch(satelliteCatalogURL(SITREC_SERVER, request.date, request.type, request.days), {signal});
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const buffer = await this.readResponseWithProgress(response, 0, signal, onProgress);
+                const head = new TextDecoder().decode(buffer.slice(0, 200)).trim();
+                if (/^(ERROR:|<!doctype|<html|Rate limit)/i.test(head)) throw new Error(head.replace(/<[^>]*>/g, ""));
+                return buffer;
+            },
+            installCatalog: (buffer, request, canApplyTLE) => this.processTLEData(
+                `satellites_${request.type}_${request.date}`, buffer,
+                {date: request.date, type: request.type, ...(request.days ? {days: request.days} : {})},
+                "replace", {canApplyTLE, automaticCatalog: true}),
+        });
+        return this.catalogLoader;
+    }
+
+    processTLEData(id, buffer, tleSource = null, tleAction = undefined, options = {}) {
         // Each download starts a new import batch. A previous load's merge-all
         // choice must not skip this download's question, and its replacement
         // flag must not turn an explicit replacement into another merge.
@@ -1644,11 +1621,12 @@ export class CSatellite {
         FileManager._tleReplacedInBatch = false;
         // Use FileManager.parseResult to handle unzipping, parsing, and routing
         // The proxyStarlink returns zipped TLE data
-        FileManager.remove(id);
+        if (!options.automaticCatalog) FileManager.remove(id);
         // "downloaded": not a user import, so the satellite filters are left as
         // they are (see handleParsedFile). A tleAction ("merge") skips the
         // merge-or-replace question.
-        return FileManager.parseResult(id + ".tle", buffer, null, {trackOptions: {downloaded: true, tleAction}})
+        const extension = isSatelliteParquet(buffer) ? ".parquet" : ".tle";
+        return FileManager.parseResult(id + extension, buffer, null, {trackOptions: {downloaded: true, tleAction, ...options}})
             .then(results => {
                 // parseResult returns an array of results
                 // Mark the files as dynamic links (not static URLs)
@@ -1667,6 +1645,7 @@ export class CSatellite {
                 }
             })
             .catch(err => {
+                if (options.automaticCatalog) throw err;
                 console.error("Error parsing TLE data:", err);
                 showError("Error parsing TLE data: " + err.message);
             });

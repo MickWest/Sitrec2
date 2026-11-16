@@ -1,3 +1,4 @@
+import {satelliteAutoloadDefault} from "../SatelliteCatalogLoader";
 import {SIMULATED_SATELLITE_COLOR, simulateUnavailableDefault} from "../SatelliteSimulation";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
@@ -9,7 +10,7 @@ import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene,
 import {Color, Group, Matrix4, Ray, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
 import {envFlag, getEnv} from "../envUtils";
-import {isSecureBuild} from "../configUtils";
+import {isSecureBuild, isServerless} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ensureNightSkyFiles} from "../ExtraFiles";
 import {
@@ -55,6 +56,7 @@ import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
 import {CNodeSkyPlotView} from "./CNodeSkyPlotView";
 import {CNodeStarChartView} from "./CNodeStarChartView";
 import {sharedMenuKey, viewMenuKey} from "../ViewUIBarMenus";
+import {SatelliteEditor} from "../SatelliteEditor";
 //import { eci_to_geodetic } from '../../pkg/eci_convert';
 // npm install satellite.js --save-dev
 // installed with
@@ -195,6 +197,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             penumbraDepth: 5000
         });
 
+        if (Sit.name === "custom" && !Sit.mods && !Sit.templateSource) this.satellites.showSatellites = false;
         this.firstRenderTLE = true;
         this.fullBrightnessUpdate = false;
         EventManager.addEventListener("tleLoaded", () => {
@@ -208,7 +211,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
 
             const menuName = Globals.env.SITREC_CUSTOM_TLE_MENU_NAME || "Custom Satellites";
-            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Download satellite orbits (TLE data) for the sitch start date from this deployment's own source.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them.";
+            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Download satellite orbits (TLE data) for the playhead date from this deployment's own source.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them.";
 
 
             satGUI.add(this.satellites,"updateCustomSats").name(menuName)
@@ -986,7 +989,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // })
 
 
-        par.validPct = 0;
+        par.validPct = null;
         const nightSky = this;
         labelMainViewPVS.addText("videoLabelInRange", "xx", 100, 2, -11, "#f0f00080", "right").update(function () {
 
@@ -1003,7 +1006,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 this.text = "TLEs: " + formatTLEDate(TLEData.startDate) + " - " + formatTLEDate(TLEData.endDate) + "   ";
             }
 
-            this.text += par.validPct ? "In Range:" + par.validPct.toFixed(1) + "%" : "";
+            if (nightSky.satellites.showSatellites && par.validPct !== null) {
+                // Do not round a partially valid catalog up to 100%.
+                const percent = par.validPct < 100 ? Math.min(par.validPct, 99.99) : par.validPct;
+                this.text += "In Range:" + percent.toFixed(2) + "%";
+            } else {
+                this.color = "#f0f00080";
+                return;
+            }
 
             // if validPct < 95%, make text red, if 99-100 yellow, if 100% green
             if (par.validPct < 95) {
@@ -1058,7 +1068,81 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             left: 0.53, top: 0.06, width: -1, height: 0.85,
         });
 
+        if (defaultTLESources && !isServerless && !envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
+            this.defaultAutoloadSatellites = v.autoloadSatellites ?? satelliteAutoloadDefault(Sit);
+            this.satellites.createCatalogLoader(this.defaultAutoloadSatellites);
+            this.addSimpleSerial("autoloadSatellites");
+            this.autoloadController = satGUI.add(this, "autoloadSatellites").name(t("satelliteEditor.autoload"))
+                .tooltip(t("satelliteEditor.autoloadTip")).asListCheckbox().listen()
+                .onChange(() => { markSitchDirty(); setRenderOne(true); });
+            this.catalogTimer = setInterval(() => {
+                const active = document.activeElement;
+                const timeFocused = guiMenus.time.domElement.contains(active)
+                    || !!active?.closest(".sitrec-time-editor")
+                    || guiMenus.time.foldersRecursive().some(menu => menu.domElement.contains(active));
+                this.satellites.catalogLoader.observe(GlobalDateTimeNode.dateNow, {
+                    timeFocused, visible: this.satellites.showSatellites,
+                    busy: Globals.parsing || Globals.deserializing || Globals.disposing,
+                });
+            }, 250);
+        }
+        this.buildSatelliteEditor(satGUI);
+
 //        console.log("Done with CNodeDisplayNightSky constructor")
+    }
+
+    get autoloadSatellites() { return this.satellites.catalogLoader?.automatic ?? false; }
+    set autoloadSatellites(value) { this.satellites.catalogLoader?.setAutomatic(value); }
+
+    buildSatelliteEditor(menu) {
+        menu.domElement.classList.add("sitrec-modern");
+        // Keep controller ownership and paths intact for saved scenes and AI tools.
+        // Only their DOM presentation moves into the advanced section.
+        const details = this.satelliteAdvanced = document.createElement("details");
+        details.className = "satellite-advanced";
+        const summary = document.createElement("summary");
+        summary.textContent = t("satelliteEditor.advanced");
+        details.append(summary, ...Array.from(menu.$children.children));
+        menu.$children.append(details);
+        const host = this.satelliteEditorHost = document.createElement("div");
+        menu.$children.prepend(host);
+        this.satelliteEditor = this.createSatelliteEditor(host, true);
+        const source = property => menu.controllersRecursive().find(controller => controller.property === property);
+        // Keep the original controllers and their paths; move only their presentation.
+        const globalToggle = source("showSatellites");
+        if (globalToggle) menu.$children.prepend(globalToggle.domElement);
+        if (this.autoloadController) host.before(this.autoloadController.domElement);
+        const primary = document.createElement("div");
+        host.append(primary);
+        for (const property of ["showSunArrows", "showFlareBand", "showFlareRegionMain", "showFlareRegionLook", "lookTowardsFlareRegion"]) {
+            const controller = source(property);
+            const element = controller?._checkboxPair?.domElement ?? controller?.domElement;
+            if (element && !primary.contains(element)) primary.append(element);
+        }
+        const search = document.createElement("div");
+        search.className = "satellite-editor sitrec-modern";
+        search.dataset.widgetPath = t("satelliteEditor.title") + "/" + t("satelliteEditor.advanced");
+        summary.after(search);
+        this.satelliteEditor.moveSearchTo(search);
+        source("nameFilter")?.hide();
+    }
+
+    createSatelliteEditor(container, inMenu = false) {
+        const editor = new SatelliteEditor(container, {
+            satellites: this.satellites,
+            dateTime: GlobalDateTimeNode,
+            source: property => guiMenus.satellites.controllersRecursive().find(controller => controller.property === property),
+            changed: () => { markSitchDirty(); setRenderOne(true); this.satellites._editorCount = null; },
+            advanced: folderName => {
+                guiMenus.satellites.open();
+                this.satelliteAdvanced.open = true;
+                if (folderName) guiMenus.satellites.getFolder(folderName)?.open();
+                if (!inMenu) this.satelliteAdvanced.scrollIntoView({block: "nearest"});
+                this.satelliteAdvanced.querySelector("summary").focus();
+            },
+        });
+        editor.el("advanced").hidden = inMenu;
+        return editor;
     }
 
     addExtraViewToggle(view, label, tooltip) {
@@ -1369,6 +1453,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modSerialize() {
         var result = super.modSerialize();
+        if (this.satellites.TLEData && !this.satellites.TLEData.simulated) {
+            result.satelliteCatalogRequest = this.satellites.catalogLoader?.loadedState?.request;
+        }
         var satSerials = this.getSatelliteSerials();
         for (var i = 0; i < satSerials.length; i++) {
             result[satSerials[i]] = this.satellites[satSerials[i]];
@@ -1378,6 +1465,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.autoloadSatellites = v.autoloadSatellites ?? this.defaultAutoloadSatellites ?? false;
+        if (this.satellites.TLEData && !this.satellites.TLEData.simulated) {
+            this.satellites.catalogLoader?.restoreLoadedRequest(v.satelliteCatalogRequest);
+        }
         // Older saves used a master switch plus an optional Look overlay.
         // A master-off save must stay hidden in both views.
         if (v.showFlareRegionMain === undefined && v.showFlareRegion !== undefined) {
@@ -1511,6 +1602,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
     update(frame) {
+        const main = NodeMan.get("mainView", false), look = NodeMan.get("lookView", false);
+        if (main && look) {
+            // Keep orbit epochs readable when Main is the small overview inset.
+            NodeMan.get("labelMainViewPVS", false)?.setOverlayView(look.width > 0.9 && main.height < 0.5 ? look : main);
+        }
 
         if (this.useDayNight) {
             const sun = Globals.sunTotal / Math.PI;
@@ -1569,7 +1665,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         if (this.satellites.updateRenderCatalog(nowDate, this.satelliteGroup)) {
-            par.validPct = 0;
+            par.validPct = null;
             this.firstRenderTLE = true;
             this.fullBrightnessUpdate = true;
         }
@@ -1600,7 +1696,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             });
             // Calculate percentage of valid satellites, only counting those not filtered out
             if (satResult && this.satellites.renderTLEData.satData.length > 0) {
-                par.validPct = satResult.visibleCount ? (satResult.validCount / satResult.visibleCount) * 100 : 0;
+                par.validPct = satResult.visibleCount ? (satResult.validCount / satResult.visibleCount) * 100 : null;
             }
 
             this.updateSatelliteBrightness();
@@ -1861,7 +1957,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
      * Public wrapper for loading TLE data - called from DragDropHandler and other places
      * Delegates to this.satellites
      */
-    replaceTLE(tle, {revealImported = false} = {}) {
+    replaceTLE(tle, {revealImported = false, automaticCatalog = false} = {}) {
+        if (!automaticCatalog) this.satellites.catalogLoader?.protectCatalog();
         const imported = this.satellites.replaceTLE(tle);
         // Add satellites to the scene
         this.satellites.addSatellites(this.satelliteGroup, 1);
@@ -1870,6 +1967,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     }
 
     mergeTLE(tle, {revealImported = false} = {}) {
+        this.satellites.catalogLoader?.protectCatalog();
         const imported = this.satellites.mergeTLE(tle);
         // Rebuild the scene with merged satellite data
         this.satellites.addSatellites(this.satelliteGroup, 1);
@@ -2256,6 +2354,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     //////////////////////////////////////////////////
 
     dispose() {
+        clearInterval(this.catalogTimer);
+        this.satellites.catalogLoader?.dispose();
+        this.satelliteEditor?.dispose();
+        this.satelliteEditorHost?.remove();
+        this.satelliteAdvanced?.remove();
         // Clean up star field resources
         if (this.starField) {
             this.starField.dispose();

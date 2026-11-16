@@ -183,6 +183,7 @@
     "file-saver": "^2.0.5",
     "geotiff": "^3.0.5",
     "heic-to": "^1.6.7",
+    "hyparquet": "1.32.0",
     "hyparquet-writer": "^0.18.0",
     "i18next": "^26.7.2",
     "json-stringify-pretty-compact": "^4.0.0",
@@ -200,7 +201,8 @@
     "seedrandom": "^3.0.5",
     "stats.js": "^0.17.0",
     "tesseract.js": "^7.0.0",
-    "three": "^0.187.0"
+    "three": "^0.187.0",
+    "zstddec": "0.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.13",

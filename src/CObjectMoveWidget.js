@@ -42,6 +42,7 @@ import {CustomManager, mainLoopCount, NodeMan, setRenderOne} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, projectWorldToView, viewToClient} from "./ViewUtils";
+import {isPointOccludedByGlobe} from "./GlobeOcclusion";
 import {findRootTrack} from "./FindRootTrack";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
@@ -114,7 +115,8 @@ class CObjectMoveWidget {
 
         this.savedMaterials = null; // Map material -> {opacity, transparent, depthWrite}
 
-        this.altHeld = false;       // Option/Alt: pick up whatever is under the cursor
+        this.altHeld = false;       // Option/Alt alone: pick up whatever is under the cursor
+        this.otherKeysHeld = new Set();
         this.altMode = false;       // ...and something movable actually is
         this.cameraSuppressed = false;
         this.savedControlsEnabled = null;
@@ -132,7 +134,7 @@ class CObjectMoveWidget {
         document.addEventListener("pointermove", (event) => {
             this.pointerX = event.clientX;
             this.pointerY = event.clientY;
-            this.setAltHeld(event.altKey);
+            this.updateAltHeld(event);
             // Plain mouse movement over a view does not otherwise request a render
             // (onDocumentMouseMove only does so while a button is down), so with
             // render-on-demand the reveal would wait for some unrelated redraw. Asked
@@ -145,17 +147,39 @@ class CObjectMoveWidget {
         // KeyBoardHandler.isKeyHeld: a DOM event's altKey cannot latch, and keyup does
         // not request a render (keydown does), so letting go of Alt would otherwise
         // leave the widget up until something unrelated redrew.
-        const readAlt = (event) => this.setAltHeld(event.altKey);
-        document.addEventListener("keydown", readAlt);
-        document.addEventListener("keyup", readAlt);
+        // Track physical keys locally: Option+C produces “ç” on macOS, and the
+        // main shortcut handler may consume an event before recording it.
+        document.addEventListener("keydown", event => this.updateHeldKey(event, true), true);
+        document.addEventListener("keyup", event => this.updateHeldKey(event, false), true);
         // Alt+Tab and friends take the key away with no keyup, which would leave the
         // mode stuck on when focus came back.
-        window.addEventListener("blur", () => this.setAltHeld(false));
+        window.addEventListener("blur", () => {
+            this.otherKeysHeld.clear();
+            this.setAltHeld(false);
+        });
+    }
+
+    updateHeldKey(event, down) {
+        const key = event.code || event.key;
+        if (event.key !== "Alt" && key !== "AltLeft" && key !== "AltRight") {
+            if (down) this.otherKeysHeld.add(key);
+            else this.otherKeysHeld.delete(key);
+        }
+        this.updateAltHeld(event);
+    }
+
+    updateAltHeld(event) {
+        this.setAltHeld(!!event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey
+            && this.otherKeysHeld.size === 0);
     }
 
     setAltHeld(held) {
         if (held === this.altHeld) return;
         this.altHeld = held;
+        if (!held && this.altMode && !this.dragging) {
+            this.altMode = false;
+            this.suppressCamera(false);
+        }
         setRenderOne(true);
     }
 
@@ -345,7 +369,8 @@ class CObjectMoveWidget {
     // restore .visible afterwards. Match that per-view exclusion as well as
     // ordinary visibility and layers so hidden objects cannot steal the fade.
     isObjectShownInView(node, view) {
-        if (node.visible === false || !node.group || view._renderHiddenNodeIDs?.has(node.id)) return false;
+        if (!node || node.visible === false || !node.group || view._renderHiddenNodeIDs?.has(node.id)) return false;
+        if (isPointOccludedByGlobe(view.camera.position, node.group.getWorldPosition(new Vector3()))) return false;
         for (let object = node.group; object; object = object.parent) {
             if (!object.visible) return false;
         }
@@ -875,6 +900,20 @@ class CObjectMoveWidget {
 }
 
 export const ObjectMoveWidget = new CObjectMoveWidget();
+
+// The same widget serves every view. Hide it only during this draw, so a view
+// which cannot see the object does not disable picking in the other views.
+export function withObjectMoveWidgetVisible(view, render) {
+    const widget = ObjectMoveWidget;
+    if (!widget.node || widget.isObjectShownInView(widget.node, view)) return render();
+    const hidden = [widget.widget?.getHelper(), widget.dropLine].filter(group => group?.visible);
+    for (const group of hidden) group.visible = false;
+    try {
+        return render();
+    } finally {
+        for (const group of hidden) group.visible = true;
+    }
+}
 
 /** Per-view render-loop hook. See CObjectMoveWidget.update(). */
 export function updateObjectMoveWidget(view) {

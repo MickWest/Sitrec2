@@ -1,3 +1,4 @@
+import {satelliteCatalogText, satelliteCatalogURL} from "./SatelliteCatalogSource";
 // Satellite pass search for the traverse analyzer.
 //
 // Given the lines of sight and the sitch's date, ask: could a real LEO
@@ -71,7 +72,7 @@ function parseCatalogue(text) {
  */
 export async function loadLEOSatrecsForDate(date) {
     const dateStr = date.toISOString().slice(0, 10);
-    const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr + "&type=LEO";
+    const url = satelliteCatalogURL(SITREC_SERVER, dateStr, "LEO");
     const resp = await fetch(url);
     if (!resp.ok) throw new Error("Satellite TLE fetch failed (HTTP " + resp.status + ")");
     const buf = await resp.arrayBuffer();
@@ -84,7 +85,7 @@ export async function loadLEOSatrecsForDate(date) {
         const tleName = Object.keys(zip.files).find((n) => n.endsWith(".tle")) || Object.keys(zip.files)[0];
         text = await zip.files[tleName].async("string");
     } else {
-        text = new TextDecoder().decode(buf);
+        text = await satelliteCatalogText(buf);
     }
     if (/^\s*ERROR/i.test(text)) throw new Error(text.split("\n")[0].slice(0, 200));
     return parseCatalogue(text);

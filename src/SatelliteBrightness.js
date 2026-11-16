@@ -18,17 +18,19 @@ const RAD2DEG = 180 / Math.PI;
 
 // ECEF position (metres) of a satellite at `date`, on the earth model with
 // equatorial radius a and polar radius b. Null for a failed propagation and for
-// heights that cannot be a working orbit: under 100 km (in the atmosphere) or
-// over 40,000 km (well past geostationary, so probably an error).
+// heights under 100 km (in the atmosphere). Successful SGP4 propagation also
+// covers high and eccentric orbits; a fixed upper altitude rejects real objects.
 // The geodetic-to-ECEF step is LLAToECEFRadians (LLA-ECEF-ENU.ts) with the radii
 // passed in rather than read from Globals.
 export function satelliteECEF(satrec, date, a, b, target = new Vector3()) {
     const positionAndVelocity = satellite.propagate(satrec, date);
     if (!positionAndVelocity || !positionAndVelocity.position) return null;
+    const position = positionAndVelocity.position;
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.y) || !Number.isFinite(position.z)) return null;
     const gmst = satellite.gstime(date);
     const GD = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
     const altitude = GD.height * 1000;
-    if (altitude < 100000 || altitude > 40000000) return null;
+    if (!Number.isFinite(altitude) || altitude < 100000) return null;
     const e2 = (a * a - b * b) / (a * a);
     const ratio = (b * b) / (a * a);
     const sinLat = Math.sin(GD.latitude), cosLat = Math.cos(GD.latitude);

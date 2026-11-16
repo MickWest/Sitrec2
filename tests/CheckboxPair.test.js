@@ -24,6 +24,16 @@ test("one row contains independently named Main and Look controls with letters i
     expect(state).toEqual({main: true, look: true});
 });
 
+test("a pair relocated into Advanced can be destroyed during a scene switch", () => {
+    const pair = gui.addCheckboxPair({main: false, look: true}, "main", "look", "Grid");
+    const details = document.createElement("details");
+    gui.$children.append(details);
+    details.append(pair.domElement);
+    expect(() => pair.main.destroy()).not.toThrow();
+    expect(pair.look.domElement.parentNode).toBe(details);
+    expect(() => gui.destroy()).not.toThrow();
+});
+
 test.each(["main", "look"])("moving the %s control moves the whole row and keeps M/L after its label", side => {
     const before = gui.add({before: false}, "before");
     const pair = gui.addCheckboxPair({main: false, look: true}, "main", "look", "Grid");

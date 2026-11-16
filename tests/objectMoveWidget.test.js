@@ -1,8 +1,8 @@
 import {Group, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, SphereGeometry} from "three";
-import {ObjectMoveWidget} from "../src/CObjectMoveWidget";
+import {ObjectMoveWidget, withObjectMoveWidgetVisible} from "../src/CObjectMoveWidget";
 import {CNodeBalloonTrack} from "../src/nodes/CNodeBalloonTrack";
 import {CNode3DObject} from "../src/nodes/CNode3DObject";
-import {mainLoopCount, setCustomManager, setNodeMan, setSit} from "../src/Globals";
+import {Globals, mainLoopCount, setCustomManager, setNodeMan, setSit} from "../src/Globals";
 import {updateObjectLocatorRings} from "../src/ObjectLocatorOverlay";
 import {ViewMan} from "../src/CViewManager";
 import {LLAToECEF, ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
@@ -62,6 +62,89 @@ beforeEach(() => {
 afterEach(() => {
     ObjectMoveWidget.dragging = false; ObjectMoveWidget.dragPrepared = false;
     ObjectMoveWidget.target = ObjectMoveWidget.node = null;
+    ObjectMoveWidget.otherKeysHeld.clear();
+    ObjectMoveWidget.altHeld = ObjectMoveWidget.altMode = false;
+});
+
+test("Option-C releases object picking and pointer movement cannot reenable it", () => {
+    const widget = ObjectMoveWidget;
+    widget.updateHeldKey({key:'Alt',code:'AltLeft',altKey:true}, true);
+    expect(widget.altHeld).toBe(true);
+    widget.altMode = true;
+    const release = jest.spyOn(widget,'suppressCamera').mockImplementation(()=>{});
+    widget.updateHeldKey({key:'ç',code:'KeyC',altKey:true}, true);
+    expect(widget.altHeld).toBe(false);
+    expect(widget.altMode).toBe(false);
+    expect(release).toHaveBeenCalledWith(false);
+    widget.updateAltHeld({altKey:true});
+    expect(widget.altHeld).toBe(false);
+    widget.updateHeldKey({key:'c',code:'KeyC',altKey:true}, false);
+    expect(widget.altHeld).toBe(true);
+    release.mockRestore();
+});
+
+test("a key held before Option and repeated keydowns also block object picking", () => {
+    const widget=ObjectMoveWidget;
+    widget.updateHeldKey({key:'w',code:'KeyW',altKey:false},true);
+    widget.updateHeldKey({key:'w',code:'KeyW',altKey:false},true);
+    widget.updateHeldKey({key:'Alt',code:'AltLeft',altKey:true},true);
+    expect(widget.altHeld).toBe(false);
+    widget.updateHeldKey({key:'x',code:'KeyX',altKey:true},true);
+    widget.updateHeldKey({key:'w',code:'KeyW',altKey:true},false);
+    expect(widget.altHeld).toBe(false);
+    widget.updateHeldKey({key:'x',code:'KeyX',altKey:true},false);
+    expect(widget.altHeld).toBe(true);
+});
+
+test.each(['shiftKey','ctrlKey','metaKey'])("Option plus %s does not pick objects", modifier => {
+    ObjectMoveWidget.updateAltHeld({altKey:true,[modifier]:true});
+    expect(ObjectMoveWidget.altHeld).toBe(false);
+});
+
+test("Option cannot select an object through the globe, but can select it from the other side", () => {
+    const widget = ObjectMoveWidget, node = objectFor({});
+    const mesh = new Mesh(new SphereGeometry(), new MeshBasicMaterial());
+    node.group.add(mesh);
+    node.group.position.set(-Globals.equatorRadius - 100, 0, 0);
+    const view = {camera: new PerspectiveCamera()};
+    view.camera.position.set(Globals.equatorRadius + 1000, 0, 0);
+    const spies = [
+        jest.spyOn(widget, "objects").mockReturnValue([node]),
+        jest.spyOn(widget, "viewUnderCursor").mockReturnValue(view),
+        jest.spyOn(widget, "cursorDistancePx").mockReturnValue(0),
+        jest.spyOn(widget, "movableTarget").mockReturnValue({kind: "fixed", node: {}}),
+    ];
+    try {
+        expect(widget.findObjectUnderCursor()).toBeNull();
+        view.camera.position.x *= -1;
+        expect(widget.findObjectUnderCursor()?.node).toBe(node);
+    } finally {
+        spies.forEach(spy => spy.mockRestore());
+        mesh.geometry.dispose(); mesh.material.dispose();
+    }
+});
+
+test("a view that hides the camera or target widget cannot disable dragging in another view", () => {
+    const widget = ObjectMoveWidget, node = objectFor({}), helper = new Group(), line = new Group();
+    const mesh = new Mesh(new SphereGeometry(), new MeshBasicMaterial()); node.group.add(mesh);
+    node.group.position.set(Globals.equatorRadius + 100, 0, 0);
+    const view = {camera: new PerspectiveCamera()};
+    view.camera.position.set(-Globals.equatorRadius - 1000, 0, 0);
+    const previous = {node: widget.node, widget: widget.widget, dropLine: widget.dropLine};
+    Object.assign(widget, {node, widget: {getHelper: () => helper}, dropLine: line});
+    try {
+        withObjectMoveWidgetVisible(view, () => {
+            expect(helper.visible).toBe(false); expect(line.visible).toBe(false);
+        });
+        expect(helper.visible).toBe(true); expect(line.visible).toBe(true);
+        view.camera.position.x *= -1;
+        withObjectMoveWidgetVisible(view, () => expect(helper.visible).toBe(true));
+        view._renderHiddenNodeIDs = new Set([node.id]);
+        withObjectMoveWidgetVisible(view, () => expect(helper.visible).toBe(false));
+        expect(helper.visible).toBe(true);
+    } finally {
+        Object.assign(widget, previous); mesh.geometry.dispose(); mesh.material.dispose();
+    }
 });
 
 test("an edited object owns the ring; otherwise Alt highlights every shown object and release clears them", () => {
@@ -207,8 +290,9 @@ test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"]
     visible.group.add(new Mesh(new SphereGeometry(1), material));
     hidden.group.add(new Mesh(new SphereGeometry(1), material.clone()));
     hidden.group.position.x = .0001;
+    visible.group.position.z = hidden.group.position.z = Globals.polarRadius + 100;
     const camera = new PerspectiveCamera(50,1,.1,1000);
-    camera.position.z = 100;camera.updateMatrixWorld(true);
+    camera.position.z = Globals.polarRadius + 200;camera.updateMatrixWorld(true);
     const rect = {left:0,top:0,width:200,height:200};
     const view = {id:"mainView",camera,widthPx:200,heightPx:200,leftPx:0,topPx:0,
         div:{getBoundingClientRect:()=>rect},canvas:{getBoundingClientRect:()=>rect},_renderHiddenNodeIDs:new Set()};

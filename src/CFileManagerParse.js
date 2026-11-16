@@ -80,6 +80,7 @@ import {isAudioOnlyFormat} from "./AudioFormats";
 import {AUDIO_MIME_TYPES, VIDEO_MIME_TYPES} from "./DroppableTypes";
 import {EventManager} from "./CEventManager";
 import {CTLEData, isOMMCSV} from "./TLEUtils";
+import {satelliteCatalogText} from "./SatelliteCatalogSource";
 import {extractFeaturesFromFile, isFeaturesCSV} from "./ParseFeaturesCSV";
 import {createImageFromArrayBuffer} from "./FileUtils";
 import {CNode3DObject, ModelFiles, stockModelKey} from "./nodes/CNode3DObject";
@@ -136,6 +137,16 @@ export const parseMethods = {
         const metadataOverride = options.metadataOverride || null;
         return this.parseAsset(filename, filename, result, metadataOverride)
             .then(async parsedResult => {
+                if (options.trackOptions?.canApplyTLE && !options.trackOptions.canApplyTLE()) return [];
+                if (options.trackOptions?.automaticCatalog) {
+                    const assets = Array.isArray(parsedResult) ? parsedResult : [parsedResult];
+                    if (assets.length !== 1 || assets[0]?.dataType !== "tle") throw new Error("No orbit data is available for this date.");
+                    const raw = assets[0].parsed;
+                    if (raw.trim().startsWith("ERROR:")) throw new Error(raw.trim());
+                    const catalog = new CTLEData(raw);
+                    if (!catalog.satData.length) throw new Error("No orbit data is available for this date.");
+                    options.trackOptions.preparedTLE = catalog;
+                }
                 // Ask before replacing any file-manager entry or loading another
                 // item from the same archive. Cancel leaves the current save intact.
                 for (const asset of (Array.isArray(parsedResult) ? parsedResult : [parsedResult])) {
@@ -786,6 +797,12 @@ export const parseMethods = {
         }
 
         if (fileManagerEntry.dataType === "tle") {
+            if (trackOptions.canApplyTLE && !trackOptions.canApplyTLE()) return false;
+            if (trackOptions.automaticCatalog) {
+                // Validated before changing the file manager, while its raw data
+                // remains available for export and saved scenes.
+                parsedFile = trackOptions.preparedTLE;
+            }
             const nightSky = NodeMan.get("NightSkyNode");
             const existingTLE = nightSky.satellites.TLEData;
             const hasExisting = existingTLE && existingTLE.satData.length > 0;
@@ -838,7 +855,7 @@ export const parseMethods = {
                 nightSky.mergeTLE(parsedFile, {revealImported});
             } else {
                 this.deleteIf(file => file.isTLE && file !== fileManagerEntry);
-                nightSky.replaceTLE(parsedFile, {revealImported});
+                nightSky.replaceTLE(parsedFile, {revealImported, ...(trackOptions.automaticCatalog ? {automaticCatalog: true} : {})});
                 this._tleReplacedInBatch = true;
             }
             return true;
@@ -1368,6 +1385,10 @@ export const parseMethods = {
             let dataType = "unknown";
 
             switch (fileExt.toLowerCase()) {
+                case "parquet":
+                    dataType = "tle";
+                    prom = satelliteCatalogText(buffer);
+                    break;
                 case "txt": {
                     var text = decoder.decode(buffer);
                     // Sidecar carrying MISB ST 0604 PES PTS data — written

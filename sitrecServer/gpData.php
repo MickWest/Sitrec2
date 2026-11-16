@@ -143,9 +143,12 @@ function writeGPCache($plainFile, $dataBlob) {
     }
 
     $ctx = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
-    $out = @fopen($gzFile, 'wb');
+    // Publish a complete gzip atomically; readers must never see a partial refresh.
+    $temporary = @tempnam(dirname($gzFile), '.gp-');
+    $out = $temporary === false ? false : @fopen($temporary, 'wb');
     if ($ctx === false || $out === false) {
         if ($out !== false) fclose($out);
+        if ($temporary !== false) @unlink($temporary);
         return false;
     }
 
@@ -162,10 +165,11 @@ function writeGPCache($plainFile, $dataBlob) {
     }
     fclose($out);
 
-    if (!$ok) {
-        @unlink($gzFile);
+    if (!$ok || !@rename($temporary, $gzFile)) {
+        @unlink($temporary);
         return false;
     }
+    clearstatcache(true, $gzFile);
 
     // Only the .gz is kept. The uncompressed copy was pure duplication - it
     // existed solely so a non-gzip client could be redirected at a static file,
@@ -190,6 +194,21 @@ function gpCacheEntry($plainFile) {
         return $plainFile;
     }
     return null;
+}
+
+// Read only the CSV header, including for a large compressed historical set.
+// Legacy TLEs have no metadata columns and can be upgraded by the caller.
+function gpCacheHasColumns($plainFile, $required) {
+    $file = gpCacheEntry($plainFile);
+    if ($file === null) return false;
+    $gzip = substr($file, -3) === '.gz';
+    $stream = $gzip ? @gzopen($file, 'rb') : @fopen($file, 'rb');
+    if ($stream === false) return false;
+    $line = $gzip ? gzgets($stream, 65536) : fgets($stream, 65536);
+    if ($gzip) gzclose($stream); else fclose($stream);
+    if ($line === false) return false;
+    $columns = array_map('trim', str_getcsv(trim($line), ',', '"', ''));
+    return count(array_diff($required, $columns)) === 0;
 }
 
 /**
@@ -227,7 +246,7 @@ function serveGPCached($plainFile, $redirectUrl, $maxAge, $onComplete = null) {
     // Let an unchanged repeat request finish without moving the payload again.
     $ifNoneMatch = trim($_SERVER['HTTP_IF_NONE_MATCH'] ?? '');
     $ifModifiedSince = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? '');
-    if ($ifNoneMatch === $etag || ($ifModifiedSince !== false && $ifModifiedSince >= $lastModified)) {
+    if ($ifNoneMatch === $etag || ($ifNoneMatch === '' && $ifModifiedSince !== false && $ifModifiedSince >= $lastModified)) {
         http_response_code(304);
         if ($onComplete) $onComplete('success', 'not_modified');
         exit();

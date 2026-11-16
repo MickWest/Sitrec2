@@ -71,7 +71,12 @@ export function pairCheckboxControllers(main, look, name, video = null) {
         if (main._folderToggleOptions?.paired) main._removeFolderToggle?.();
         active = false;
         for (const controller of members) {
-            if (controller.domElement.parentNode === row) gui.$children.insertBefore(controller.domElement, row);
+            // A compact editor can move the row into an advanced section while
+            // retaining its GUI owner. Restore survivors at the row's actual home.
+            if (controller.domElement.parentNode === row) {
+                const parent = row.parentNode ?? gui.$children;
+                parent.insertBefore(controller.domElement, row.parentNode ? row : null);
+            }
             delete controller._checkboxPair;
         }
         for (const cleanup of cleanups) cleanup();

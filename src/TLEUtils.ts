@@ -7,42 +7,41 @@ interface SatRec {
     epochyr: number;
     epochdays: number;
     satnum: string;
+    // Per-element provenance belongs to the record, not the satellite as a whole.
+    gpId?: string;
+    sourceFileId?: string;
+    meanElementTheory?: string;
+    ephemerisType?: number;
+    creationDate?: string;
     [key: string]: unknown;
 }
 
-interface SatData {
+interface CatalogFields {
+    objectType?: string;
+    // UTC midnight; the source gives a day, not an exact event time.
+    launchDate?: number;
+    decayDate?: number;
+    // Radar cross-section category and international launch designator.
+    rcsSize?: string;
+    objectId?: string;
+    countryCode?: string;
+    launchSite?: string;
+}
+
+interface SatData extends CatalogFields {
     name: string;
     number: number;
     visible: boolean;
     satrecs: SatRec[];
-    // PAYLOAD / ROCKET BODY / DEBRIS / TBA, from OMM CSV only. Undefined for
-    // TLE-format data, which has no such field.
-    objectType?: string;
-    // The catalogue fields below come from a Space-Track OMM CSV only (CelesTrak
-    // sends OBJECT_ID but not the other two). Undefined when the file lacks them:
-    // TLE format, CelesTrak, and Space-Track sets cached before LAUNCH_DATE was
-    // requested.
-    // UTC midnight at the start of the launch day, in ms. Space-Track gives the
-    // day only, so an object is known to be unlaunched only BEFORE this.
-    launchDate?: number;
-    // SMALL / MEDIUM / LARGE: radar cross-section bucket.
-    rcsSize?: string;
-    // International designator, e.g. "2019-074B". Its first 8 characters name
-    // the launch.
-    objectId?: string;
 }
 
 // One row of an OMM CSV: the elements SGP4 needs, plus the set-level and
-// catalogue columns (see OMM_EXTRA_FIELDS).
-interface OMMRecord {
+// catalogue columns (see OMM_EXTRA_FIELDS). Older caches/TLEs can lack metadata.
+interface OMMRecord extends CatalogFields {
     name: string;
     number: number;
     satrec: SatRec;
-    objectType?: string;
     creationDate?: string;
-    launchDate?: number;
-    rcsSize?: string;
-    objectId?: string;
 }
 
 /**
@@ -77,7 +76,7 @@ export function elementSetErrorKm(ageDays: number): [number, number] {
 
 // "2019-11-11" -> ms at UTC midnight that day, or undefined for an empty or
 // unreadable field.
-function parseLaunchDate(value: string | undefined): number | undefined {
+function parseCatalogDate(value: string | undefined): number | undefined {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((value ?? "").trim());
     if (!m) return undefined;
     const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
@@ -87,12 +86,11 @@ function parseLaunchDate(value: string | undefined): number | undefined {
 // Copy the catalogue fields an entry lacks from another record of the same
 // object. The fields describe the object, not an element set, so any record
 // that carries them will do.
-function fillCatalogueFields(target: SatData, source: {objectType?: string, launchDate?: number,
-        rcsSize?: string, objectId?: string}): void {
-    if (target.objectType === undefined && source.objectType !== undefined) target.objectType = source.objectType;
-    if (target.launchDate === undefined && source.launchDate !== undefined) target.launchDate = source.launchDate;
-    if (target.rcsSize === undefined && source.rcsSize !== undefined) target.rcsSize = source.rcsSize;
-    if (target.objectId === undefined && source.objectId !== undefined) target.objectId = source.objectId;
+function fillCatalogueFields(target: SatData, source: CatalogFields): void {
+    const fields = ["objectType", "launchDate", "decayDate", "rcsSize", "objectId", "countryCode", "launchSite"] as const;
+    for (const key of fields) {
+        if (target[key] === undefined && source[key] !== undefined) Object.assign(target, {[key]: source[key]});
+    }
 }
 
 /** Which proxyStarlink.php query a set of elements came from. */
@@ -330,7 +328,8 @@ const OMM_FIELDS = [
 // something about the SET: which Space-Track query produced it, and whether it
 // had finished publishing when we downloaded it. LAUNCH_DATE, RCS_SIZE and
 // OBJECT_ID are catalogue facts about the object. Only present in OMM CSV.
-const OMM_EXTRA_FIELDS = ["OBJECT_TYPE", "CREATION_DATE", "LAUNCH_DATE", "RCS_SIZE", "OBJECT_ID"] as const;
+const OMM_EXTRA_FIELDS = ["OBJECT_TYPE", "CREATION_DATE", "LAUNCH_DATE", "RCS_SIZE", "OBJECT_ID",
+    "DECAY_DATE", "COUNTRY_CODE", "SITE", "GP_ID", "FILE", "MEAN_ELEMENT_THEORY", "EPHEMERIS_TYPE"] as const;
 
 // Is this an OMM CSV file (as opposed to TLE/2LE/3LE)? The first non-blank line
 // of an OMM CSV is a header naming the OMM keywords. NORAD_CAT_ID is mandatory
@@ -376,7 +375,7 @@ export type GPQueryFilter = "epoch" | "creation" | "unknown";
  * has to be judged per type (read them in sitrecServer/proxyStarlink.php):
  *
  *   ""/STARLINK  CREATION_DATE/D--D+2  plus OBJECT_NAME/STARLINK~~
- *   ALL          CREATION_DATE/D--D+2
+ *   ALL          EPOCH/D--D+2
  *   LEO/LEOALL   EPOCH/D--D+2          plus mean-motion and payload filters
  *   SLOW         EPOCH/D--D+2
  *   CUSTOM       an external URL with the date substituted in - filters unknown
@@ -385,8 +384,8 @@ export function gpQueryFilterField(queryType: string): GPQueryFilter {
     switch (queryType) {
         case "":
         case "STARLINK":        // what inferQueryType() calls the default query
-        case "ALL":
             return "creation";
+        case "ALL":
         case "LEO":
         case "LEOALL":
         case "SLOW":
@@ -630,13 +629,23 @@ export function parseOMMCSVLines(lines: string[]): OMMRecord[] | null {
             if (col[f] >= 0) extra[f] = v[col[f]];
         }
 
+        const satrec = satellite.json2satrec(omm as never) as unknown as SatRec;
+        satrec.gpId = extra.GP_ID?.trim() || undefined;
+        satrec.sourceFileId = extra.FILE?.trim() || undefined;
+        satrec.meanElementTheory = extra.MEAN_ELEMENT_THEORY?.trim() || undefined;
+        const ephemerisType = extra.EPHEMERIS_TYPE?.trim();
+        satrec.ephemerisType = ephemerisType && Number.isFinite(Number(ephemerisType)) ? Number(ephemerisType) : undefined;
+        satrec.creationDate = extra.CREATION_DATE?.trim() || undefined;
         out.push({
             name: (omm.OBJECT_NAME ?? "").trim() || ("NORAD " + omm.NORAD_CAT_ID),
             number: number,
-            satrec: satellite.json2satrec(omm as never) as unknown as SatRec,
+            satrec,
             objectType: (extra.OBJECT_TYPE ?? "").trim() || undefined,
             creationDate: (extra.CREATION_DATE ?? "").trim() || undefined,
-            launchDate: parseLaunchDate(extra.LAUNCH_DATE),
+            launchDate: parseCatalogDate(extra.LAUNCH_DATE),
+            decayDate: parseCatalogDate(extra.DECAY_DATE),
+            countryCode: extra.COUNTRY_CODE?.trim() || undefined,
+            launchSite: extra.SITE?.trim() || undefined,
             rcsSize: (extra.RCS_SIZE ?? "").trim().toUpperCase() || undefined,
             objectId: (extra.OBJECT_ID ?? "").trim() || undefined,
         });

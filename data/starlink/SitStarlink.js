@@ -21,7 +21,7 @@ export const SitStarlink = {
     // TerrainModel: {kind: "Terrain", lat: 34, lon: -118.3, zoom: 7, nTiles: 3, fullUI: true, dynamic: false},
 
 
-    patchSatellites: "active", // Start with all current active satellites, including Starlink.
+    // The shared satellite loader fetches the full catalog in the background.
     //
      fps: 30,
      frames: 3000, // 100 seconds at 30 fps
@@ -33,7 +33,6 @@ export const SitStarlink = {
     localLatLon: true,
 
     nightSky: {
-        starLink: "starLink",
         showOtherSatellites: true,
         showConstellations: true,
         showEquatorialGrid: false,
@@ -41,9 +40,8 @@ export const SitStarlink = {
         showHorizonCompassRibbonLook: true,
     },
 
-    // Satellite Controls start visible, and set the initial sky layout. The custom view
-    // effects and any saved view positions stay. CCustomManager.setup() makes the panel.
-    showSatelliteControls: true,
+    // The ordinary menus start in the sidebar. Saved scenes retain their layout.
+    sidebarMenus: ["satellites", "time", "camera"],
     startSkyLayout: true,
     fovUI: {kind: "GUIValue", value: 50, start: 0, end: 180, step: 0.001,
         desc: "vFOV", gui: "cameraFOV", hidden: true,

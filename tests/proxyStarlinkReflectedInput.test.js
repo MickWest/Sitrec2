@@ -30,11 +30,33 @@ const PAYLOAD = '<i>t</i>';
             `<?php $CACHE_PATH = ${JSON.stringify(path.join(root, 'cache') + '/')};\n`);
         fs.writeFileSync(path.join(root, 'sitrecServer/curlGetRequest.php'), '<?php\n');
         fs.writeFileSync(path.join(root, 'sitrecServer/gpData.php'), '<?php\n');
+        fs.writeFileSync(path.join(root, 'sitrecServer/gpParquet.php'), '<?php\n');
         // sys_get_temp_dir() follows TMPDIR, which keeps the rate-limit files in the fixture.
         env = {...process.env, TMPDIR: path.join(root, 'tmp')};
     });
 
     afterEach(() => fs.rmSync(root, {recursive: true, force: true}));
+
+    test('the full catalog includes historical objects by epoch and all current object types', () => {
+        // Stop at the query customization hook, before any cache or network I/O.
+        fs.writeFileSync(path.join(root, 'sitrecServer/config.php'),
+            '<?php function getTLECustom($date, $end, $type, $url) { echo $url; exit; }');
+        const query = type => spawnSync(php, ['-r',
+            '$_GET = ["request" => "2025-09-18", "type" => $argv[2]]; require $argv[1];', script, type],
+            {encoding: 'utf8', timeout: 10000, env}).stdout;
+        const historical = query('ALL');
+        expect(historical).toContain('/class/gp_history/EPOCH/2025-09-18--2025-09-20/');
+        expect(historical).not.toContain('/decay_date/');
+        const current = query('CURRENT');
+        expect(current).toContain('/class/gp/decay_date/null-val/');
+        expect(current).not.toContain('/OBJECT_TYPE/payload');
+        expect(current).toContain('/format/csv');
+        const fields = current.split('/predicates/')[1].split(',');
+        for (const field of ['DECAY_DATE', 'COUNTRY_CODE', 'SITE', 'GP_ID', 'FILE', 'MEAN_ELEMENT_THEORY', 'EPHEMERIS_TYPE']) {
+            expect(fields).toContain(field);
+        }
+        expect(fields).not.toContain('TLE_LINE1');
+    });
 
     test('escapes an invalid request key instead of echoing it as markup', () => {
         const result = spawnSync(php, ['-r', '$_GET = ["request" => $argv[2]]; require $argv[1];',

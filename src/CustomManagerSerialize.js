@@ -25,6 +25,7 @@ import {
     Units,
     withTestUser
 } from "./Globals";
+import {applyViewingMenuLayout} from "./ViewingMenuLayout";
 import {checkAndOfferTLERefresh} from "./TLERefresh";
 import {showTemplateIntro, templateIntroText} from "./SitchTemplateInstructions";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
@@ -203,6 +204,8 @@ export const serializeMethods = {
             // The record of the template that this sitch came from is for this
             // session only. A saved sitch is not attached to a template.
             delete out.templateSource;
+            delete out.showSatelliteControls;
+            delete out.starlinkViewing;
         }
 
         // Serialize video state for any sitch with a video node
@@ -505,6 +508,7 @@ export const serializeMethods = {
                 }
             }
         })
+        delete mods.starlinkViewing;
         out.mods = mods;
 
         // now the "par" values, which are deprecated, but still used in some places
@@ -1767,6 +1771,8 @@ export const serializeMethods = {
                 return false;
             }
 
+            // The retired panel's visibility is migrated after menu layout restore.
+            if (id === "starlinkViewing" && !NodeMan.exists(id)) continue;
             if (!NodeMan.exists(id)) {
                 console.warn("Node " + id + " does not exist in the current sitch (deprecated?), so cannot apply mod");
                 continue;
@@ -1969,6 +1975,7 @@ export const serializeMethods = {
         if (sitchData.guiMenus) {
             Globals.menuBar.modDeserialize(sitchData.guiMenus);
         }
+        applyViewingMenuLayout(sitchData, guiMenus, Globals.menuBar);
 
         if (sitchData.motionAnalysis) {
             await deserializeMotionAnalysis(sitchData.motionAnalysis);

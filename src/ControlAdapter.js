@@ -99,6 +99,12 @@ export class ControlAdapter {
 
     finish() { this.source._callOnFinishChange?.(); }
 
+    reset() {
+        if (!this.canEdit() || !Number.isFinite(this.source._defaultValue)) return false;
+        this.source.resetToDefault();
+        return true;
+    }
+
     trigger() {
         if (!this.canEdit()) return false;
         // Match FunctionController: bound action, then source/folder change

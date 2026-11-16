@@ -45,6 +45,7 @@ import {findRootTrack} from "../FindRootTrack";
 import {bestSat, elementSetErrorKm, isBeforeLaunch, satRecToDate} from "../TLEUtils";
 import {standardMagnitude} from "../SatelliteBrightness";
 import {raycastLocalGround} from "../raycastGround";
+import {isPointOccludedByGlobe} from "../GlobeOcclusion";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
 // Importing from ../JetStuff creates a circular dependency
@@ -1274,6 +1275,7 @@ export const mouseMethods = {
                 !shouldIgnoreContextMenu(intersect.object)
                 && !sharesCameraRootTrack(intersect.object)
                 && wasRendered(intersect.object)
+                && !isPointOccludedByGlobe(this.camera.position, intersect.point)
             );
 
             if (intersects.length > 0) {

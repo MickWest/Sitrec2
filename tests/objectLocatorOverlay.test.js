@@ -74,3 +74,19 @@ test("the look view never gets locator rings", () => {
     updateObjectLocatorRings(view, [object("small", 10)]);
     expect(view._objectLocatorOverlay).toBeUndefined();
 });
+
+test("a far-side object has no ring and becomes selectable when viewed from its side", () => {
+    const radius = 6378137;
+    view.camera.far = radius * 5;
+    view.camera.updateProjectionMatrix();
+    const near = object("near", 10), far = object("far", 10);
+    near.group.position.set(radius + 100, 0, 0);
+    far.group.position.set(-radius - 100, 0, 0);
+    for (const [side, expected] of [[1, "near"], [-1, "far"]]) {
+        view.camera.position.set(side * (radius + 1000), 0, 0);
+        view.camera.lookAt(0, 0, 0);
+        view.camera.updateMatrixWorld(true);
+        updateObjectLocatorRings(view, [near, far]);
+        expect(rings().map(r => r.dataset.objectId)).toEqual([expected]);
+    }
+});

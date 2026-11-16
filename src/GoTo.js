@@ -63,7 +63,7 @@ function destinationTime(text, zone, baseDate, location) {
 
 /** Execute the same parsed request for the dialog, paste, and chat. Nothing in
  * a combined request changes until both its place and its time are resolved. */
-export async function executeGoToRequest(request) {
+export async function executeGoToRequest(request, target = {}) {
     const failure = {success: false, needsLLM: true, error: "Go To could not understand or find that destination."};
     if (!request) return failure;
     if (request.kind === "frame") {
@@ -74,17 +74,17 @@ export async function executeGoToRequest(request) {
         return {success: await importPastedTLE(request.text), message: "Satellite data processed"};
     }
     const namedTime = request.time && parseDateTimeString(request.time)?.namedTime;
-    if (request.kind === "time" && !namedTime) {
+    if (request.kind === "time" && !namedTime && !target.getLocation) {
         return applyDateTimeString(request.time, GlobalDateTimeNode)
             ? {success: true, message: "Time updated"} : failure;
     }
 
     const ticket = ++locationRequestSeq;
     const node = GlobalDateTimeNode;
-    const superseded = () => ticket !== locationRequestSeq || node !== GlobalDateTimeNode;
+    const superseded = () => ticket !== locationRequestSeq || node !== GlobalDateTimeNode || target.isCurrent?.() === false;
     const cancelled = {success: true, message: "Replaced by a newer navigation request"};
     try {
-        const location = request.kind === "time" ? node?.getTimeLocation?.() : await resolveLocationString(request.location);
+        const location = request.kind === "time" ? (target.getLocation?.() ?? node?.getTimeLocation?.()) : await resolveLocationString(request.location);
         if (superseded()) return cancelled;
         if (!location) return failure;
         const zone = node && await lookupTimeZone(location.lat, location.lon);
@@ -94,7 +94,10 @@ export async function executeGoToRequest(request) {
         if (request.time && !date) return namedTime
             ? {...failure, error: `No ${namedTime} time is available for that date and location.`} : failure;
 
-        if (request.kind === "location") goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+        if (request.kind === "location") {
+            if (target.moveToLocation) target.moveToLocation(location);
+            else goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+        }
         if (node) {
             // The requested calendar date determines the zone's offset, not
             // the previous sitch date. Select it before applying the clock.

@@ -152,8 +152,8 @@ test("titles and template text come from the string file by key", () => {
         expect(keyed.host.title).toBe("Satellite Controls");
         expect(instance.host.title).toBe("Observer location");
         expect(instance.body.querySelector("button").textContent).toBe("Go");
-        expect(instance.body.querySelector("button").title).toBe("Enter a place name or latitude, longitude.");
-        expect(instance.body.querySelector("input").placeholder).toBe("Place or coordinates…");
+        expect(instance.body.querySelector("button").title).toContain("Times use the destination’s time zone.");
+        expect(instance.body.querySelector("input").placeholder).toBe("Place, coordinates or time…");
         expect(instance.body.querySelector("input").getAttribute("aria-label")).toBe("Search observer location");
         expect(instance.returnButton.title).toBe("Return Observer location to Satellite Controls");
     } finally {

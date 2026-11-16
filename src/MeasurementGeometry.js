@@ -1,5 +1,14 @@
 import {Vector3} from "three";
 import {getAzElFromPositionAndForward, getLocalEastVector, getLocalUpVector} from "./SphericalMath";
+import {isPointOccludedByGlobe} from "./GlobeOcclusion";
+
+export function isMeasurementOccluded(measurement, observer) {
+    if (!measurement.isMeasurement && !measurement.isVBMeasure) return false;
+    const start = measurement.A ?? measurement.start ?? measurement.position;
+    const end = measurement.B ?? measurement.end;
+    return !!((start && isPointOccludedByGlobe(observer, start))
+        || (end && isPointOccludedByGlobe(observer, end)));
+}
 
 // The two ends of a measurement stay at least this far apart horizontally (one foot), so a
 // measurement always has a length, a heading and a circle, also after the display has put

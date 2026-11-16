@@ -94,7 +94,7 @@ RUN apt-get update && apt-get install -y linux-libc-dev curl libbrotli1 apache2 
     python3 python3-pip \
     && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install zip mbstring iconv gd \
-    && pip3 install --no-cache-dir --break-system-packages eccodes certifi \
+    && pip3 install --no-cache-dir --break-system-packages eccodes certifi pyarrow==20.0.0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/dist /var/www/html

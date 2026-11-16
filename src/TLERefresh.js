@@ -1,3 +1,4 @@
+import {isSatelliteParquet, satelliteCatalogURL} from "./SatelliteCatalogSource";
 // Offer to refresh the satellite data baked into a saved sitch.
 //
 // Saving a sitch rehosts the loaded TLE/OMM set as a static file, so reloading
@@ -214,10 +215,10 @@ async function offerRefresh(tleData, setDate, found) {
 }
 
 /**
- * Extension matching what the proxy actually returned: "csv" for OMM CSV,
- * "tle" for the legacy element format or a zip of one.
+ * Extension matching the response: typed Parquet, OMM CSV, or legacy TLE/ZIP.
  */
 function refreshedExtension(buffer) {
+    if (isSatelliteParquet(buffer)) return "parquet";
     const bytes = new Uint8Array(buffer);
     if (bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
         return "tle";   // "PK": a legacy zipped .tle from an old cache entry
@@ -229,9 +230,8 @@ function refreshedExtension(buffer) {
 
 async function performRefresh(setDate, found) {
     const dateStr = found.source.date;
-    const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr
-        + "&type=" + encodeURIComponent(found.source.type)
-        + (found.source.days !== GP_QUERY_WINDOW_DAYS ? "&days=" + found.source.days : "");
+    const url = satelliteCatalogURL(SITREC_SERVER, dateStr, found.source.type,
+        found.source.days !== GP_QUERY_WINDOW_DAYS ? found.source.days : undefined);
 
     const before = getLoadedTLEData();
     const satsBefore = before ? before.satData.length : 0;

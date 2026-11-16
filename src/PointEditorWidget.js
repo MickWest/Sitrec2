@@ -18,6 +18,7 @@ import {getInteractiveViewAt, isViewDisplayed, mouseToNDC, setRaycasterFromView}
 import {registerEditorInteraction} from "./EditorInteraction";
 import {getInteractionRouter} from "./InteractionRouter";
 import {adjustHeightAboveGround} from "./threeExt";
+import {isPointOccludedByGlobe} from "./GlobeOcclusion";
 
 // Screen size the handles are drawn at, in pixels (updateHandleScales applies these).
 // createArrowGeometry needs the arrow one to express its hit padding in pixels, so both
@@ -278,6 +279,11 @@ export class PointEditorWidget extends EventDispatcher {
         if (!view || !isViewDisplayed(view)) {
             return false;
         }
+
+        // Recheck at pointerdown, even if a handle is still fading out or was
+        // attached in another view. A drag already in progress keeps its view.
+        if (!this.isPointerDown && this.object
+            && isPointOccludedByGlobe(view.camera.position, this.object.getWorldPosition(new Vector3()))) return false;
 
         // Rescale handles for THIS view's pixel space before raycasting. The
         // per-render scale ends up at whichever view rendered last, so between

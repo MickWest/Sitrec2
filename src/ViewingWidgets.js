@@ -1,7 +1,8 @@
 import {NodeMan} from "./Globals";
 import {t} from "./i18n";
 import {compassHeading, viewingDateInput} from "./StarlinkViewing";
-import {resolveLocationString} from "./CoordinateInput";
+import {executeGoToRequest} from "./GoTo";
+import {parseGoToString} from "./GoToParser";
 import {disableFreeLook} from "./FreeLookGuard";
 
 // Reusable observer widgets. The context supplies the existing scene adapters;
@@ -56,14 +57,18 @@ function mountObserver(c, s) {
         s.el("go").disabled = true;
         message(observerText("finding"));
         try {
-            const result = await resolveLocationString(query);
+            const request = parseGoToString(query);
+            const result = request && ["location", "time"].includes(request.kind) && await executeGoToRequest(request, {
+                isCurrent: () => !c.disposed && mine === ticket && c.observerIsManual,
+                getLocation: () => ({lat: c.observer._LLA[0], lon: c.observer._LLA[1]}),
+                moveToLocation: location => c.observer.gotoLLA(location.lat, location.lon, location.alt ?? 2, location.alt === undefined),
+            });
             if (c.disposed || mine !== ticket || !c.observerIsManual) return;
-            if (!result) {
-                message(observerText("notFound"));
+            if (!result?.success) {
+                message(result?.error ?? observerText("notFound"));
                 return;
             }
-            c.observer.gotoLLA(result.lat, result.lon, result.alt ?? 2, result.alt === undefined);
-            message(t("panels.widgets.observer.moved", {place: query}));
+            message(result.message);
             c.sync();
         } catch (error) {
             if (!c.disposed && mine === ticket) message(observerText("failed"));

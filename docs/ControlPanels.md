@@ -1,6 +1,8 @@
-# Shared controls and native widget panels
+# Shared menu controls and native widgets
 
-New UI (NUI) panels use native HTML. Existing UI (OUI) menus continue to use lil-gui.
+The standard Time, Satellites and Camera menus host native HTML editors inside their existing lil-gui menus. Generic widget hosts remain available for other uses. There is no separate Satellite Controls panel.
+
+New UI (NUI) content uses native HTML. Existing UI (OUI) menus continue to use lil-gui.
 They share control state and edit behavior through an adapter; changing presentation must
 not change a scene's values, callbacks, units, saved data, or investigation workflow.
 
@@ -19,21 +21,19 @@ not change a scene's values, callbacks, units, saved data, or investigation work
   contract; `mirrorControl(source, group)` wraps an existing OUI source as a convenience.
 
 Host selection and control rendering are separate decisions. Replacing a slider renderer
-must not require replacing a panel host or changing saved scene data. New NUI code must
-not construct lil-gui folders or manipulate its DOM; legacy knowledge belongs in adapters.
+must not require replacing a panel host or changing saved scene data. Menu integration owns the boundary with lil-gui, including the placement of original controllers under Advanced. Native content uses adapters and does not change controller ownership or paths.
 
 ## Declarative compositions
 
-`SatelliteWidgets.js` defines the Satellite Controls composition and its satellite-specific
-widgets. `ViewingWidgets.js` defines time, observer, camera, layout and information widgets.
+`ViewingWidgets.js` defines reusable observer and camera content mounted by `CNodeCameraMenu`. `SatelliteEditor.js` and `TimeEditor.js` provide the other compact menu editors. The generic `WidgetPanel` framework can also mount content definitions.
 A definition names a widget type, with an optional stable instance ID, initial collapse
 state, children, and an information-overlay home:
 
 ```js
 const definition = {
-    id: "satellite-controls",
-    titleKey: "panels.satellite.title",
-    widgets: ["time", "observer", "camera", "satelliteData", "satelliteFilters"],
+    id: "viewing-example",
+    title: "Viewing example",
+    widgets: ["time", "observer", "camera"],
 };
 const registry = {
     time: {
@@ -72,7 +72,7 @@ A content factory is `mount({host, body, context, scope})`. It does not own dock
 does not copy scientific state.
 
 - `context` is the scene side: the nodes, the sources of the existing controls, and shared
-  status such as `satelliteStatus()`. `CNodeStarlinkUI` is the context of Satellite Controls.
+  state. `CNodeCameraMenu` supplies this context for the Camera menu.
 - `scope` belongs to one mounted body. `scope.el(id)` finds an element of this body by its
   `data-id`. `scope.group(id, options)`, `scope.control(...)` and `scope.mirror(...)` make
   native control groups and controls in this body. Two instances of one widget type thus
@@ -85,33 +85,14 @@ comes into view. The context does not write to the elements of a widget. A compo
 thus use any subset of the widget types, and can use a type more than one time with
 different instance IDs. Widget IDs are saved independently of titles.
 
-`CNodeStarlinkUI` remains the saved-scene compatibility owner. Its `visible` and `expanded`
-fields retain their meaning. Its `widgetState` stores presentation only. The existing node
-ID remains unchanged. Older scenes without widget layout use the familiar left panel.
-Opening a composition does not load a catalog, enable Live, or move a camera.
+`CCustomManager.setup()` creates `CNodeCameraMenu` after its source controllers, in both new and saved custom scenes. It mounts the compact location, direction and zoom controls in Camera and adds View layout commands to View. Its disposal restores the permanent Camera folder shells before the next scene loads.
 
-Every widget and the complete composition can float or dock. Placement menus offer named
-commands so dragging is optional. Extracted widgets leave a return control at their home;
-View → Control Panels can reopen them. Restore control arrangement resets presentation,
-not scene state. Master visibility hides all owned widgets while preserving placement;
-collapsing the composition keeps detached widgets and information widgets available.
-The master visibility control is the Satellite Controls checkbox. It is the first row of
-the Satellites menu.
-
-`CCustomManager.setup()` makes the `CNodeStarlinkUI` node in each custom sitch, new or
-saved. It is not a node definition in `SitCustom.js`. A sitch definition shows the panel
-at the start with `showSatelliteControls: true`, and asks for the sky layout with
-`startSkyLayout: true`.
-
-A command in View → Control Panels shows one widget where it is: at home, in a rail or in a
-float. It does not force open the composition. A widget that is at home in a collapsed
-composition has no place to show, so the command floats it. Each new float starts a step
-down and to the right of the float before it.
+The Starlink template uses `sidebarMenus: ["satellites", "time", "camera"]` and `startSkyLayout: true`. `ViewingMenuLayout` applies defaults only to fresh layouts. After restoring an old save, it replaces a visible Satellite Controls panel with the standard menus, preserving menus already floated or docked. New saves omit the old panel state. `CNodeStarlinkUI` only accepts old explicit node definitions and creates no UI.
 
 ## Text and localization
 
 All text of a native panel is in `src/i18n/en.js`: section `timeEditor` for the date and
-time editor, and section `panels` for the widget hosts, the widgets and Satellite Controls.
+time editor, and section `panels` for the widget hosts, the widgets. Satellite-specific editor text is in `satelliteEditor`.
 
 - A template has no text. An element names its strings with keys: `data-i18n` (its text),
   `data-i18n-title` (its tooltip), `data-i18n-placeholder` and `data-i18n-label` (its
@@ -128,10 +109,10 @@ time editor, and section `panels` for the widget hosts, the widgets and Satellit
 
 `UILogging.js` records which control a user clicks, as a path. A menu control has the path of
 its menu titles and its label. A native control has the path of its panel, its widget and its
-label, for example `Satellite Controls/Time & playback/Edit Start`. `WidgetPanel` writes the
+label, for example `Camera/Altitude`. `WidgetPanel` writes the
 path of each widget host to `data-widget-path`. The path is that of the home of the widget, so
 it does not change when the widget moves to a rail or to a float. The date and time editor in
-the Time menu has the path of the menu, for example `Time/Edit Start`. A new native surface
+the Time menu has the path of the menu, for example `Time/Playhead`. A new native surface
 that is not in a widget must be in an element with `data-widget-path` to be recorded.
 
 ## Binding controls
@@ -178,7 +159,7 @@ and gives up its space, so a rail closes when hidden widgets are all that it sho
 stays open while a menu, a visible widget or a visible docked view is in it. Code that adds,
 removes, shows or hides a rail occupant calls `refreshSidebarVisibility()`.
 
-The first native slice covers the controls used by Satellite Controls. Color controls,
+The native controls cover the common Time, Satellites and Camera menu operations. Color controls,
 BigSlider and other compound editors remain on OUI until their contracts and parity checks
 are implemented. Source discovery still uses the existing controller lifetime; automatic
 reconnection after source replacement is a separate migration step.
@@ -188,13 +169,10 @@ reconnection after source replacement is a separate migration step.
 Use the existing menu footprint for equivalent controls: current rails are 250px wide,
 ordinary native rows are 22px, and widget headers are 24px. Do not impose a universal large
 form layout. Floaters scroll within the viewport, and small-screen rails overlay the view.
-Compact information widgets reuse existing readouts; satellite counting has one producer.
-Satellite Controls names no information widget in its composition: `satelliteInfo`,
-`cameraInfo` and `clockInfo` stay in the registries for other compositions.
+Compact editors reuse existing controls and values.
 
-`ModernControlStyle.js` supplies shared dark/light tokens. `WidgetPanelStyle.js` supplies
-native shells and specialized forms. `StarlinkPanelStyle.js` only places the launcher and
-sky readouts. Existing custom object/track windows still use `ModernControls.js` and
+`ModernControlStyle.js` supplies shared dark/light tokens. `WidgetPanelStyle.js` supplies native shells and form styles.
+Existing custom object/track windows still use `ModernControls.js` and
 `MenuMirror.js`; these are the legacy presentation path, not the basis for new NUI widgets.
 Their keyed `shareAs`/`addMirror` connections and ordinary controller APIs remain intact.
 

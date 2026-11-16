@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y linux-libc-dev curl libbrotli1 apache2 
     && docker-php-ext-install zip mbstring iconv gd \
     && if [ "$WITH_GFS_WIND" = "1" ]; then \
            apt-get install -y python3 python3-pip \
-           && pip3 install --no-cache-dir --break-system-packages eccodes certifi; \
+           && pip3 install --no-cache-dir --break-system-packages eccodes certifi pyarrow==20.0.0; \
        else \
            echo "WITH_GFS_WIND=0 — Python and eccodes omitted; windProxy.php (GFS) will not work"; \
        fi \

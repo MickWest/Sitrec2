@@ -21,6 +21,8 @@ export function sniffFileType(buffer) {
         ? buffer.subarray(0, head)
         : new Uint8Array(buffer, 0, head);
 
+    if (u8[0] === 0x50 && u8[1] === 0x41 && u8[2] === 0x52 && u8[3] === 0x31) return "parquet";
+
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) return "png";
 

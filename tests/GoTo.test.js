@@ -52,6 +52,26 @@ test('Go To places one pin with the requested name', async () => {
     expect(FeatureManager.addLocationPin).toHaveBeenCalledWith(expect.objectContaining({lat: 51.5, lon: -0.12, name: 'London'}));
 });
 
+test('an observer destination shares place/date/zone parsing without moving the main camera', async () => {
+    resolveLocationString.mockResolvedValueOnce({lat: 53.84, lon: -1.83});
+    const moveToLocation = jest.fn();
+    const result = await executeGoToRequest(parseGoToString('Bingley June 10 6PM'), {moveToLocation, isCurrent: () => true});
+    expect(result.success).toBe(true);
+    expect(moveToLocation).toHaveBeenCalledWith({lat: 53.84, lon: -1.83});
+    expect(goToLatLon).not.toHaveBeenCalled();
+    expect(GlobalDateTimeNode.editTime.mock.calls[0][0].toISOString()).toBe('2025-06-10T17:00:00.000Z');
+    expect(FeatureManager.addLocationPin.mock.calls[0][0].name).toBe('Bingley');
+});
+
+test('a manual observer edit cancels a pending place lookup before any time or position changes', async () => {
+    resolveLocationString.mockResolvedValueOnce({lat: 53.84, lon: -1.83});
+    const moveToLocation = jest.fn();
+    await executeGoToRequest(parseGoToString('Bingley 6PM'), {moveToLocation, isCurrent: () => false});
+    expect(moveToLocation).not.toHaveBeenCalled();
+    expect(GlobalDateTimeNode.editTime).not.toHaveBeenCalled();
+    expect(FeatureManager.addLocationPin).not.toHaveBeenCalled();
+});
+
 test('a coordinate with an altitude pins that point', async () => {
     resolveLocationString.mockResolvedValueOnce({lat: 40, lon: -74, alt: 300, isCoordinate: true});
     await applyGoToString('40, -74, 300');

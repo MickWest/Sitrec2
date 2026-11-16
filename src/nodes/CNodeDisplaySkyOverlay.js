@@ -18,6 +18,7 @@ import {labelPixelOffset} from "../LabelOffsets";
 import {drawHorizonCompassRibbon, horizonCompassFrame} from "../HorizonCompassRibbon";
 import {perViewLayerMask} from "../LayerMasks";
 import {liftWorldPoint} from "../atmosphere/terrestrialRefraction";
+import {isMeasurementOccluded} from "../MeasurementGeometry";
 
 // World-space Vector3 → NDC through whatever projection the view is actually
 // rendering: the fisheye twin when the fisheye applies to this camera,
@@ -61,6 +62,24 @@ export function registerLabel3D(label) {
 
 export function unregisterLabel3D(label) {
     registeredLabels.delete(label);
+}
+
+// Scope geometry visibility to the actual draw. Restore it even on render failure,
+// so one camera cannot hide another camera's measurements or stop their updates.
+export function withVisibleMeasurements(camera, render) {
+    const observer = camera.getWorldPosition(V3());
+    const hidden = [];
+    for (const label of registeredLabels) {
+        if (label.group?.visible && isMeasurementOccluded(label, observer)) {
+            hidden.push(label.group);
+            label.group.visible = false;
+        }
+    }
+    try {
+        return render();
+    } finally {
+        for (const group of hidden) group.visible = true;
+    }
 }
 
 export class CNodeDisplaySkyOverlay extends CNodeViewUI {
@@ -606,12 +625,14 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         if (registeredLabels.size === 0) return;
 
         const viewLayerMask = this.camera.layers.mask;
+        const observer = camera.getWorldPosition(V3());
 
         for (const label of registeredLabels) {
             if (!label.group || !label.group.visible) continue;
             if (!(label.groupNode.group.layers.mask & viewLayerMask)) continue;
             if (!(label.layerMask & viewLayerMask)) continue;
             if (!label.shouldRender(viewLayerMask)) continue;
+            if (isMeasurementOccluded(label, observer)) continue;
 
             // Call preRender to ensure textPosition is calculated for THIS view
             // (view-dependent for negative-length arrows that use pixelsToMeters)

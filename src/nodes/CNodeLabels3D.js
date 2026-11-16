@@ -633,7 +633,7 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
 
         const color = this.in.color.v(f)
         // add an arrow from A to C and B to D
-        DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.groupNode.group, 20, this.layerMask);
+        DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.group, 20, this.layerMask);
 
 
         this.changeText(this.label);
@@ -694,7 +694,7 @@ export class CNodeLabeledArrow extends CNodeLabel3D {
             const lengthMeters = view.pixelsToMeters(this.start, lengthPixels);
             const color = this.in.color.v(0)
             this.end = this.start.clone().add(this.direction.clone().multiplyScalar(lengthMeters));
-            DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.groupNode.group, 20, this.layerMask);
+            DebugArrowAB(this.id+"arrow", this.start, this.end, color, this.pointed, this.group, 20, this.layerMask);
         }
         this.position.copy(this.end);
         this.textPosition.copy(this.end);

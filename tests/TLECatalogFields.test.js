@@ -23,6 +23,7 @@ const OLD_HEADER = "OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,EPOCH,CREATION_DATE,MEAN_
     "ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,BSTAR," +
     "MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE";
 const NEW_HEADER = OLD_HEADER + ",LAUNCH_DATE";
+const METADATA_HEADER = NEW_HEADER + ",DECAY_DATE,COUNTRY_CODE,SITE,GP_ID,FILE,MEAN_ELEMENT_THEORY,EPHEMERIS_TYPE";
 
 function row({name = "STARLINK-1008", objectId = "2019-074B", norad = 44714,
               epoch = "2026-07-27T12:00:00", objectType = "PAYLOAD", rcs = "LARGE",
@@ -36,6 +37,45 @@ function row({name = "STARLINK-1008", objectId = "2019-074B", norad = 44714,
 }
 
 describe("catalog fields from a Space-Track OMM CSV", () => {
+    it("retains object metadata and keeps source IDs and model metadata on each element set", () => {
+        const first = row() + ',"2026-08-01","US","AFETR","123","18446744073709551615","SGP4","0"';
+        const second = row({epoch: "2026-07-28T12:00:00"}) + ',"2026-08-01","US","AFETR","124","18446744073709551616","SGP4","0"';
+        const d = new CTLEData([METADATA_HEADER, first, second].join("\n"));
+        const sat = d.getRecordFromNORAD(44714);
+        expect(sat).toMatchObject({countryCode: "US", launchSite: "AFETR", decayDate: Date.UTC(2026, 7, 1)});
+        expect(sat.satrecs.map(r => r.gpId)).toEqual(["123", "124"]);
+        expect(sat.satrecs[0]).toMatchObject({sourceFileId: "18446744073709551615", meanElementTheory: "SGP4", ephemerisType: 0});
+        const reloaded = new CTLEData(d.rawText).getRecordFromNORAD(44714);
+        expect(reloaded.decayDate).toBe(sat.decayDate);
+        expect(reloaded.satrecs[1].sourceFileId).toBe("18446744073709551616");
+        const original = new CTLEData([NEW_HEADER, row()].join("\n")).getRecordFromNORAD(44714).satrecs[0];
+        // Adding metadata must leave all previously parsed orbit values unchanged.
+        for (const [key, value] of Object.entries(original)) {
+            if (value !== undefined) expect(sat.satrecs[0][key]).toEqual(value);
+        }
+    });
+
+    it("fills missing catalog metadata on merge without assigning an ID to older element sets", () => {
+        const old = new CTLEData([OLD_HEADER, row({}, false)].join("\n"));
+        old.mergeFrom(new CTLEData([METADATA_HEADER,
+            row({epoch: "2026-07-28T12:00:00"}) + ',"","US","AFETR","123","456","SGP4","0"'].join("\n")));
+        const sat = old.getRecordFromNORAD(44714);
+        expect(sat).toMatchObject({countryCode: "US", launchSite: "AFETR"});
+        expect(sat.decayDate).toBeUndefined();
+        expect(sat.satrecs[0].gpId).toBeUndefined();
+        expect(sat.satrecs[1].gpId).toBe("123");
+        expect(new CTLEData(old.rawText).getRecordFromNORAD(44714).satrecs[1].gpId).toBe("123");
+    });
+
+    it("leaves blank or absent metadata unknown, including ephemeris type", () => {
+        const sat = new CTLEData([METADATA_HEADER, row() + ',,,,,,,'].join("\n")).getRecordFromNORAD(44714);
+        expect(sat.countryCode).toBeUndefined();
+        expect(sat.launchSite).toBeUndefined();
+        expect(sat.decayDate).toBeUndefined();
+        expect(sat.satrecs[0].ephemerisType).toBeUndefined();
+        expect(sat.satrecs[0].gpId).toBeUndefined();
+    });
+
     it("reads launch date, radar size and international designator", () => {
         const d = new CTLEData([NEW_HEADER, row()].join("\n"));
         const sat = d.getRecordFromNORAD(44714);
@@ -168,6 +208,7 @@ const php = phpResult.status === 0 ? phpResult.stdout : null;
             `<?php $CACHE_PATH = ${JSON.stringify(path.join(root, "cache") + "/")};\n`);
         fs.writeFileSync(path.join(root, "sitrecServer/curlGetRequest.php"), "<?php\n");
         fs.writeFileSync(path.join(root, "sitrecServer/gpData.php"), "<?php\n");
+        fs.writeFileSync(path.join(root, "sitrecServer/gpParquet.php"), "<?php\n");
         env = {...process.env, TMPDIR: path.join(root, "tmp")};
     });
 

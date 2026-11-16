@@ -190,6 +190,11 @@ export function bindControl(adapter, group, options = {}) {
         input.addEventListener("change", () => { changed(adapter.setValue(adapter.read().options[input.selectedIndex]?.value)); finish(); });
     } else if (initial.kind === "number") {
         input.type = "number";
+        row.$name.addEventListener("dblclick", event => {
+            event.preventDefault(); event.stopPropagation();
+            changed(adapter.reset?.());
+            row.updateDisplay(true);
+        });
         input.addEventListener("input", () => {
             // Preserve an unfinished '-' or decimal draft while it is edited.
             if (Number.isFinite(input.valueAsNumber)) changed(adapter.setNumber(input.valueAsNumber));

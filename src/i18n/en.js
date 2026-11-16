@@ -1678,6 +1678,23 @@ const en = {
         },
     },
     // Native control panels: the widget hosts, the widgets, and the Satellite Controls panel.
+    satelliteEditor: {
+        title: "Satellites", show: "Show", search: "Name or NORAD number", clear: "Clear search",
+        all: "All", starlink: "Starlink", iss: "ISS", brightest: "Brightest", custom: "Custom…", hidden: "None",
+        brightness: "Brightness", labels: "Labels", advanced: "Advanced", loaded: "Loaded", loading: "Loading all satellites…",
+        simulated: "Simulated satellites", none: "No orbit data", outdated: "Outdated orbit data",
+        date: "Viewing: {{date}} UTC", refresh: "Refresh", cancel: "Cancel",
+        autoload: "Autoload",
+        autoloadTip: "Load all satellites for the viewing date when satellites are shown. Wait while the Time menu has focus, unless the date has stayed unchanged for 15 seconds. Reuse catalogs already loaded for that date.",
+        refreshTip: "Load the full catalog for the playhead date. Display filters stay as they are.",
+        fixedTip: "Replace the saved or imported catalog with all satellites for the playhead date. With Autoload off, the catalog stays fixed until you refresh it again.",
+        fixed: "Autoload off · refresh manually",
+        simulationTip: "Approximate Starlink positions, shown in light blue.",
+        downloading: "Downloading · {{size}} MB",
+        error: "Could not load: {{error}}", cancelled: "Loading cancelled · Refresh to retry",
+        outdatedTip: "Viewing time is outside the orbit epochs. Positions are extrapolated.",
+        count: "{{total}} in catalog · {{matching}} match", filtered: "TLE filter active",
+    },
     panels: {
         placement: {
             titleTip: "Drag the title to move; use the placement menu to dock, return or hide.",
@@ -1708,8 +1725,8 @@ const en = {
                 title: "Observer location",
                 search: {
                     label: "Search observer location",
-                    placeholder: "Place or coordinates…",
-                    tooltip: "Enter a place name or latitude, longitude.",
+                    placeholder: "Place, coordinates or time…",
+                    tooltip: "Move the observer using a place or coordinates, optionally with a date and time. For example, Bingley tomorrow sunset. Times use the destination’s time zone.",
                 },
                 go: "Go",
                 latitude: {
@@ -2671,14 +2688,14 @@ const en = {
         },
     },
     nightSky: {
-        loadLEO: { label: "Load LEO Satellites For Date", tooltip: "Download the orbits (TLE data) of satellites in low Earth orbit (LEO) for the sitch start date. Payloads only: no rocket bodies or debris.\nFor a date in the last 5 days, it uses the date 5 days ago.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadLEO: { label: "Load LEO Satellites For Date", tooltip: "Download the orbits (TLE data) of satellites in low Earth orbit (LEO) for the playhead date. Payloads only: no rocket bodies or debris.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadStarlink: { label: "Load CURRENT Starlink", tooltip: "Download the Starlink orbits as they are now, not for the sitch date.\nUse it for the present, or for an event in the last day or two.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadOperatorSupGP: { label: "Add CURRENT OneWeb, Kuiper, AST, Iridium", tooltip: "Add the CURRENT (now, not historical) orbits that the operators of OneWeb, Kuiper, AST SpaceMobile and Iridium supply, from CelesTrak's supplemental data. For these satellites they are usually more accurate than the general catalog, and new launches appear within hours.\nThey are merged into the satellites already loaded." },
         loadActive: { label: "Load CURRENT Active Satellites", tooltip: "Download the current catalog of all active satellites, including Starlink. It does not include every debris or inactive object, and is not for a past sitch date.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
-        loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Download the orbits of objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch start date. Rocket bodies and debris are included.\nThe download is large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Download the orbits of objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the playhead date. Rocket bodies and debris are included.\nThe download is large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         simulateUnavailable: { label: "Simulate unavailable satellites", tooltip: "Use light-blue simulated Starlink satellites when no loaded orbit is within seven days of the viewing time. Population follows the viewing date. Loaded data is kept and returns automatically when in range." },
         simulatedCount: "Simulated Starlink: {{count}}",
-        loadAll: { label: "(Experimental) Load ALL Satellites",tooltip: "Download the orbits of every object in the catalog for the sitch start date.\nThe download is very large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadAll: { label: "(Experimental) Load ALL Satellites",tooltip: "Download the orbits of every object in the catalog for the playhead date.\nThe download is very large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         tleRange: {
             fromLabel: "TLEs From",
             fromTooltip: "Date and time (UTC) of the oldest elements in the loaded TLE data. This is the date in the data, not the date you asked for.",

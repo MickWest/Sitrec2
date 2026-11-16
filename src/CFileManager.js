@@ -21,6 +21,7 @@ import {
     versionString
 } from "./utils";
 import {CNodeArray} from "./nodes/CNodeArray";
+import {isSatelliteParquet} from "./SatelliteCatalogSource";
 import {fileSystemFetch} from "./fileSystemFetch";
 import {ImageSetExporter} from "./ExportImageSet";
 import {addFileAnalysisMenu} from "./analysis/VideoFolderAnalysisUI";
@@ -2671,7 +2672,9 @@ export class CFileManager extends CManager {
             const actionKey = 'dl_' + count;
             actions[actionKey] = () => {
                 const baseName = displayName.split('/').pop() || 'resource.bin';
-                if (typeof entry.data === 'string') {
+                if (entry.original && isSatelliteParquet(entry.original)) {
+                    saveAs(new Blob([entry.original]), baseName.replace(/\.(tle|csv|txt)$/i, '.parquet'));
+                } else if (typeof entry.data === 'string') {
                     // String data (e.g. TLE text) -- prefer over original which may be a zip
                     saveAs(new Blob([entry.data]), baseName);
                 } else if (entry.original) {

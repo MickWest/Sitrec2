@@ -141,10 +141,10 @@ describe("detecting a set downloaded before publication finished", () => {
         });
     });
 
-    // The Starlink and ALL queries filter on CREATION_DATE, and an element is
+    // The Starlink query filters on CREATION_DATE, and an element is
     // published AFTER its epoch — so epoch coverage means nothing here, and
     // judging by it flagged complete sets on every load.
-    describe("a CREATION_DATE-filtered query (the default Starlink one, and ALL)", () => {
+    describe("a CREATION_DATE-filtered query (the default Starlink one)", () => {
 
         it("accepts a complete set whose epochs stop short of the window end", () => {
             // The real 2025-09-05 Starlink set, in miniature: fully settled, yet
@@ -168,9 +168,9 @@ describe("detecting a set downloaded before publication finished", () => {
             assert.equal(isGPSetIncomplete(d, DATE, ""), true);
         });
 
-        it("judges ALL the same way, since it filters on the same field", () => {
-            const d = build([row({norad: 44714, created: "2026-07-27T04:16:27"})]);
-            assert.equal(isGPSetIncomplete(d, DATE, "ALL"), true);
+        it("judges ALL by orbit epochs even when publication happened later", () => {
+            const d = build([row({norad: 44714, epoch: "2026-07-28T23:59:59", created: "2026-07-30T04:16:27"})]);
+            assert.equal(isGPSetIncomplete(d, DATE, "ALL"), false);
         });
 
         it("tolerates the quiet period between the last burst and the boundary", () => {
@@ -234,6 +234,7 @@ describe("detecting a set downloaded before publication finished", () => {
         const d = build([row({norad: 44714, epoch: "2026-07-27T04:16:27",
                               created: "2026-07-27T04:20:00"})]);
         assert.equal(isGPSetIncomplete(d, DATE, "CUSTOM"), false);
+        assert.equal(isGPSetIncomplete(d, DATE, "CURRENT"), false);
     });
 
     it("says nothing about an empty set", () => {
