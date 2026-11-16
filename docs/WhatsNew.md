@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.200.1 (2026-11-15)
+
+### Improvements
+- **Bright Triples** (Video → Star Tracker → *Identify Bright Triples*): it now uses only the 30 best candidate stars, and a star that you added by hand is always one of them. Before, on a photo with hundreds of stars, it gave wrong names. When it does not use all the candidate stars, the *Status* line shows, for example, *the 30 best of 442 candidate stars*. This is also true when *Identify Stars (catalog)* fails and starts Bright Triples by itself. On some photos, Bright Triples can still give wrong names.
+
+### Bug Fixes
+- Fixed satellite catalogs that did not load in 2.200.0 on a site that sends a strict Content Security Policy. On such a site, Sitrec could not read the compact catalog files (*.parquet*) that 2.200.0 added, so satellites did not load from the server.
+- Fixed the Star Tracker (Video → Star Tracker: *Star Tracker Analysis* and *Identify Stars (catalog)*), which did not identify the stars of a night photo in which the bright stars are clipped, for example a photo from a phone. A clipped star is too bright for the picture.
+
 ## Version 2.200.0 (2026-11-15)
 
 ### New Features

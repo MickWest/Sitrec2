@@ -1,11 +1,32 @@
 import {parquetMetadata, parquetRead} from 'hyparquet';
 import {ZSTDDecoder} from 'zstddec';
 
+// zstddec reads its embedded WASM with fetch("data:..."). A Content Security
+// Policy whose connect-src has no data: source blocks that fetch, and then no
+// satellite catalog loads. The WASM text is private to zstddec, so give it the
+// bytes through a replacement fetch. init() calls fetch before it returns, so
+// the replacement exists only during that one synchronous call, and no other
+// code can run while it is in place.
+function startDecoder(decoder) {
+    if (typeof fetch === 'undefined') return decoder.init();
+    const pageFetch = globalThis.fetch;
+    globalThis.fetch = url => {
+        const binary = atob(String(url).slice(String(url).indexOf(',') + 1));
+        const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+        return Promise.resolve({arrayBuffer: () => Promise.resolve(bytes.buffer)});
+    };
+    try {
+        return decoder.init();
+    } finally {
+        globalThis.fetch = pageFetch;
+    }
+}
+
 let decoderPromise;
 function zstdDecoder() {
     return decoderPromise ??= (async () => {
         const decoder = new ZSTDDecoder();
-        await decoder.init();
+        await startDecoder(decoder);
         return decoder;
     })().catch(error => { decoderPromise = undefined; throw error; });
 }

@@ -118,6 +118,26 @@ const arrayBuffer = buffer => buffer.buffer.slice(buffer.byteOffset, buffer.byte
         expect(restored.split('\n').map(splitCSVRow)).toEqual(text.split('\n').map(splitCSVRow));
     });
 
+    // A page policy whose connect-src has no data: source rejects fetch("data:...").
+    // The decoder must start without that fetch. A new module registry gives
+    // this test a decoder that has not started yet.
+    test('decodes when the page policy blocks fetch of data: URLs', async () => {
+        const buffer = convert(csv);
+        const pageFetch = globalThis.fetch;
+        const blockedFetch = jest.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+        globalThis.fetch = blockedFetch;
+        try {
+            await jest.isolateModulesAsync(async () => {
+                const freshSource = require('../src/SatelliteCatalogSource');
+                expect(await freshSource.satelliteCatalogText(buffer)).toBe(csv);
+            });
+            expect(blockedFetch).not.toHaveBeenCalled();
+            expect(globalThis.fetch).toBe(blockedFetch);
+        } finally {
+            globalThis.fetch = pageFetch;
+        }
+    });
+
     test('rejects truncated Parquet and keeps ordinary CSV/TLE decoding', async () => {
         const buffer = convert(csv);
         await expect(satelliteCatalogText(buffer.slice(0,20))).rejects.toThrow();

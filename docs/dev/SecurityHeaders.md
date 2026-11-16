@@ -168,7 +168,7 @@ your own map, elevation and model sources, because the file cannot list them. A 
 
 Any policy must also allow for these:
 
-- The image decoders and OpenCV use **WebAssembly**, and several features start
+- The image decoders, the satellite catalog decoder and OpenCV use **WebAssembly**, and several features start
   **web workers** from `blob:` URLs. A policy needs `'wasm-unsafe-eval'` in `script-src` and
   `blob:` in `worker-src`.
 - The control panel library injects a `<style>` element with an embedded font. `style-src`
