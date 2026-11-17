@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.201.1 (2026-11-17)
+
+### New Features
+- **LED lights on kite tails** (Objects → the kite → *Edit design…* → *LED Tail*): a kite can now have LEDs along each tail or tentacle, and they move with the tail in the wind. They are separate from the LEDs under the sail. They start as solid blue, and the other patterns are chasing lights, comet, alternating colors, rainbow chase, pulse and twinkle. The designer also sets the number of LEDs on each tail; the kite must have at least one tail. Two new designs in *Browse custom objects…* → *Kites* have them ready: *LED tail kite · solid blue, 12 m tail* and *LED tail kite · twin rainbow, 8 m tails*. In Sitrec, the kite's *LED Tail* folder (inside *LED lights* when the sail also has LEDs) changes the pattern, colors, brightness, speed, phase and the phase between tails. A saved sitch and *Freeze as GLB* keep the tail LEDs. A kite saved before this release has no tail LEDs.
+
+### Improvements
+- **Custom Object Designer** (*Edit design…*): a kite with LEDs on its sail or its tails now opens with *Night* on, so the lights show, and any other design opens in daylight. This happens when the designer opens, when you choose a preset or click *Reset preset*, and when you *Open* a design file. When you edit the design, your *Night* setting stays.
+
 ## Version 2.201.0 (2026-11-16)
 
 ### New Features
