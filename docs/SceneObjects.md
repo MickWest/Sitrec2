@@ -16,6 +16,9 @@ This page has four parts:
 Read [Tracks and objects](#tracks-and-objects) first if you are not sure what the difference is,
 or which object is on which track.
 
+To reposition an object in Main or Look view, see [Moving Objects](MovingObjects.md): the
+Surface, Camera plane, In / out and Screen plane modes, and the Opt/Alt controls.
+
 ---
 
 ## Tracks and objects
@@ -172,8 +175,9 @@ the main view. You can change this later with **Show in look view** in the track
 Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
 timeline. **Constant Speed** is on, so the object moves at a steady speed along the track.
 **Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height above the
-ground and follows the terrain under it. Drag the object or either control point up, and the
-whole track rises.
+ground and follows the terrain under it. Drag the up/down arrows on the object or either
+control point to change the height of the whole track. Dragging the object itself or the green
+disk keeps the lock height. See [Moving Objects](MovingObjects.md#tracks-and-altitude-locks).
 
 The control points take their frame numbers when you make the track, so set the In and Out frames
 first, with **Time → In Frame [I]** and **Time → Out Frame [O]**, or **Alt+I** and **Alt+O** at
@@ -536,7 +540,8 @@ so a new pin shows only in the main view until you turn it on.
 
 **Add 3D Object** opens the new object's edit window straight away, because a grey sphere 5 m in
 radius on open ground can be hard to find. While the window is open you can drag the object with
-the move widget that appears when the pointer is near it. The window holds the same controls as the
+the [move widget](MovingObjects.md) that appears when the pointer is near it. You can drag the
+widget or the object itself. The window holds the same controls as the
 object's folder in the **Objects** menu: geometry or model, size, material and so on. See
 [Objects and 3D Models](CustomModels.md).
 
@@ -610,7 +615,10 @@ A right-click in a 3D view picks the first thing it finds, in this order:
 **3D object.** The edit window is titled with the object's name and holds the controls of its
 folder in the **Objects** menu. It stays open while you work in the view. While it is open, the
 object can be dragged with its move widget. You can also move any movable object without opening
-a window: hold **Option** (Mac) or **Alt** (Windows, Linux) and drag it.
+a window: hold **Opt** (Option, on a Mac) or **Alt** (Windows, Linux) and drag it. Click the
+**Move mode** icon on either view's left toolbar to choose the movement constraint, or press
+**Opt+M** / **Alt+M** to cycle modes. See [Moving Objects](MovingObjects.md) for the four modes,
+object-body dragging and track altitude locks.
 
 **Building.** Right-clicking a building puts it in edit mode and opens its editor at the pointer.
 See [Buildings](#buildings).

@@ -47,6 +47,7 @@ The shared webpack build regenerates `docs/search-index.json` from those registe
 - [KML Data Sources](docs/KMLDataSources.md) — where to get an aircraft track as a KML or KMZ file (ADS-B Exchange, FlightAware, FlightRadar24), and which export option to choose.
 - [Recorded fireballs](docs/RecordedFireballs.md) — check whether a Global Meteor Network fireball matches the time and place of a sighting, and load its path.
 - [Adding Objects and Tracks](docs/SceneObjects.md) — the right-click ground menu: a camera or target position, pins, 3D objects, tracks, balloons, buildings, clouds, ground overlays and measurement grids.
+- [Moving Objects](docs/MovingObjects.md) — Surface, Camera plane, In / out and Screen plane modes in Main and Look views, the move toolbar, Opt/Alt shortcuts, and altitude locks.
 - [Objects and 3D Models](docs/CustomModels.md) — built-in models, preset vehicles, imported GLB and PLY models, flocks of birds, and preparing a model in Blender.
 
 ### The world: camera, terrain and sky

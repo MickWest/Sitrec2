@@ -237,6 +237,22 @@ On the **look view's** header bar the button means a little more, because that v
 
 The **video overlay** button — a frame with a half-filled frame over it — is the look view's video overlay. Click it to switch the overlay off, and again to bring it back at the transparency it had. Hover over it and a slider for the transparency drops down under it; the slider fades away a moment after the pointer leaves both the button and the slider. It is the same setting as **Transparency %** in the Look menu's Video Overlay group and **Vid Overlay Trans %** in the View menu, so moving any one of them moves the others. On a touch screen, where there is no hover, the button switches the overlay on and off, and the transparency is in the Look menu.
 
+## The left toolbar and object movement
+
+Move the pointer to the left edge of Main or Look view to reveal its vertical toolbar. Use
+its pin to keep it visible. Both toolbars have a **Move mode** icon: click it to open the
+choices **Surface**, **Camera plane**, **In / out** and **Screen plane**. The selection is
+shared between the two views.
+
+Hold **Opt** (Option) on a Mac or **Alt** on Windows or Linux to show this icon at its normal
+position even when the toolbar is hidden. Holding the same key also reveals the move widget
+near an editable object, so you can drag the widget or the object itself. **Opt+M** on a Mac,
+or **Alt+M** on Windows or Linux, cycles the four modes.
+
+See [Moving Objects](MovingObjects.md) for the constraints, widget colors, drag directions
+and altitude locks. Camera plane and In / out use the Look camera in both views; Screen
+plane uses the camera of the view where the drag starts.
+
 ## Per-view controls
 
 Anything that can be shown in one view but not another is a **pair** of controls, named the same way throughout: "Labels in Main" and "Labels in Look", "Equatorial Grid in Main" and "Equatorial Grid in Look", and so on. The two are independent — neither is a master switch for the other — so a ticked box always means the thing is on in that view. In the view's own header menu the "in Main" / "in Look" is dropped, because the menu you opened already says which view it is. The celestial grids and the constellation lines have a third control, "in Video", which draws them over the video (see [Celestial Display](Celestial.md#lines-over-the-video)).

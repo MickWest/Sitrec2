@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.201.0 (2026-11-16)
+
+### New Features
+- **Move modes for objects** (the *Move mode* button on the left toolbar of the main view and the look view): choose how an object moves when you drag it.
+  - *Surface* moves it at the same altitude with the green disk, and the red arrows raise or lower it.
+  - *Camera plane* moves it in a plane through the object and the look camera, with a blue grid.
+  - *In / out* moves it along the line from the look camera through the object, with orange arrows: drag up to move it farther, and drag down to bring it nearer.
+  - *Screen plane* moves it across the picture of the view where you start the drag, at the same depth from that camera, with a purple grid.
+
+  The plane or the line stays fixed until you release the mouse button. The look view now also has a left toolbar for this button. Option+M (Alt+M on Windows and Linux) goes to the next mode. While you hold Option, the *Move mode* button shows in both views. The two views use the same mode, the control points of a hand-drawn track use it too, and a sitch saves it. On a hand-drawn track with *Lock Altitude* on, the widget always uses *Surface*. The new guide is Help → Documentation → Data and Tracks → *Moving Objects*.
+- **LED lights on kites** (Objects → the kite → *Browse custom objects…* → *Kites*, and *Edit design…* → *LED lights*): three new *LED delta kite* designs, 6 m wide, have a fixed array of LEDs under the sail, with rotating spokes, fireworks or an automatic light show. *LED lights* in the designer adds an array to any kite and sets its number of strips, LEDs and center rings, and its size, position and rotation. The patterns are rotating spokes, a rotating bar, a spiral chase, expanding fireworks, chasing rings, a rainbow wheel, twinkle, color pulse, steady and an automatic sequence. In Sitrec, the kite's *LED lights* folder changes the pattern, speed, phase, width, brightness and colors. Only the colors and the brightness change; the LEDs do not move. The pattern follows the sitch time, so it is the same each time you play or scrub to a frame. A saved sitch and *Freeze as GLB* keep it. A kite saved before this release has no LEDs.
+
+### Improvements
+- **Moving an object** (main and look views): the move widget now shows on top of the object, and the object no longer fades when the widget shows. You can also drag the object itself, in the selected mode. For a large model, the widget now also shows when the pointer is anywhere on the model. Where the green disk and a red arrow overlap, the disk now takes the drag. To change the altitude, grab a part of an arrow that is clear of the disk.
+- **Custom Object Designer** (*Edit design…*): it has a new *Underside* view. *Flash lights* is now *Animate lights*, and it also runs the kite LED patterns. A delta kite has a new *Delta tail notch* control. Its default gives the same shape as before.
+
+### Bug Fixes
+- Fixed a long drag of the green disk of the move widget, which could raise the object or the track control point as it went farther from the start. The disk now keeps the altitude as it follows the curve of the Earth.
+- Fixed the satellite data line at the top right of the main view (the dates of the satellite data, or the number of simulated satellites), which still showed when satellites were hidden (Satellites → *Show Satellites (Global)* off).
+
 ## Version 2.200.1 (2026-11-15)
 
 ### Improvements

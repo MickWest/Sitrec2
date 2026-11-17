@@ -205,12 +205,16 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 | **Height From** | Ground / Ellipsoid (HAE) | **Ground**: the height above the ground below. **Ellipsoid (HAE)**: the height above the WGS84 ellipsoid (HAE), *not* above mean sea level (MSL); see [Three Kinds of Height](GIS.md#three-kinds-of-height). The default is **Ground**. Shown only while **Lock Altitude** is on |
 
 > **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the
-> lock sets the height of all of its control points. Drag a control point's up/down arrows, or the object
-> that rides the track, and you change the **Lock Height**: the full track moves up or down
+> lock sets the height of all of its control points. Drag the up/down arrows on a control point
+> or on the object that rides the track, and you change the **Lock Height**: the full track moves up or down
 > as one, and no control point is added. A sideways drag keeps the control point at the lock height. The
 > lock does not go below 0. Right-click the ground → **Add Moving Object (In→Out)** to make such a
 > track: an object on a straight track from the clicked point, with control points at the In and
 > Out frames, **Constant Speed** on, and the altitude locked at ground level.
+
+The altitude lock takes priority over the [object movement mode](MovingObjects.md). A locked
+track uses the Surface widget even if Camera plane, In / out or Screen plane is selected.
+Turn off **Path → Lock Altitude** in the track's folder to use those modes.
 
 > **With Ellipsoid (HAE), the altitude lock is not MSL.** Locking an object to "10,000 ft" with **Height From**
 > set to **Ellipsoid (HAE)** puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
@@ -251,6 +255,11 @@ track. Press **Escape**, or choose **Exit Edit Mode** from either menu, to leave
 
 ![A hand-drawn track in edit mode over desert: colored cubes on the line, a green disc with orange arrows at the first point, a white cone with altitude text, and a label at the top that names the track](docimages/tracks-hand-drawn-edit.jpg)
 *A hand-drawn track with **Edit Track** on. Each cube is a control point, in a random color. The selected control point has no cube. It has a green disc, which you drag to move the point sideways, and orange arrows, which you drag to move it up or down. When you turn on **Edit Track**, the first control point is selected. Move the pointer over a cube to select it. The white cone marks the track's position at the current frame, and the green text gives its altitude. The faint vertical lines below the track are **Extend To Ground**, which is on by default for a hand-drawn track.*
+
+This picture shows the **Surface** widget. Control points also use the **Camera plane**,
+**In / out** and **Screen plane** modes selected from the left toolbar of Main or Look view.
+The current Surface widget has red altitude arrows. See [Moving Objects](MovingObjects.md)
+for the controls and the effect of **Lock Altitude**.
 
 - **Right-click a control point** to open its menu: **Go to Frame N**, **Delete Point**
   and **Exit Edit Mode**. This is the only way to delete a control point. Opening or dismissing

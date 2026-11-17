@@ -184,6 +184,11 @@ export const helpDocs = [
         chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the Custom Object Designer library of preset vehicles, balloons, kites and birds with wings that flap (Browse custom objects), flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
     },
     {
+        file: "docs/MovingObjects", labelKey: "menus.help.documentation.movingObjects",
+        section: "data", role: "reference",
+        chatDesc: "How do I move an object in Main or Look view? Covers the Surface, Camera plane, In / out and Screen plane modes, the left toolbar's Move mode menu, Opt/Alt to reveal objects and the mode icon, Opt+M or Alt+M to cycle modes, dragging the object itself, widgets over opaque objects, and undo. Explains that Camera plane uses the Look camera and its right vector in both views, In / out changes range along the Look camera-to-object line, Screen plane uses the initiating view, constraints stay fixed during a drag, and track altitude locks override free movement.",
+    },
+    {
         file: "docs/ObjectReferences", labelKey: "menus.help.documentation.objectReferences",
         section: "data", role: "reference",
         chatDesc: "For server operators and developers: how a saved sitch and a share link point to stored files. Covers sitrec:// object references, raw keys in ?custom= links, the object.php resolver, direct URLs on filesystem storage, public and private storage visibility, and what a person with a link can read. Not about 3D objects in a scene: for those, read SceneObjects.",

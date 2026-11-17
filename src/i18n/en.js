@@ -948,6 +948,7 @@ const en = {
                 localCustomSitches: "Local Custom Sitches (JSON)",
                 timeAndSync: "Time, Frames and Syncing",
                 sceneObjects: "Adding Objects and Tracks",
+                movingObjects: "Moving Objects",
                 cameraAndTarget: "Camera and Target Menus",
                 lighting: "Lighting Menu",
                 loadingVideo: "Loading and Adjusting Video",

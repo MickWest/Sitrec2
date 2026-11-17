@@ -106,7 +106,8 @@ smaller view over the main view, or over the look view when the main view is hid
 
 | Key | Action |
 |---|---|
-| `Alt`+`M` (`Opt`+`M` on a Mac) | Cycle object movement modes: **Surface**, **Camera plane**, **In / out**, **Screen plane**. Hold Alt/Opt to keep the mode icon visible at its usual toolbar position in both Main and Look views |
+| `Alt` (`Opt` on a Mac, hold) | Reveal the move widget near an editable object, then drag the object or widget. Also show the Move mode icon at its usual left-toolbar position in both Main and Look views |
+| `Alt`+`M` (`Opt`+`M` on a Mac) | Cycle object movement modes: **Surface**, **Camera plane**, **In / out**, **Screen plane** |
 | `Alt`+`C` (hold) | Move the **camera** to the point under the mouse, at its current altitude. If the camera **Position** is a track, it changes to **Manual** |
 | `Alt`+`X` (hold) | Move the **target** to the point under the mouse, at its current altitude. Works only when **Target Track** is **Manual** or **Manual + Wind** |
 | `Alt`+`Shift`+`C` / `Alt`+`Shift`+`X` | Same, but also drop the altitude to **7 ft (about 2.1 m) above the ground** — eye level, not ground level |
@@ -123,6 +124,10 @@ through the object; drag its perspective arrows up to push away and down to pull
 That line appears in Main View during the drag. **Screen plane** moves across the initiating
 view at fixed depth, using a purple grid. Planes and lines stay fixed for each drag. Explicit
 track altitude locks take priority; unlock altitude to use the plane and in/out modes.
+
+Click the **Move mode** icon on either view's left toolbar to select a mode from its menu.
+See [Moving Objects](MovingObjects.md) for the full guide, including dragging the object
+itself, keeping its normal opacity, and undoing a move.
 
 For `Alt`+`C`, `Alt`+`X`, `V` and `B`, hold the keys and move the mouse over the ground in the main
 view or the look view. You do not need to click.
