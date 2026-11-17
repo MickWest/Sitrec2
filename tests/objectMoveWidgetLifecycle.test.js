@@ -54,6 +54,12 @@ function expectUsableHandles() {
     expect(widget.group.children).toHaveLength(3);
     expect(widget.handles.arrowUp.children).toHaveLength(4);
     expect(widget.handles.arrowDown.children).toHaveLength(4);
+    widget.group.traverse(child => {
+        if (child.isMesh && child.userData.handleRole) {
+            expect(child.material.depthTest).toBe(false);
+            expect(child.renderOrder).toBe(999);
+        }
+    });
     widget.raycaster.setFromCamera(new Vector2(0, 0), view.camera);
     expect(widget.pickHandle()).toBeDefined();
     expect(widget.pickHandle()).not.toBeNull();
@@ -68,7 +74,7 @@ test("switching sitches after a hover rebuilds visible, pickable handles without
         expectUsableHandles();
         expect(move.widget).not.toBe(oldWidget);
         expect(router.providers.size).toBe(providers + 1);
-        expect(node.group.children[0].material.opacity).toBe(0.25);
+        expect(node.group.children[0].material.opacity).toBe(1);
         oldWidget = move.widget;
         const discDispose = jest.spyOn(oldWidget.handles.disc.geometry, "dispose");
         const line = move.dropLine;

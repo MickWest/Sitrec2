@@ -4,9 +4,11 @@ window.matchMedia = window.matchMedia || (() => ({matches: false, addListener() 
 
 import '../src/lil-gui-extras';
 import GUI from '../src/js/lil-gui.esm';
-import {createMainViewToolbar} from '../src/CViewToolbar';
+import {createLookViewToolbar, createMainViewToolbar} from '../src/CViewToolbar';
 import {sharedMenuKey} from '../src/ViewUIBarMenus';
 import {clearMenuMirrors} from '../src/MenuMirror';
+import {getObjectMoveMode, OBJECT_MOVE_MODES, setObjectMoveMode} from '../src/ObjectMoveModes';
+import {Globals} from '../src/Globals';
 
 let host, source, view, bar, state, control;
 const rect = (left, top, width, height) => ({left, top, width, height, right: left + width, bottom: top + height});
@@ -17,6 +19,8 @@ const move = (x, y, buttons = 0) => document.dispatchEvent(new MouseEvent('point
 beforeEach(() => {
     jest.useFakeTimers();
     clearMenuMirrors();
+    setObjectMoveMode('surface');
+    Globals.onMac = false;
     host = document.createElement('div');
     document.body.appendChild(host);
     host.getBoundingClientRect = () => rect(0, 0, 640, 480);
@@ -64,6 +68,92 @@ test('does not reveal through another window or during a camera drag', () => {
     expect(bar.shown).toBe(false);
 });
 
+test('holding Alt shows just the mode icon at its real button position in both views', () => {
+    const lookBar = createLookViewToolbar({...view});
+    bar.moveModeButton.getBoundingClientRect = () => rect(13, 121, 36, 36);
+    lookBar.moveModeButton.getBoundingClientRect = () => rect(13, 81, 36, 36);
+    try {
+        jest.advanceTimersByTime(2000);
+        document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Alt', code: 'AltLeft', altKey: true, bubbles: true}));
+        for (const toolbar of [bar, lookBar]) {
+            expect(toolbar.shown).toBe(false);
+            expect(toolbar.moveModePeek.style.display).toBe('flex');
+            expect(toolbar.moveModePeek.style.left).toBe('13px');
+            expect(toolbar.moveModePeek.style.top).toBe(`${toolbar.moveModeButton.getBoundingClientRect().top}px`);
+            expect(toolbar.moveModePeek.hasAttribute('aria-pressed')).toBe(false);
+        }
+        setObjectMoveMode('push');
+        expect(bar.moveModePeek.dataset.moveMode).toBe('push');
+        expect(lookBar.moveModePeek.innerHTML).toBe(lookBar.moveModeButton.innerHTML);
+        bar.moveModePeek.click();
+        expect(bar.hasOpenMenu()).toBe(true);
+        expect(bar.moveModePeek.style.display).toBe('none');
+        document.dispatchEvent(new KeyboardEvent('keyup', {key: 'Alt', code: 'AltLeft', altKey: false, bubbles: true}));
+        expect(lookBar.moveModePeek.style.display).toBe('none');
+    } finally { lookBar.dispose(); }
+});
+
+test('the Alt icon stays visible while dragging, clears on blur, and releases its listeners', () => {
+    jest.advanceTimersByTime(2000);
+    document.dispatchEvent(new MouseEvent('pointermove', {clientX: 400, clientY: 200, altKey: true, buttons: 1, bubbles: true}));
+    expect(bar.shown).toBe(false);
+    expect(bar.moveModePeek.style.display).toBe('flex');
+    window.dispatchEvent(new Event('blur'));
+    expect(bar.moveModePeek.style.display).toBe('none');
+    const update = jest.spyOn(bar, 'setAltHeld');
+    bar.dispose();
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Alt', altKey: true, bubbles: true}));
+    expect(update).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-uibar-action="move-mode-peek"]')).toBeNull();
+});
+
+test.each([[true, 'Opt'], [false, 'Alt']])('mode tooltips use the platform modifier (Mac: %s)', (onMac, modifier) => {
+    Globals.onMac = onMac;
+    setObjectMoveMode('push');
+    for (const button of [bar.moveModeButton, bar.moveModePeek]) {
+        expect(button.dataset.tooltip).toContain(`${modifier}+M cycles modes`);
+        expect(button.dataset.tooltip).toContain(`\nTIP: Hold down ${modifier} to see and move objects`);
+    }
+});
+
+test('both movement pickers select all four shared modes and reflect restored state', () => {
+    const lookBar = createLookViewToolbar({...view});
+    try {
+        for (const mode of OBJECT_MOVE_MODES) {
+            lookBar.moveModeButton.click();
+            expect(lookBar.hasOpenMenu()).toBe(true);
+            lookBar.bar.querySelector(`[role="menuitemradio"][data-move-mode="${mode}"]`).click();
+            expect(getObjectMoveMode()).toBe(mode);
+            expect(lookBar.hasOpenMenu()).toBe(false);
+            for (const toolbar of [bar, lookBar]) {
+                expect(toolbar.moveModeButton.dataset.moveMode).toBe(mode);
+                expect(toolbar.bar.querySelector('[aria-checked="true"]').dataset.moveMode).toBe(mode);
+            }
+        }
+        setObjectMoveMode('push');
+        expect(bar.moveModeButton.getAttribute('aria-label')).toBe('Move mode: In / out');
+        expect(lookBar.moveModeButton.dataset.moveMode).toBe('push');
+    } finally { lookBar.dispose(); }
+});
+
+test('movement menu supports keyboard navigation, dismissal, and holds the toolbar open', () => {
+    const button = bar.moveModeButton;
+    button.click();
+    const menu = bar.bar.querySelector('[role="menu"]');
+    expect(document.activeElement.dataset.moveMode).toBe('surface');
+    menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+    expect(document.activeElement.dataset.moveMode).toBe('lookCameraPlane');
+    menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'End', bubbles: true}));
+    expect(document.activeElement.dataset.moveMode).toBe('screenPlane');
+    move(400, 200);
+    jest.advanceTimersByTime(2000);
+    expect(bar.hasOpenMenu()).toBe(true);
+    expect(bar.shown).toBe(true);
+    menu.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(button);
+});
+
 test('the sun opens a slider without toggling the light, and both controls stay in sync', () => {
     const change = jest.fn();
     control.onChange(change);
@@ -91,7 +181,7 @@ test.each(['label', 'value'])('double-clicking the slider %s resets the shared v
     const change = jest.fn(), finish = jest.fn();
     control.onChange(change).onFinishChange(finish);
     bar.bar.querySelector('[data-uibar-action="ambient-light"]').click();
-    const popup = bar.bar.querySelector('.view-uibar-popup');
+    const popup = bar.bar.querySelector('input[type="range"]').closest('.view-uibar-popup');
     const element = target === 'label' ? popup.firstElementChild : popup.lastElementChild.lastElementChild;
     const reset = () => element.dispatchEvent(new MouseEvent('dblclick', {bubbles: true, cancelable: true}));
     reset();

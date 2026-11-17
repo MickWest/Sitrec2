@@ -19,6 +19,7 @@ import {
 import {showViewMessage} from "./ViewMessage";
 import {t} from "./i18n";
 import {MODAL_OPEN_EVENT} from "./ModalKeyboard";
+import {cycleObjectMoveMode} from "./ObjectMoveModes";
 
 // The frames Shift+, / Shift+. stop at: timeline markers, the In and Out
 // frames, and every keyframe published to the KeyframeRegistry.
@@ -403,6 +404,16 @@ export function initKeyboard() {
         // Don't intercept other Ctrl/Cmd combos (e.g. Cmd+C for copy, Cmd+V for paste)
         // Let the browser handle them natively
         if (e.ctrlKey || e.metaKey) return;
+
+        // Use the physical key: Option+M produces a different character on Mac.
+        // Bare M remains available to tools and the legacy FAA marker shortcut.
+        if (keyCode === 'KeyM' && e.altKey && !e.shiftKey
+            && !e.target?.closest?.('input, textarea, select, [contenteditable="true"], [role="textbox"]')) {
+            e.preventDefault();
+            e.stopPropagation();
+            cycleObjectMoveMode();
+            return;
+        }
 
         // Keys that need Alt (Option on a Mac) while "Require Alt for Shortcuts" is on. See
         // AltShortcuts.js for the list.

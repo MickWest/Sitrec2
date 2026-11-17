@@ -5456,6 +5456,14 @@ const en = {
         label: "View tools",
         pin: "Keep this toolbar visible. Unpin to let it fade when you leave the tools.",
         ambientTooltip: "Adjust ambient light. This is the same setting as Lighting → Ambient Intensity.",
+        moveMode: "Move mode",
+        moveModeTooltip: "Choose how to move objects in Main and Look views. {{shortcut}} cycles modes. Unlock track altitude to use plane or in/out modes.\nTIP: Hold down {{modifier}} to see and move objects",
+        moveModes: {
+            surface: {label: "Surface", tooltip: "Drag the green disk at constant altitude around the Earth. Use the red arrows to raise or lower the object."},
+            lookCameraPlane: {label: "Camera plane", tooltip: "Move in the plane through the object, Look camera, and Look camera's right vector. The plane stays fixed during the drag. Viewed edge-on, the grid tilts for visibility: drag sideways to move across, up to move farther, down to move nearer."},
+            push: {label: "In / out", tooltip: "Drag up to push away from the Look camera, down to pull closer. The fixed camera-to-object line appears in Main View while dragging."},
+            screenPlane: {label: "Screen plane", tooltip: "Move freely across the screen at fixed camera depth. The plane faces the view where you start dragging and stays fixed until you release."},
+        },
     },
     lighting: {
         ambientIntensity: {

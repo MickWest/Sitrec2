@@ -106,6 +106,7 @@ smaller view over the main view, or over the look view when the main view is hid
 
 | Key | Action |
 |---|---|
+| `Alt`+`M` (`Opt`+`M` on a Mac) | Cycle object movement modes: **Surface**, **Camera plane**, **In / out**, **Screen plane**. Hold Alt/Opt to keep the mode icon visible at its usual toolbar position in both Main and Look views |
 | `Alt`+`C` (hold) | Move the **camera** to the point under the mouse, at its current altitude. If the camera **Position** is a track, it changes to **Manual** |
 | `Alt`+`X` (hold) | Move the **target** to the point under the mouse, at its current altitude. Works only when **Target Track** is **Manual** or **Manual + Wind** |
 | `Alt`+`Shift`+`C` / `Alt`+`Shift`+`X` | Same, but also drop the altitude to **7 ft (about 2.1 m) above the ground** — eye level, not ground level |
@@ -113,6 +114,15 @@ smaller view over the main view, or over the look view when the main view is hid
 | `B` (hold) | Set the **end** point of a measurement |
 | `T` (hold) | Move the terrain square: it follows the cursor while `T` is held (only when Dynamic Subdivision is off) |
 | `Alt`+`Shift`+`E` (`Option`+`E` on a Mac) | Extend all tracks to the ground, or, if any track is extended, stop extending all of them. The same as **Contents → Toggle ALL Extend To Ground** |
+
+**Surface** keeps the green disk at constant altitude, with red arrows for altitude changes.
+**Camera plane** uses the plane through the object, the Look camera, and its right vector.
+When viewed edge-on, its blue grid tilts so you can grab it: drag sideways to move across,
+up to move farther, and down to move nearer. **In / out** uses the line from the Look camera
+through the object; drag its perspective arrows up to push away and down to pull closer.
+That line appears in Main View during the drag. **Screen plane** moves across the initiating
+view at fixed depth, using a purple grid. Planes and lines stay fixed for each drag. Explicit
+track altitude locks take priority; unlock altitude to use the plane and in/out modes.
 
 For `Alt`+`C`, `Alt`+`X`, `V` and `B`, hold the keys and move the mouse over the ground in the main
 view or the look view. You do not need to click.

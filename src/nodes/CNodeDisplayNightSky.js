@@ -994,6 +994,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         labelMainViewPVS.addText("videoLabelInRange", "xx", 100, 2, -11, "#f0f00080", "right").update(function () {
 
             this.text = "";
+            if (!nightSky.satellites.showSatellites) return;
 
             if (nightSky.satellites.usingSimulatedSatellites) {
                 this.text = t("nightSky.simulatedCount", {count: nightSky.satellites.renderTLEData.satData.length.toLocaleString()});

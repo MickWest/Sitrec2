@@ -1,4 +1,4 @@
-import {Group, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, SphereGeometry} from "three";
+import {Group, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Raycaster, SphereGeometry, Vector3} from "three";
 import {ObjectMoveWidget, withObjectMoveWidgetVisible} from "../src/CObjectMoveWidget";
 import {CNodeBalloonTrack} from "../src/nodes/CNodeBalloonTrack";
 import {CNode3DObject} from "../src/nodes/CNode3DObject";
@@ -8,6 +8,7 @@ import {ViewMan} from "../src/CViewManager";
 import {LLAToECEF, ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
 import {getLocalEastVector, getLocalUpVector} from "../src/SphericalMath";
+import {getPointBelow} from "../src/threeExt";
 import {undoManager} from "../src/UndoManager";
 
 jest.mock("../src/nodes/CNodeTrack", () => ({CNodeTrack: class CNodeTrack {}}));
@@ -16,7 +17,7 @@ jest.mock("../src/nodes/CNode3DObject", () => {
     return {CNode3DObject: class CNode3DObject extends CNode3D {}};
 });
 jest.mock("../src/LocalFrame", () => ({GlobalScene: new (require("three").Group)()}));
-jest.mock("../src/threeExt", () => ({getPointBelow: p => p.clone()}));
+jest.mock("../src/threeExt", () => ({getPointBelow: jest.fn(p => p.clone())}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterate: jest.fn()}}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: (lat, lon) => 20 + lat * .1 + lon * .03}));
 jest.mock("../src/UndoManager", () => ({undoManager: {add: jest.fn()}}));
@@ -81,6 +82,17 @@ test("Option-C releases object picking and pointer movement cannot reenable it",
     widget.updateHeldKey({key:'c',code:'KeyC',altKey:true}, false);
     expect(widget.altHeld).toBe(true);
     release.mockRestore();
+});
+
+test('cycling modes with Alt+M keeps Alt object movement active', () => {
+    const widget = ObjectMoveWidget;
+    widget.updateHeldKey({key: 'Alt', code: 'AltLeft', altKey: true}, true);
+    widget.updateHeldKey({key: 'µ', code: 'KeyM', altKey: true}, true);
+    expect(widget.altHeld).toBe(true);
+    widget.updateHeldKey({key: 'µ', code: 'KeyM', altKey: true}, false);
+    expect(widget.altHeld).toBe(true);
+    widget.updateHeldKey({key: 'Alt', code: 'AltLeft', altKey: false}, false);
+    expect(widget.altHeld).toBe(false);
 });
 
 test("a key held before Option and repeated keydowns also block object picking", () => {
@@ -282,6 +294,64 @@ test("data tracks stay read-only and spline targets keep their existing edit pat
     expect(ObjectMoveWidget.movableTarget(objectFor(root))).toBeNull();
 });
 
+test.each(['lookCameraPlane', 'push', 'screenPlane'])('a %s drag converts AGL at its destination, with undo and redo', mode => {
+    const groundHeight = 75;
+    const root = Object.assign(Object.create(Object.getPrototypeOf(CNodeBalloonTrack.prototype)), {
+        _LLA: [34, -118, 100], agl: true,
+        ecef: LLAToECEF(34, -118, 100 + groundHeight),
+        setLLA(lat, lon, alt) {
+            this._LLA = [lat, lon, alt];
+            this.ecef = LLAToECEF(lat, lon, alt + groundHeight);
+        },
+    });
+    const widget = startMove(root), before = root._LLA.slice();
+    widget.widget = {activeDragMode: mode};
+    const destination = root.ecef.clone().addScaledVector(getLocalEastVector(root.ecef), 2000)
+        .addScaledVector(getLocalUpVector(root.ecef), 40);
+    getPointBelow.mockImplementationOnce(p => {
+        const lla = ECEFToLLAVD_radii(p);
+        return LLAToECEF(lla.x, lla.y, groundHeight);
+    });
+    widget.proxy.position.copy(destination);
+    widget.onWidgetMoved();
+    expect(root.ecef.distanceTo(destination)).toBeLessThan(1e-6);
+    widget.endDrag();
+    const undo = undoManager.add.mock.calls[0][0];
+    undo.undo();
+    expect(root._LLA).toEqual(before);
+    undo.redo();
+    expect(root.ecef.distanceTo(destination)).toBeLessThan(1e-6);
+    widget.widget = null;
+});
+
+
+test('body picking uses the visible model at this view scale and restores shared state', () => {
+    const group = new Group(), material = new MeshBasicMaterial();
+    const mesh = new Mesh(new SphereGeometry(10, 24, 16), material);
+    group.add(mesh);
+    group.position.set(Globals.equatorRadius + 1000, 0, 0);
+    const node = {id: 'body', group, _viewScale: 1, applyViewScale(view) {
+        this._viewScale = view.id === 'mainView' ? 2 : 1;
+        group.scale.setScalar(this._viewScale);
+    }};
+    ObjectMoveWidget.node = node;
+    const camera = new PerspectiveCamera();
+    camera.position.copy(group.position).add(new Vector3(0, 0, 100));
+    const view = {id: 'mainView', camera};
+    const ray = new Raycaster(camera.position.clone().add(new Vector3(15, 0, 0)), new Vector3(0, 0, -1));
+    ray.layers.set(5); // Helper-only until the body pick temporarily uses the view mask.
+    try {
+        expect(ObjectMoveWidget.pickObjectSurface(ray, view)?.object).toBe(mesh);
+        expect(ray.layers.mask).toBe(32);
+        expect(group.scale.toArray()).toEqual([1, 1, 1]);
+        expect(node._viewScale).toBe(1);
+        expect(ObjectMoveWidget.pickObjectSurface(ray, {...view, id: 'lookView'})).toBeNull();
+        mesh.visible = false;
+        expect(ObjectMoveWidget.pickObjectSurface(ray, view)).toBeNull();
+        mesh.visible = true;
+        expect(ObjectMoveWidget.pickObjectSurface(ray, {...view, _renderHiddenNodeIDs: new Set(['body'])})).toBeNull();
+    } finally { mesh.geometry.dispose(); material.dispose(); }
+});
 
 test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"])("Alt hover ignores a closer %s object overlapping the balloon", hiddenKind => {
     const root = balloon(), visible = objectFor(root), hidden = objectFor(root);
@@ -309,9 +379,9 @@ test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"]
         expect(widget.cursorDistancePx(view,hidden.group.position)).toBeLessThan(widget.cursorDistancePx(view,visible.group.position));
         const pick=widget.findObjectUnderCursor();
         expect(pick.node).toBe(visible);
-        widget.node=pick.node;widget.fade=1;widget.savedMaterials=null;
+        widget.node=pick.node;widget.fade=1;
         widget.applyFade();
-        expect(visible.group.children[0].material.opacity).toBe(.25);
+        expect(visible.group.children[0].material.opacity).toBe(1);
         expect(hidden.group.children[0].material.opacity).toBe(1);
         widget.fade=0;widget.applyFade();
         expect(material.opacity).toBe(1);expect(material.transparent).toBe(false);expect(material.depthWrite).toBe(true);
@@ -321,7 +391,7 @@ test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"]
         hidden.group.children[0].visible=true;hidden.group.children[0].layers.set(0);
         expect(widget.findObjectUnderCursor().node).toBe(hidden);
     } finally {
-        views.mockRestore();objects.mockRestore();widget.savedMaterials=null;widget.fade=0;
+        views.mockRestore();objects.mockRestore();widget.fade=0;
         for (const node of [visible,hidden]) node.group.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});
     }
 });

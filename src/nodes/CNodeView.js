@@ -14,7 +14,8 @@ import {ViewMan} from "../CViewManager";
 import {LayoutMan} from "../CLayoutManager";
 import {makeDraggable, makeResizable, removeDraggable, removeResizable, VIEW_EDIT_KEY, clampBelowMenuBar} from "../DragResizeUtils";
 import {CUIBar, hudClipPath} from "../CUIBar";
-import {createMainViewToolbar} from "../CViewToolbar";
+import {createLookViewToolbar, createMainViewToolbar} from "../CViewToolbar";
+import {getObjectMoveMode, setObjectMoveMode} from '../ObjectMoveModes';
 import {setTooltip} from "../Tooltips";
 import {FRIENDLY_VIEW_NAMES, populateViewUIBarIcons, populateViewUIBarMenu} from "../ViewUIBarMenus";
 import {isKeyHeld} from "../KeyBoardHandler";
@@ -278,6 +279,9 @@ class CNodeView extends CNode {
             if (this.id === 'mainView' && this.uiBar) {
                 this.toolbarPinned = v.pinToolbar ?? false;
                 this.toolBar = createMainViewToolbar(this);
+            } else if (this.id === 'lookView' && this.uiBar) {
+                this.toolbarPinned = v.pinToolbar ?? false;
+                this.toolBar = createLookViewToolbar(this);
             }
 
             const visibleToSet = this.visible;
@@ -762,6 +766,7 @@ class CNodeView extends CNode {
             ...super.modSerialize(),
             ...this.simpleSerialize(this.toSerialCNodeView)
         };
+        if (this.id === 'mainView' || this.id === 'lookView') result.objectMoveMode = getObjectMoveMode();
         if (this.dockedSidebar) {
             result.dockedSidebar = this.dockedSidebar;
         }
@@ -824,6 +829,11 @@ class CNodeView extends CNode {
             this.setHeaderPinned(this.headerPinned);
         }
         this.toolBar?.setPinned(this.toolbarPinned);
+        if (this.id === 'mainView' || this.id === 'lookView') {
+            if (v.objectMoveMode !== undefined) setObjectMoveMode(v.objectMoveMode);
+            else if (v.pushMovement) setObjectMoveMode('push');
+            else if (v.lookCameraPlaneMovement) setObjectMoveMode('lookCameraPlane');
+        }
 
         // Don't restore fullscreen here — that's deferred to
         // restoreFullscreenFromMods() which runs after ALL mods are applied,

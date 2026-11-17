@@ -1,7 +1,11 @@
 /** @jest-environment jsdom */
-import {Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, Vector3} from "three";
+import {Mesh, MeshBasicMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, SphereGeometry, Vector3} from "three";
 import {PointEditorWidget} from "../src/PointEditorWidget";
 import {ViewMan} from "../src/CViewManager";
+import {setObjectMoveMode} from "../src/ObjectMoveModes";
+import {adjustHeightHAE} from "../src/threeExt";
+import {ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
+import * as LAYER from "../src/LayerMasks";
 import {
     getInteractiveViewAt, mouseInRenderedView, mouseInViewOnly, mouseToNDC, mouseToView,
     ndcToView, offsetWorldPointPixels, projectWorldToView, renderedRect,
@@ -12,7 +16,7 @@ jest.mock("../src/CViewManager", () => ({ViewMan: {
     screenOffsetX: 220, get: jest.fn(), iterateVisibleIncludingOverlays: jest.fn(),
 }}));
 jest.mock("../src/SphericalMath", () => ({getLocalUpVector: () => new (require("three").Vector3)(0, 1, 0)}));
-jest.mock("../src/threeExt", () => ({adjustHeightAboveGround: p => p}));
+jest.mock("../src/threeExt", () => ({adjustHeightAboveGround: p => p, adjustHeightHAE: jest.fn(p => p)}));
 
 function makeView(orthographic = false, letterbox = true) {
     const camera = orthographic ? new OrthographicCamera(-120, 120, 90, -90, 0.1, 2000)
@@ -47,7 +51,11 @@ function makeView(orthographic = false, letterbox = true) {
     };
 }
 
-beforeEach(() => ViewMan.iterateVisibleIncludingOverlays.mockImplementation(() => {}));
+beforeEach(() => {
+    setObjectMoveMode('surface');
+    adjustHeightHAE.mockReset().mockImplementation(p => p);
+    ViewMan.iterateVisibleIncludingOverlays.mockImplementation(() => {});
+});
 
 test.each([false, true])("rendered NDC and client/pane conversions round trip (letterbox %s)", letterbox => {
     const view = makeView(false, letterbox);
@@ -199,14 +207,333 @@ test("an altitude drag ignores a ray parallel to its movement axis", () => {
     expect(widget.object.position.toArray()).toEqual([6370000, 0, 0]);
 });
 
+function planeWidgetViews() {
+    setObjectMoveMode('lookCameraPlane');
+    const position = new Vector3(0, 6379137, 0);
+    const camera = new PerspectiveCamera(50, 1, 0.1, 2000);
+    camera.position.copy(position).add(new Vector3(60, 200, 250));
+    camera.lookAt(position);
+    camera.updateMatrixWorld(true);
+    const rect = {left: 0, top: 0, width: 400, height: 400};
+    const main = {id: 'mainView', camera, visible: true,
+        leftPx: 0, topPx: 0, widthPx: 400, heightPx: 400,
+        div: {getBoundingClientRect: () => rect}, canvas: {getBoundingClientRect: () => rect},
+        pixelsToMeters: (p, px) => px * worldUnitsPerPixel(main, p)};
+    const look = {id: 'lookView', camera: new PerspectiveCamera(), pixelsToMeters: main.pixelsToMeters};
+    look.camera.position.copy(position).add(new Vector3(200, 100, 60));
+    look.camera.lookAt(position);
+    look.camera.rotateZ(.25);
+    look.camera.updateMatrixWorld(true);
+    ViewMan.get.mockImplementation(id => ({mainView: main, lookView: look})[id]);
+    ViewMan.iterateVisibleIncludingOverlays.mockImplementation(() => {});
+    const widget = new PointEditorWidget(camera);
+    const object = new Object3D();
+    object.position.copy(position);
+    widget.attach(object);
+    widget.updateHandleScales(main);
+    const pointerAt = point => {
+        const [clientX, clientY] = viewToClient(main, ...projectWorldToView(main, point));
+        return {button: 0, clientX, clientY, preventDefault() {}};
+    };
+    return {main, look, widget, position, pointerAt};
+}
+
+test('Main view moves along the Look camera plane and freezes its geometry throughout the drag', () => {
+    const {main, look, widget, position, pointerAt} = planeWidgetViews();
+    try {
+        const grid = widget.handles.planeGrid;
+        expect(grid.visible).toBe(true);
+        expect(widget.handles.disc.visible).toBe(false);
+        expect(grid.material.color.getHex()).toBe(0x3399ff);
+        const orientation = grid.quaternion.clone();
+        const right = new Vector3(1, 0, 0).applyQuaternion(orientation);
+        const along = new Vector3(0, 1, 0).applyQuaternion(orientation);
+        const cameraRight = new Vector3(1, 0, 0).applyQuaternion(look.camera.quaternion);
+        expect(right.distanceTo(cameraRight)).toBeLessThan(1e-12);
+        // Grab an empty grid square, away from the red arrows and grid lines.
+        const grip = position.clone().addScaledVector(right, grid.scale.x * .65)
+            .addScaledVector(along, grid.scale.y * .35);
+        const down = pointerAt(grip);
+        widget.onPointerDown(down);
+        expect(widget.activeDragMode).toBe('lookCameraPlane');
+        expect(widget.activeView).toBe(main);
+        const plane = widget.dragPlane.clone();
+        expect(Math.abs(plane.distanceToPoint(position))).toBeLessThan(1e-8);
+        expect(Math.abs(plane.distanceToPoint(look.camera.position))).toBeLessThan(1e-8);
+        expect(Math.abs(plane.normal.dot(cameraRight))).toBeLessThan(1e-12);
+
+        look.camera.position.add(new Vector3(150, 30, -120));
+        look.camera.up.set(.2, .9, .3).normalize();
+        look.camera.lookAt(position);
+        setObjectMoveMode('surface');
+        // Another view rendering must not change the Main view's drag basis.
+        widget.updateHandleScales(look);
+        expect(grid.visible).toBe(true);
+        expect(widget.handles.disc.visible).toBe(false);
+        widget.updateHandleScales(main);
+        expect(grid.visible).toBe(true);
+        expect(grid.quaternion.angleTo(orientation)).toBeLessThan(1e-7);
+
+        const delta = right.clone().multiplyScalar(15).addScaledVector(along, 10);
+        for (const fraction of [.5, 1]) {
+            widget.onPointerMove(pointerAt(grip.clone().addScaledVector(delta, fraction)));
+            expect(widget.object.position.distanceTo(position.clone().addScaledVector(delta, fraction))).toBeLessThan(1e-5);
+            expect(Math.abs(plane.distanceToPoint(widget.object.position))).toBeLessThan(1e-8);
+            expect(widget.dragPlane.equals(plane)).toBe(true);
+            expect(grid.quaternion.angleTo(orientation)).toBeLessThan(1e-7);
+        }
+        widget.rollbackDrag(down);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+        expect(widget.isDragging).toBe(false);
+        widget.updateHandleScales(main);
+        expect(grid.visible).toBe(false);
+        setObjectMoveMode('lookCameraPlane');
+        widget.updateHandleScales(main);
+        expect(grid.quaternion.angleTo(orientation)).toBeGreaterThan(.1);
+    } finally { widget.dispose(); }
+});
+
+test('the Look view has a visible grid grip, and the grid is released on disposal', () => {
+    const {main, look, widget, position} = planeWidgetViews();
+    const grid = widget.handles.planeGrid;
+    const disposeGrid = jest.spyOn(grid.geometry, 'dispose');
+    const disposePick = jest.spyOn(widget.planeGridPick.geometry, 'dispose');
+    const disposeMaterial = jest.spyOn(grid.material, 'dispose');
+    widget.updateHandleScales(look);
+    expect(grid.visible).toBe(true);
+    expect(widget.handles.disc.visible).toBe(false);
+    // An object on the Look camera's right axis also has a finite plane.
+    const cameraRight = new Vector3(1, 0, 0).applyQuaternion(look.camera.quaternion);
+    look.camera.position.copy(position).addScaledVector(cameraRight, 100);
+    widget.updateHandleScales(main);
+    const normal = new Vector3(0, 0, 1).applyQuaternion(widget.lookCameraPlaneQuaternion());
+    expect(normal.length()).toBeCloseTo(1);
+    expect(normal.dot(cameraRight)).toBeCloseTo(0);
+    widget.dispose();
+    expect(disposeGrid).toHaveBeenCalledTimes(1);
+    expect(disposePick).toHaveBeenCalledTimes(1);
+    expect(disposeMaterial).toHaveBeenCalledTimes(1);
+});
+
+function pushWidgetViews() {
+    const state = planeWidgetViews();
+    setObjectMoveMode('push');
+    const {look, main, widget} = state;
+    const rect = {left: 400, top: 0, width: 400, height: 400};
+    Object.assign(look, {visible: true,
+        leftPx: 400, topPx: 0, widthPx: 400, heightPx: 400,
+        div: {getBoundingClientRect: () => rect}, canvas: {getBoundingClientRect: () => rect},
+        pixelsToMeters: (p, px) => px * worldUnitsPerPixel(look, p)});
+    main.camera.layers.mask = LAYER.MASK_MAINRENDER;
+    look.camera.layers.mask = LAYER.MASK_LOOKRENDER;
+    widget.updateHandleScales(look);
+    const [clientX, clientY] = viewToClient(look, ...projectWorldToView(look, widget.object.position));
+    state.pointer = {button: 0, clientX, clientY, preventDefault() {}};
+    return state;
+}
+
+test('Push moves only along the frozen Look camera ray and shows its guide only in Main view', () => {
+    const {look, main, widget, pointer, position} = pushWidgetViews();
+    try {
+        expect(widget.handles.push.visible).toBe(true);
+        expect(widget.handles.disc.visible).toBe(false);
+        expect(widget.handles.arrowUp.visible).toBe(false);
+        expect(widget.handles.arrowDown.visible).toBe(false);
+        const projectionBefore = projectWorldToView(look, position);
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('push');
+        expect(widget.activeView).toBe(look);
+        const origin = widget.pushOrigin.clone(), direction = widget.pushDirection.clone();
+        const range = widget.pushStartRange;
+        const visualAxis = position.clone().set(0, 1, 0).applyQuaternion(widget.handles.push.quaternion);
+        expect(Math.abs(visualAxis.dot(direction))).toBeLessThan(.99);
+
+        // Horizontal mouse movement has no effect on the range or bearing.
+        widget.onPointerMove({...pointer, clientX: pointer.clientX + 100});
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+        widget.onPointerMove({...pointer, clientX: pointer.clientX + 100, clientY: pointer.clientY - 200});
+        expect(widget.object.position.distanceTo(origin)).toBeCloseTo(range * 2, 7);
+        const projectionAfter = projectWorldToView(look, widget.object.position);
+        expect(projectionAfter[0]).toBeCloseTo(projectionBefore[0], 6);
+        expect(projectionAfter[1]).toBeCloseTo(projectionBefore[1], 6);
+
+        widget.updateHandleScales(main);
+        expect(widget.pushLine.visible).toBe(true);
+        expect(widget.pushLine.layers.test(main.camera.layers)).toBe(true);
+        expect(widget.pushLine.layers.test(look.camera.layers)).toBe(false);
+        expect(widget.handles.push.visible).toBe(true);
+        const lineStart = position.clone().fromBufferAttribute(widget.pushLine.sourceGeometry.getAttribute('position'), 0)
+            .add(widget.group.position);
+        expect(lineStart.distanceTo(origin)).toBeLessThan(1e-4);
+        widget.updateHandleScales(look);
+        expect(widget.pushLine.visible).toBe(false);
+
+        look.camera.position.add(new Vector3(50, 10, 80));
+        look.camera.lookAt(position);
+        setObjectMoveMode('surface');
+        widget.onPointerMove({...pointer, clientY: pointer.clientY + 200});
+        expect(widget.object.position.distanceTo(origin.clone().addScaledVector(direction, range / 2))).toBeLessThan(1e-7);
+        expect(widget.pushOrigin.equals(origin)).toBe(true);
+        expect(widget.pushDirection.equals(direction)).toBe(true);
+        expect(widget.handles.push.visible).toBe(true);
+        widget.onPointerMove({...pointer, clientY: pointer.clientY + 5000});
+        expect(widget.object.position.distanceTo(origin)).toBeCloseTo(widget.pushMinRange, 7);
+        widget.rollbackDrag(pointer);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+        expect(widget.pushLine.visible).toBe(false);
+        expect(widget.isDragging).toBe(false);
+    } finally { widget.dispose(); }
+});
+
+test('Push respects altitude locks and releases its guide and arrow resources after a drag', () => {
+    const {look, main, widget, pointer} = pushWidgetViews();
+    widget.setAltitudeLocked(true, 100);
+    widget.updateHandleScales(look);
+    expect(widget.handles.push.visible).toBe(false);
+    expect(widget.handles.disc.visible).toBe(true);
+    widget.setAltitudeLocked(false);
+    widget.updateHandleScales(look);
+    widget.onPointerDown(pointer);
+    widget.updateHandleScales(main);
+    expect(widget.pushLine.visible).toBe(true);
+    widget.onPointerUp(pointer);
+    expect(widget.pushLine.visible).toBe(false);
+    const geometries = new Set(), materials = new Set();
+    widget.handles.push.traverse(child => {
+        if (child.isMesh) { geometries.add(child.geometry); materials.add(child.material); }
+    });
+    geometries.add(widget.pushLine.geometry);
+    geometries.add(widget.pushLine.sourceGeometry);
+    materials.add(widget.pushLine.material);
+    const disposals = [...geometries, ...materials].map(resource => jest.spyOn(resource, 'dispose'));
+    widget.dispose();
+    for (const disposal of disposals) expect(disposal).toHaveBeenCalledTimes(1);
+});
+
+test('the edge-on Camera plane can be dragged in Look while retaining the exact plane', () => {
+    const {look, widget, pointer, position} = pushWidgetViews();
+    setObjectMoveMode('lookCameraPlane');
+    widget.updateHandleScales(look);
+    try {
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('lookCameraPlane');
+        expect(widget.planeScreenDrag).toBe(true);
+        const plane = widget.dragPlane.clone();
+        const origin = look.camera.position.clone();
+        const displayedGrid = widget.handles.planeGrid.quaternion.clone();
+        const right = new Vector3(1, 0, 0).applyQuaternion(look.camera.quaternion);
+        const pixelScale = look.pixelsToMeters(position, 1);
+        // Freeze both movement axes even if the camera or toolbar changes.
+        look.camera.position.add(new Vector3(30, 40, -10));
+        look.camera.rotateZ(.4);
+        setObjectMoveMode('push');
+        widget.onPointerMove({...pointer, clientX: pointer.clientX + 20, clientY: pointer.clientY - 200});
+        const expected = position.clone().sub(origin).multiplyScalar(2).add(origin).addScaledVector(right, 40 * pixelScale);
+        expect(widget.object.position.distanceTo(expected)).toBeLessThan(1e-8);
+        expect(Math.abs(plane.distanceToPoint(widget.object.position))).toBeLessThan(1e-8);
+        expect(widget.dragPlane.equals(plane)).toBe(true);
+        expect(widget.handles.planeGrid.quaternion.angleTo(displayedGrid)).toBeLessThan(1e-7);
+        widget.rollbackDrag(pointer);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+    } finally { widget.dispose(); }
+});
+
+test.each(['mainView', 'lookView'])('Screen plane freezes depth in its initiating %s', id => {
+    const {main, look, widget, position} = pushWidgetViews();
+    const view = id === 'mainView' ? main : look;
+    setObjectMoveMode('screenPlane');
+    widget.updateHandleScales(view);
+    const [clientX, clientY] = viewToClient(view, ...projectWorldToView(view, position));
+    const pointer = {button: 0, clientX, clientY, preventDefault() {}};
+    try {
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('screenPlane');
+        expect(widget.handles.planeGrid.material.color.getHex()).toBe(0xbb88ff);
+        const plane = widget.dragPlane.clone();
+        const forward = view.camera.getWorldDirection(new Vector3());
+        expect(Math.abs(plane.normal.dot(forward))).toBeCloseTo(1);
+        widget.onPointerMove({...pointer, clientX: clientX + 25, clientY: clientY - 15});
+        const moved = viewToClient(view, ...projectWorldToView(view, widget.object.position));
+        expect(moved[0]).toBeCloseTo(clientX + 25, 6);
+        expect(moved[1]).toBeCloseTo(clientY - 15, 6);
+        expect(Math.abs(plane.distanceToPoint(widget.object.position))).toBeLessThan(1e-8);
+        view.camera.rotateY(.2);
+        widget.onPointerMove({...pointer, clientX: clientX + 30});
+        expect(Math.abs(plane.distanceToPoint(widget.object.position))).toBeLessThan(1e-8);
+        expect(widget.dragPlane.equals(plane)).toBe(true);
+        widget.rollbackDrag(pointer);
+    } finally { widget.dispose(); }
+});
+
+test('In/out in Main uses the Look camera ray, with the same vertical drag mapping', () => {
+    const {main, look, widget, position, pointerAt} = pushWidgetViews();
+    widget.updateHandleScales(main);
+    const pointer = pointerAt(position);
+    try {
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('push');
+        expect(widget.pushOrigin.equals(look.camera.position)).toBe(true);
+        widget.onPointerMove({...pointer, clientY: pointer.clientY - 200});
+        const expected = position.clone().sub(look.camera.position).multiplyScalar(2).add(look.camera.position);
+        expect(widget.object.position.distanceTo(expected)).toBeLessThan(1e-8);
+        expect(widget.pushLine.visible).toBe(true);
+        widget.rollbackDrag(pointer);
+    } finally { widget.dispose(); }
+});
+
+test('Surface follows Earth curvature instead of gaining altitude along a tangent plane', () => {
+    const {widget, position, pointerAt} = planeWidgetViews();
+    setObjectMoveMode('surface');
+    try {
+        const pointer = pointerAt(position);
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('horizontal');
+        const tangentDestination = position.clone().add(new Vector3(-50000, 0, 0));
+        expect(ECEFToLLAVD_radii(tangentDestination).z).toBeGreaterThan(widget.dragStartAltitude + 100);
+        adjustHeightHAE.mockImplementationOnce(jest.requireActual('../src/SphericalMath').setAltitudeHAE);
+        widget.onPointerMove(pointerAt(tangentDestination));
+        expect(ECEFToLLAVD_radii(widget.object.position).z).toBeCloseTo(widget.dragStartAltitude, 6);
+        expect(widget.object.position.distanceTo(position)).toBeGreaterThan(40000);
+        widget.rollbackDrag(pointer);
+    } finally { widget.dispose(); }
+});
+
+test.each(['surface', 'lookCameraPlane', 'push', 'screenPlane'])('clicking the object outside the %s widget starts a move without jumping', mode => {
+    const {look, widget, position, pointer} = pushWidgetViews();
+    setObjectMoveMode(mode);
+    const body = new Mesh(new SphereGeometry(look.pixelsToMeters(position, 110), 24, 16), new MeshBasicMaterial());
+    body.position.copy(position);
+    body.layers.mask = LAYER.MASK_LOOK;
+    body.updateMatrixWorld(true);
+    widget.pickObjectSurface = raycaster => raycaster.intersectObject(body)[0];
+    const event = {...pointer, clientX: pointer.clientX + 80};
+    try {
+        widget.setupRaycasterForEvent(event);
+        // The selected grip must come from the body, not padded widget geometry.
+        const pickBody = widget.pickObjectSurface;
+        widget.pickObjectSurface = undefined;
+        expect(widget.pickHandle()).toBeNull();
+        widget.pickObjectSurface = pickBody;
+        widget.onPointerDown(event);
+        expect(widget.activeDragMode).toBe(mode === 'surface' ? 'horizontal' : mode);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+        widget.onPointerMove(event);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+        widget.onPointerMove({...event, clientY: event.clientY - 15});
+        expect(widget.object.position.distanceTo(position)).toBeGreaterThan(1);
+        widget.rollbackDrag(event);
+        expect(widget.object.position.distanceTo(position)).toBeLessThan(1e-8);
+    } finally { widget.dispose(); body.geometry.dispose(); body.material.dispose(); }
+});
+
 test.each([
     [10, 0, "horizontal", "disc over shaft"],
     [10, 9, "vertical", "exposed shaft"],
     [10, 27, "vertical", "upper arrowhead"],
     [10, -27, "vertical", "lower arrowhead"],
     [60, 0, "horizontal", "disc center under arrowhead padding"],
-    [60, 27, "vertical", "upper arrowhead overlapping disc"],
-    [60, -27, "vertical", "lower arrowhead behind disc"],
+    [60, 27, "horizontal", "disc overlapping upper arrowhead"],
+    [60, -27, "horizontal", "disc overlapping lower arrowhead"],
 ])("point widget at %s degrees picks %s as %s (%s)", (angle, height, mode) => {
     const camera = new OrthographicCamera(-100, 100, 100, -100, .1, 2000);
     camera.position.set(0, 1000 * Math.sin(angle * Math.PI / 180), 1000 * Math.cos(angle * Math.PI / 180));

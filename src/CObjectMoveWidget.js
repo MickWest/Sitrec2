@@ -18,10 +18,9 @@ import {objectFocusTrack, sameFocusTrack, syncCameraFocusUI} from "./CameraFocus
 //   - anything else (ADS-B, KML, MISB, satellites): read-only data, so no widget at all
 //
 // The widget itself is the same PointEditorWidget the spline editor puts on its control
-// points: a green horizontal disc and red up/down arrows. It stays hidden until the
-// cursor comes near the object, then crossfades in while the object fades to 25% so the
-// widget inside it is visible and grabbable. Both the faded object and its handles
-// remain right-click targets for opening the object's edit menu.
+// points. It fades in when the cursor comes near the object and draws over it,
+// without changing the object's materials. The object and its handles remain
+// right-click targets for opening the object's edit menu.
 //
 // Two ways in:
 //
@@ -44,13 +43,14 @@ import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, projectWorldToView, viewToClient} from "./ViewUtils";
 import {isPointOccludedByGlobe} from "./GlobeOcclusion";
 import {findRootTrack} from "./FindRootTrack";
-import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {getLocalUpVector} from "./SphericalMath";
 import {getPointBelow} from "./threeExt";
 import {undoManager as UndoManager} from "./UndoManager";
 import {isAltitudeLockActive} from "./AltitudeLock";
 import {updateObjectLocatorRings} from "./ObjectLocatorOverlay";
+import {setObjectMoveMode} from './ObjectMoveModes';
 
 // How close the cursor has to get, in screen pixels, before the widget appears. The
 // widget's own disc is 40px and its arrows 30px, so this is a little wider than the
@@ -59,9 +59,8 @@ import {updateObjectLocatorRings} from "./ObjectLocatorOverlay";
 const HOVER_RADIUS_PX = 70;
 const HOVER_RADIUS_MAX_PX = 300;
 
-// Crossfade time each way, and how far down the object's opacity goes.
+// Widget fade time each way.
 const FADE_MS = 150;
-const FADED_OPACITY = 0.25;
 
 // The widget's handle materials are authored at this opacity; the fade scales it.
 const WIDGET_OPACITY = 0.6;
@@ -106,14 +105,12 @@ class CObjectMoveWidget {
         this.node = null;           // the CNode3DObject being edited, if movable
         this.target = null;         // resolveMoveTarget() for that object
 
-        this.fade = 0;              // 0 = solid object, no widget; 1 = faded, widget up
+        this.fade = 0;              // 0 = no widget; 1 = widget fully visible
         this.hover = false;
         this.dragging = false;
         this.dragPrepared = false;
         this.dragAnchor = new Vector3();
         this.lockDragStart = null;  // altitude lock at the start of an up/down drag that moves it
-
-        this.savedMaterials = null; // Map material -> {opacity, transparent, depthWrite}
 
         this.altHeld = false;       // Option/Alt alone: pick up whatever is under the cursor
         this.otherKeysHeld = new Set();
@@ -170,7 +167,8 @@ class CObjectMoveWidget {
 
     updateAltHeld(event) {
         this.setAltHeld(!!event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey
-            && this.otherKeysHeld.size === 0);
+            // Cycling movement modes is part of the Alt move gesture.
+            && (this.otherKeysHeld.size === 0 || (this.otherKeysHeld.size === 1 && this.otherKeysHeld.has('KeyM'))));
     }
 
     setAltHeld(held) {
@@ -187,6 +185,7 @@ class CObjectMoveWidget {
     // to one sitch. Run before nodes/scene disposal: disposeScene recursively empties
     // helper groups, so re-adding the old group would bring back no handles.
     resetForSitch() {
+        setObjectMoveMode('surface');
         this.dragPrepared = false; // leaving a sitch must not record an unfinished drag
         this.setNode(null);
         this.widget?.detach();
@@ -203,7 +202,6 @@ class CObjectMoveWidget {
         this.suppressCamera(false);
         this.updateEditFocus();
         this.target = null;
-        this.savedMaterials = null;
         this.altHeld = this.altMode = this.hover = this.dragging = false;
         this.fade = this.lastFadeTime = 0;
         this.lastMainLoopCount = -1;
@@ -382,6 +380,26 @@ class CObjectMoveWidget {
         return shown;
     }
 
+    pickObjectSurface(raycaster, view) {
+        if (!view || !this.isObjectShownInView(this.node, view)) return null;
+        const node = this.node, group = node.group;
+        const scale = group.scale.clone(), viewScale = node._viewScale, mask = raycaster.layers.mask;
+        try {
+            // Pick the size actually drawn in this view, including Main View Scale.
+            node.applyViewScale?.(view);
+            group.updateWorldMatrix(true, true);
+            raycaster.layers.mask = view.camera.layers.mask;
+            const meshes = [];
+            group.traverseVisible(child => { if (child.isMesh || child.isSprite) meshes.push(child); });
+            return raycaster.intersectObjects(meshes, false)[0] ?? null;
+        } finally {
+            raycaster.layers.mask = mask;
+            group.scale.copy(scale);
+            node._viewScale = viewScale;
+            group.updateWorldMatrix(true, true);
+        }
+    }
+
     /** The displayed editing view under the cursor. */
     viewUnderCursor() {
         return getInteractiveViewAt(this.pointerX, this.pointerY);
@@ -429,6 +447,10 @@ class CObjectMoveWidget {
         const position = this.node.group.position;
         this.hover = this.cursorDistancePx(view, position)
             < this.hoverRadiusPx(view, position, this.node);
+        // Large models can extend beyond the normal proximity radius.
+        if (!this.hover && this.widget?.setupRaycasterForEvent({clientX: this.pointerX, clientY: this.pointerY})) {
+            this.hover = !!this.pickObjectSurface(this.widget.raycaster, view);
+        }
     }
 
     /**
@@ -475,63 +497,7 @@ class CObjectMoveWidget {
     }
 
     applyFade() {
-        const amount = this.fade;
-
-        if (amount > 0 && !this.savedMaterials) {
-            this.savedMaterials = this.captureMaterials();
-        }
-
-        if (this.savedMaterials) {
-            const scale = 1 - (1 - FADED_OPACITY) * amount;
-            const wantTransparent = amount > 0;
-            for (const [material, original] of this.savedMaterials) {
-                material.opacity = original.opacity * scale;
-                // A ShaderMaterial ignores material.opacity — it has no built-in
-                // opacity uniform — so the object's own shader has to be told. The
-                // gradient material declares one; anything without it is left alone.
-                // Scaled from the uniform's OWN captured value, not from
-                // material.opacity, so the restore at scale 1 is exact even where the
-                // two disagree (a gradient material can carry an unused .opacity).
-                if (original.uniformOpacity !== undefined) {
-                    material.uniforms.opacity.value = original.uniformOpacity * scale;
-                }
-                const transparent = wantTransparent || original.transparent;
-                if (material.transparent !== transparent) {
-                    material.transparent = transparent;
-                    // .transparent is part of the shader program key, so three.js only
-                    // picks it up on a recompile. Guarded, so this is not paid per frame.
-                    material.needsUpdate = true;
-                }
-                // A faded object that still wrote depth would hide the widget sitting
-                // inside it, which is the whole point of fading it.
-                material.depthWrite = wantTransparent ? false : original.depthWrite;
-            }
-            if (amount === 0) {
-                // Released rather than kept, so a model reloaded or a geometry rebuilt
-                // while not hovering is re-captured fresh next time.
-                this.savedMaterials = null;
-            }
-        }
-
-        this.setWidgetOpacity(amount);
-    }
-
-    captureMaterials() {
-        const saved = new Map();
-        this.node.group.traverse((child) => {
-            const materials = child.material;
-            if (!materials) return;
-            for (const material of Array.isArray(materials) ? materials : [materials]) {
-                if (saved.has(material)) continue;
-                saved.set(material, {
-                    opacity: material.opacity,
-                    uniformOpacity: material.uniforms?.opacity?.value,
-                    transparent: material.transparent,
-                    depthWrite: material.depthWrite,
-                });
-            }
-        });
-        return saved;
+        this.setWidgetOpacity(this.dragging ? 1 : this.fade);
     }
 
     setWidgetOpacity(amount) {
@@ -551,8 +517,10 @@ class CObjectMoveWidget {
         if (!this.widget) {
             const view = ViewMan.get("mainView", false);
             this.widget = new PointEditorWidget(view?.camera, view?.renderer?.domElement);
+            this.widget.drawOnTop = true;
+            this.widget.pickObjectSurface = (raycaster, view) => this.pickObjectSurface(raycaster, view);
 
-            // Above the faded object, which no longer writes depth but still draws.
+            // Draw the handles after the object, including transparent materials.
             const helper = this.widget.getHelper();
             helper.renderOrder = 999;
 
@@ -672,6 +640,7 @@ class CObjectMoveWidget {
         if (!this.node) return;
         this.proxy.position.copy(this.node.group.position);
         if (this.widget && this.widget.object) {
+            this.widget.freeMovementAllowed = this.target?.kind !== 'spline' || !isAltitudeLockActive(this.target.node);
             this.widget.group.position.copy(this.proxy.position);
             this.widget.updateOrientation();
         }
@@ -690,6 +659,10 @@ class CObjectMoveWidget {
         } else {
             this.endDrag();
         }
+
+        // Keep the widget fully visible from press until release.
+        this.applyFade();
+        setRenderOne(true);
 
         // Applied here as well as in updateFrame so it lands at pointerdown, BEFORE the
         // next pointermove — a frame's delay is enough for the view that captured the
@@ -793,7 +766,19 @@ class CObjectMoveWidget {
         const lla = ECEFToLLAVD_radii(newBase);
 
         let altitude;
-        if (position.agl) {
+        if (this.widget?.activeDragMode === 'horizontal') {
+            altitude = this.dragStartLLA[2];
+        } else if (position.agl && ['lookCameraPlane', 'push', 'screenPlane'].includes(this.widget?.activeDragMode)) {
+            // A constrained drag owns all three coordinates. Convert its destination
+            // back to AGL using the same ground as the position node, so terrain
+            // slopes do not bend the movement away from the frozen plane.
+            const node = this.target.node;
+            const terrain = NodeMan.get('TerrainModel', false);
+            const ground = terrain && node._aglGroundPoint
+                ? node._aglGroundPoint(terrain, LLAToECEF(lla.x, lla.y, 100000), 0, 0)
+                : getPointBelow(newBase, true);
+            altitude = lla.z - ECEFToLLAVD_radii(ground).z;
+        } else if (position.agl) {
             // In AGL mode _LLA[2] is a height above the ground, not a datum altitude, so
             // only the part of the drag along local up may change it — sliding sideways
             // over a slope keeps the same clearance.
