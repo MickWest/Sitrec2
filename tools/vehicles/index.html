@@ -51,6 +51,8 @@
         "./multirotor.js": "./multirotor.js?v=__BUILD_V__",
         "./balloon.js": "./balloon.js?v=__BUILD_V__",
         "./kite.js": "./kite.js?v=__BUILD_V__",
+        "./kiteLights.js": "./kiteLights.js?v=__BUILD_V__",
+        "./kiteLEDPattern.js": "./kiteLEDPattern.js?v=__BUILD_V__",
         "./kiteFlight.js": "./kiteFlight.js?v=__BUILD_V__",
         "./kiteParameters.js": "./kiteParameters.js?v=__BUILD_V__",
         "./kitePresets.js": "./kitePresets.js?v=__BUILD_V__",
@@ -115,6 +117,7 @@
                 <button data-view="perspective" class="active" aria-pressed="true">3D</button>
                 <button data-view="side" aria-pressed="false">Side</button>
                 <button data-view="top" aria-pressed="false">Top</button>
+                <button data-view="underside" aria-pressed="false">Underside</button>
                 <button data-view="front" aria-pressed="false">Front</button>
                 <button data-view="rear" aria-pressed="false">Rear</button>
                 <span class="divider"></span><button id="fitView" title="Fit the object in the view (F)">Fit <kbd>F</kbd></button>
@@ -124,7 +127,7 @@
                 <label><input id="wireframe" type="checkbox"> Wireframe</label>
                 <label><input id="autoRotate" type="checkbox"> Orbit</label>
                 <label><input id="nightPreview" type="checkbox"> Night</label>
-                <label><input id="animateLights" type="checkbox" checked> Flash lights</label>
+                <label><input id="animateLights" type="checkbox" checked> Animate lights</label>
                 <label><input id="animateProps" type="checkbox"> <span id="spinLabel">Spin rotors / props</span></label>
                 <button id="screenshot" title="Save a PNG of the current 3D view">Snapshot</button>
                 <button id="fullscreen" title="Toggle browser fullscreen">⛶ <span class="sr-only">Fullscreen</span></button>

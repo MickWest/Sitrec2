@@ -1,5 +1,6 @@
 import {Box3, BufferGeometry, PerspectiveCamera, Vector3} from "three";
 import {GLTFExporter} from "three/addons/exporters/GLTFExporter.js";
+import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
 import {createVehicleRecipe} from "../tools/vehicles/recipe.js";
 import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {generateVehicle} from "../tools/vehicles/generator.js";
@@ -10,6 +11,8 @@ import {fitVehicleCamera} from "../tools/vehicles/studio.js";
 import {createVehicleFilter, VEHICLE_TYPES} from "../tools/vehicles/catalog.js";
 import {readVehicleRecipeFile} from "../tools/vehicles/files.js";
 import {vehicleFileStem} from "../tools/vehicles/recipeFormat.js";
+import {sampleKiteLED} from "../tools/vehicles/kiteLEDPattern.js";
+import {disposeVehicle} from "../tools/vehicles/vehicle.js";
 
 // GLTFExporter uses the browser FileReader API to package its binary output.
 const previousFileReader = global.FileReader;
@@ -44,6 +47,28 @@ test("an export failure disposes the clean export model",async () => {
         await expect(exportVehicleGLB(createVehicleRecipe(PRESETS[0].parameters))).rejects.toThrow("Export unavailable");
         expect(dispose).toHaveBeenCalled();
     } finally {exporter.mockRestore(); dispose.mockRestore();}
+});
+
+test("LED kite GLB preserves fixed bulbs and their editable pattern metadata", async () => {
+    const preset = PRESETS.find(item => item.id === "kite-delta-led");
+    const recipe = createVehicleRecipe({...preset.parameters, ledPhase: 27, ledSpeed: -0.7}, "LED export");
+    const bytes = await nativeBake(recipe), json = glbJSON(bytes);
+    const bulbs = json.nodes.filter(node => node.extras?.kiteLED);
+    expect(bulbs).toHaveLength(128);
+    expect(json.extensions.KHR_lights_punctual.lights).toHaveLength(128);
+    expect(bulbs.every(node => node.extras.kiteLED.settings.ledSpeed === -0.7)).toBe(true);
+    expect(bulbs.every(node => node.extras.kiteLED.settings.ledPhase === 27)).toBe(true);
+    expect(new Set(bulbs.map(node => (node.translation ?? node.matrix.slice(12, 15)).join(","))).size).toBe(128);
+    expect(json.nodes.some(node => node.name === "LED_preview_glow")).toBe(false);
+    const loaded = await new GLTFLoader().parseAsync(bytes, ""), imported = [];
+    loaded.scene.traverse(part => {if (part.isLight) imported.push(part);});
+    expect(imported).toHaveLength(128);
+    for (const light of imported) {
+        const {site, settings} = light.userData.kiteLED;
+        expect(settings.ledPhase).toBe(27);
+        expect(sampleKiteLED(site, settings, 0.8)).toEqual(sampleKiteLED(site, recipe.parameters, 0.8));
+    }
+    disposeVehicle(loaded.scene);
 });
 
 test.each(["perspective","side","top","front"])("shared camera fitting contains a long aircraft in %s view",view => {

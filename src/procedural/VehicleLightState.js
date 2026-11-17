@@ -9,6 +9,8 @@ export function vehicleLightState(node) {
 export function captureVehicleLightOverrides(lights, baseline = {}, previous = {}) {
     const result = JSON.parse(JSON.stringify(previous));
     for (const light of lights ?? []) {
+        // LED color and intensity are outputs of the saved pattern, not user overrides.
+        if (light.light.userData?.kiteLED) continue;
         const name = light.light.name, state = vehicleLightState(light), base = baseline[name];
         if (!base) continue;
         for (const [key, value] of Object.entries(state)) {
@@ -20,6 +22,7 @@ export function captureVehicleLightOverrides(lights, baseline = {}, previous = {
 }
 export function applyVehicleLightOverrides(lights, overrides) {
     for (const node of lights ?? []) {
+        if (node.light.userData?.kiteLED) continue;
         const state = overrides?.[node.light.name];
         if (!state) continue;
         const controls = {intensity:"intensityControl", visible:"lightVisibleControl", illuminates:"lightIlluminatesControl",

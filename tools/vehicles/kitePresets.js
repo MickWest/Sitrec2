@@ -18,6 +18,13 @@ kite("delta", "Delta kite · 2 m", "Framed", "delta", 2, 1, 0.25,
     {bow: 8, flyingAngle: 22, bodyColor: "#e9682c", accentColor: "#28324a", tailColor: "#e9682c", tailCount: 2, tailLength: 4, tailWidth: 0.06});
 kite("delta-rainbow", "Delta kite · rainbow, 3 m", "Framed", "delta", 3, 1.5, 0.5,
     {bow: 8, flyingAngle: 22, kitePattern: "rainbow", tailCount: 3, tailLength: 8, tailWidth: 0.08});
+const ledDelta = {bow: 5, flyingAngle: 22, deltaNotch: 0, tailCount: 0, ledEnabled: true,
+    bodyColor: "#234ba0", accentColor: "#e7e5db", ledCoverage: 80};
+kite("delta-led", "LED delta kite · rotating spokes, 6 m", "LED", "delta", 6, 3, 2, ledDelta);
+kite("delta-led-fireworks", "LED delta kite · fireworks, 6 m", "LED", "delta", 6, 3, 2,
+    {...ledDelta, ledPattern: "burst", ledSpeed: 0.65});
+kite("delta-led-sequence", "LED delta kite · light show, 6 m", "LED", "delta", 6, 3, 2,
+    {...ledDelta, ledPattern: "sequence"});
 kite("rokkaku", "Rokkaku · hexagon", "Framed", "rokkaku", 1.2, 1.5, 0.35,
     {...noTail, bow: 14, flyingAngle: 28, bodyColor: "#f4f1e6", accentColor: "#c92f38"});
 kite("sled", "Sled kite", "Framed", "sled", 0.9, 1, 0.12,

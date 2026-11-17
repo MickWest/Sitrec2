@@ -1774,7 +1774,9 @@ ${trackPlacemark}    </Document>
                 }
 
                 // Create a folder for this specific light
-                const lightFolder = this.lightsFolder.addFolder(child.name).close();
+                // A kite's fixed LED array has shared pattern controls, rather
+                // than hundreds of individual intensity/color GUI nodes.
+                const lightFolder = child.userData.kiteLED ? undefined : this.lightsFolder.addFolder(child.name).close();
 
                 const light = new CNode3DLight({
                     id: this.id + "_" + child.name,

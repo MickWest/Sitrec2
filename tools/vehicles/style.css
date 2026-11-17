@@ -80,7 +80,8 @@ footer {height: 30px; flex: 0 0 auto; display: flex; gap: 24px; align-items: cen
 footer a {margin-left: auto; text-decoration: none; color: #9bafc3;}
 #status {color: #8bc7c5;}
 .sr-only {position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;}
-@media (max-width: 1200px) {.preview-options {top: auto; bottom: 154px; right: 24px; margin: 0;}.sidebar {width: 300px; flex-basis: 300px;}}
+@media (max-width: 1550px) {.preview-options {top: auto; bottom: 154px; right: 24px; margin: 0;}}
+@media (max-width: 1200px) {.sidebar {width: 300px; flex-basis: 300px;}}
 @media (max-width: 760px) {.topbar {height: 64px; padding: 0 12px; gap: 9px;} .brand,.title>span {display: none;} h1 {font-size: 15px;} .header-actions {gap: 4px;} .header-actions button {font-size: 11px; padding: 8px;} .workspace {flex-direction: column-reverse;} .sidebar {width: 100%; flex: 1 1 43%; min-height: 0;} .preview {flex: 1 1 57%; min-height: 240px;} .preview-heading {top: 14px; left: 16px; right: 16px;} h2 {font-size: 16px; margin: 5px 0; max-width: 260px;} .eyebrow {font-size: 8px;} .viewbar {top: 69px; left: 16px;} .preview-options {bottom: 60px; right: 10px; gap: 9px;} .preview-bottom {bottom: 10px; left: 16px; right: 16px;} .metrics {padding: 9px 12px; gap: 21px;} .metrics span {font-size: 7px;} .metrics strong {font-size: 13px;} .metrics>div {gap: 4px;} .orbit-hint {display: none;} footer {padding: 0 10px; font-size: 9px; gap: 12px;} footer a {display: none;}}
 .preset-reference {font-size: 11px; line-height: 1.55; color: #aebdca; padding: 10px 0 14px;}
 .preset-reference p {margin: 5px 0;}

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import {addKiteLights, animateKiteLamp} from "./kiteLights.js";
 
 export const LIGHT_GROUP = {name: "Lights", note: "Lights follow the generated body. Locations are family approximations; brightness and flash timing are editable visual defaults.", fields: [
     {key:"lightsEnabled",label:"Procedural lights",type:"checkbox",value:true},
@@ -23,7 +24,8 @@ export function addVehicleLights(model, p) {
     const road = p.vehicleType === "car" || p.vehicleType === "truck", root = model.root, lamps = [];
     const drone=p.vehicleType==="drone"&&p.droneStyle!=="fixedwing",balloon=p.vehicleType==="balloon";
     model.lamps = lamps;
-    if (p.vehicleType === "kite" || p.vehicleType === "bird") return;
+    if (p.vehicleType === "kite") {addKiteLights(model, p); return;}
+    if (p.vehicleType === "bird") return;
     // Existing lenses are physical parts of the model even when switched off.
     root.traverse(object => {
         if (/^(Navigation lens|Headlamp |Tail lamp |Front indicator |Emergency lamp)/.test(object.name) && object.isMesh)
@@ -103,6 +105,7 @@ export function addVehicleLights(model, p) {
 export function animateVehicleLights(model,time,animate=true) {
     for(const lamp of model.lamps??[]) {
         const data=lamp.light.userData;
+        if (data.kiteLED) {animateKiteLamp(lamp, time, animate); continue;}
         const on=!animate||!data.strobeEvery||((time+lamp.phase*data.strobeEvery)%data.strobeEvery)<data.strobeLength;
         // Keep the light count stable during flashing to avoid shader recompiles.
         lamp.light.intensity=on?lamp.intensity*0.025:0;

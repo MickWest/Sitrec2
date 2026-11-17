@@ -73,7 +73,7 @@ export function buildKite(p) {
     const along = (a, b) => (index, count) => mix(a, b, count > 1 ? index / (count - 1) : 0.5);
 
     if (shape === "delta") {
-        const nose = [0, 0, H / 2], left = [W / 2, tipRise, -H / 2], right = [-W / 2, tipRise, -H / 2], rear = [0, 0, -H * 0.28];
+        const nose = [0, 0, H / 2], left = [W / 2, tipRise, -H / 2], right = [-W / 2, tipRise, -H / 2], rear = [0, 0, H * (-0.5 + p.deltaNotch / 100)];
         const midLeft = mix(rear, left, 0.5), midRight = mix(rear, right, 0.5), keel = [0, -H * 0.28, H * 0.05];
         panels("Kite sail panels", [[1, nose, rear, midLeft], [0, nose, midLeft, left], [1, nose, midRight, rear], [0, nose, right, midRight],
             [1, [0, 0, H * 0.25], [0, 0, -H * 0.2], keel]]);

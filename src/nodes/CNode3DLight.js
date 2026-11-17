@@ -1,6 +1,6 @@
 import {CNode3D} from "./CNode3D";
 import {assert} from "../assert";
-import {AdditiveBlending, Mesh, PlaneGeometry, ShaderMaterial, Vector3} from 'three';
+import {AdditiveBlending, Color, Mesh, PlaneGeometry, ShaderMaterial, Vector3} from 'three';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {NodeMan} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
@@ -8,6 +8,7 @@ import {CNodeGUIColor} from "./CNodeGUIColor";
 import {par} from "../par";
 import {Sit} from "../Globals";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
+import {sampleKiteLED} from "../../tools/vehicles/kiteLEDPattern.js";
 
 export class CNode3DLight extends CNode3D {
     constructor(v) {
@@ -27,7 +28,8 @@ export class CNode3DLight extends CNode3D {
 
         //const size = v.size || 4; // default size if not specified
 
-        const size = this.light.intensity / 100;
+        // Animated LEDs scale a unit billboard. They never replace geometry per frame.
+        const size = this.light.userData.kiteLED ? 1 : this.light.intensity / 100;
 
 // Create plane geometry
         const geometry = new PlaneGeometry(size, size); // adjust size as needed
@@ -312,6 +314,24 @@ export class CNode3DLight extends CNode3D {
         super.update(f);
         const time = this.deterministicStrobe ? f * (Sit.simSpeed ?? 1) / (Sit.fps || 30) : par.time;
 
+        const led = this.light.userData.kiteLED;
+        if (led) {
+            const state = sampleKiteLED(led.site, led.settings, time,
+                this._ledState ??= {color: new Color(), level: 0});
+            this.light.intensity = led.settings.ledIntensity * (led.settings.overallScale ?? 1) ** 2 * state.level;
+            this.light.color.copy(state.color);
+            const uniforms = this._object.material.uniforms;
+            uniforms.uColor.value[0] = state.color.r; uniforms.uColor.value[1] = state.color.g; uniforms.uColor.value[2] = state.color.b;
+            uniforms.uIntensity.value = this.light.intensity;
+            this.updateVisibility();
+            this._object.visible = this._object.visible && this.light.intensity > 0;
+            if (this.vehicleLens?.material?.userData.vehicleLightLens === this.light.name) {
+                this.vehicleLens.material.emissive.copy(state.color);
+                this.vehicleLens.material.emissiveIntensity = this.lightVisible ? state.level * led.settings.ledIntensity / 35 * 1.8 : 0;
+            }
+            return;
+        }
+
         let strobeOn = false;
 
         // only need to check if both are non-zero
@@ -410,7 +430,7 @@ export class CNode3DLight extends CNode3D {
         // so the billboard's world-space size is just newSize * geometrySize,
         // regardless of the parent's scale transform.
         const parentWorldScale = this._object.parent ? this._object.parent.getWorldScale(new Vector3()).x : 1;
-        this._object.scale.setScalar(newSize / parentWorldScale);
+        this._object.scale.setScalar(newSize / parentWorldScale * (this.light.userData.kiteLED ? this.light.intensity / 100 : 1));
 
         // CRITICAL: Force immediate matrix world update after changing scale
         //

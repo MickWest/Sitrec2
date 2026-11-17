@@ -52,7 +52,7 @@ export const ROAD_GROUPS = [
 export const isRoad = p => p.vehicleType === "car" || p.vehicleType === "truck";
 export const vehicleKind = p => isRoad(p) || p.vehicleType === "drone" || isBalloon(p) || isKite(p) || isBird(p) ? p.vehicleType : p.rotorLayout !== "none" && p.rotorLayout ? "helicopter" : "aircraft";
 export function parameterGroups(p) {
-    // A kite or a bird has no lamps, and no surface that fits the SITREC lettering.
+    // Kites have their own LED controls; neither kites nor birds carry lettering.
     if(isKite(p))return [SCALE_GROUP,...KITE_GROUPS,VEHICLE_THERMAL_GROUP];
     if(isBird(p))return [SCALE_GROUP,...BIRD_GROUPS,VEHICLE_THERMAL_GROUP];
     const groups=isMultirotor(p)?DRONE_GROUPS:isBalloon(p)?BALLOON_GROUPS:isRoad(p)?ROAD_GROUPS:AIRCRAFT_GROUPS;

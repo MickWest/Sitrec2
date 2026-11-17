@@ -7,6 +7,8 @@ import {exportProceduralVehicle, loadProceduralVehicle, openVehicleBrowser} from
 import {refreshVehicleBakeUsage} from "../procedural/VehicleBakeAssets";
 import {collectVehicleSpinners, poseVehicleSpinners} from "../procedural/VehicleAnimation";
 import {applyVehicleLightOverrides, captureVehicleLightOverrides, vehicleLightState} from "../procedural/VehicleLightState";
+import {KITE_LED_PATTERN_FIELDS} from "../../tools/vehicles/kiteParameters.js";
+import {par} from "../par";
 
 export const proceduralObjectMethods = {
     setupVehicleControls(v) {
@@ -173,7 +175,35 @@ export const proceduralObjectMethods = {
             const light = lamps.get(part.userData.vehicleLightLens);
             if (light) light.vehicleLens = part;
         });
+        this.configureKiteLEDControls();
         this.updateVehicleControls();
+    },
+
+    configureKiteLEDControls() {
+        const leds = this.lights.filter(node => node.light.userData.kiteLED);
+        if (!leds.length) return;
+        const saved = this.proceduralModel?.recipe.parameters;
+        const settings = saved?.vehicleType === "kite" ? saved : leds[0].light.userData.kiteLED.settings;
+        for (const node of leds) node.light.userData.kiteLED.settings = settings;
+        if (!this.lightsFolder) return;
+        this.lightsFolder.title("LED lights");
+        this.lightsFolder.tooltip("Colors and intensity animate on fixed bulbs. Edit design… changes the number and position of the bulbs. Speed 0 holds the pattern at its Phase.");
+        for (const field of KITE_LED_PATTERN_FIELDS) {
+            let control;
+            if (field.type === "color") control = this.lightsFolder.addColor(settings, field.key);
+            else if (field.type === "select") control = this.lightsFolder.add(settings, field.key,
+                Object.fromEntries(Object.entries(field.options).map(([key, label]) => [label, key])));
+            else if (field.type === "number") control = this.lightsFolder.add(settings, field.key, field.min, field.max, field.step);
+            else control = this.lightsFolder.add(settings, field.key);
+            control.name(field.label).onChange(() => {
+                // The controls edit the recipe itself, so saving/reloading and
+                // Freeze as GLB retain the show without recording sampled colors.
+                if (this.proceduralModel && this.currentModel) this.currentModel.vehicleKey = JSON.stringify(this.proceduralModel);
+                for (const node of leds) node.update(par.frame);
+                markSitchDirty(); setRenderOne(true);
+            });
+        }
+        for (const node of leds) node.update(par.frame);
     },
 
     // `offset` is in seconds. A flock uses it to show its birds at different moments of the motion.

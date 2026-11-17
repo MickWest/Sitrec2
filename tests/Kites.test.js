@@ -35,16 +35,16 @@ describe("Kite designs", () => {
             if (part.isMesh) for (const attribute of [part.geometry.attributes.position, part.geometry.attributes.normal])
                 expect(Array.from(attribute.array).every(Number.isFinite)).toBe(true);
         });
-        expect(model.lamps).toHaveLength(0);
+        expect(model.lamps).toHaveLength(p.ledEnabled ? p.ledSpokes * (p.ledPerSpoke + p.ledRings) : 0);
         expect(model.propellers).toHaveLength(0);
         expect(model.waves).toHaveLength(p.tailCount * (p.tailStyle === "tube" ? 24 : 14));
         disposeVehicle(model.root);
     });
 
-    test("a kite has no light or livery controls, and the SITREC livery does not break it", () => {
+    test("a kite has its own LED controls and no livery, and the SITREC livery does not break it", () => {
         const p = preset("kite-octopus-14");
         const names = parameterGroups(p).map(group => group.name);
-        expect(names).toEqual(["Scale", "Kite", "Tails & tentacles", "Colors & fabric", "Flight", "Thermal"]);
+        expect(names).toEqual(["Scale", "Kite", "Tails & tentacles", "Colors & fabric", "LED lights", "Flight", "Thermal"]);
         const model = buildVehicle({...p, brandLivery: "sitrec"});
         expect(model.root.getObjectByName("SITREC livery")).toBeUndefined();
         disposeVehicle(model.root);

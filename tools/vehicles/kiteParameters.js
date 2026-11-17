@@ -6,6 +6,26 @@ const color = (key, label, value) => ({key, label, value, type: "color"});
 export const KITE_SHAPES = {diamond: "Diamond", delta: "Delta", rokkaku: "Rokkaku · hexagon", sled: "Sled",
     box: "Box", parafoil: "Parafoil", octopus: "Octopus"};
 
+export const KITE_LED_PATTERNS = {spokes: "Rotating spokes", bar: "Rotating bar", spiral: "Spiral chase",
+    burst: "Expanding fireworks", rings: "Chasing rings", rainbow: "Rainbow wheel", twinkle: "Twinkle",
+    pulse: "Color pulse", steady: "Steady", sequence: "Automatic sequence"};
+// Shared with the object's Lights folder. Layout controls are in the designer only.
+export const KITE_LED_PATTERN_FIELDS = [
+    check("ledEnabled", "LED lights", false),
+    choice("ledPattern", "Pattern", KITE_LED_PATTERNS, "spokes"),
+    number("ledSpeed", "Speed · cycles / s (− = reverse)", -5, 5, 0.01, 0.35),
+    number("ledPhase", "Phase · °", 0, 360, 1, 0),
+    number("ledArms", "Lit spokes / spiral arms", 1, 8, 1, 3),
+    number("ledWidth", "Pattern width · %", 5, 100, 1, 35),
+    number("ledBackground", "Unlit LED level · %", 0, 50, 1, 0),
+    number("ledIntensity", "LED intensity", 0, 500, 0.1, 80),
+    choice("ledPalette", "Colors", {custom: "Three chosen colors", rainbow: "Rainbow", solid: "First color only"}, "custom"),
+    color("ledColor1", "First color", "#ff2020"),
+    color("ledColor2", "Second color", "#20ff40"),
+    color("ledColor3", "Third color", "#3060ff"),
+    number("ledSequenceSeconds", "Seconds per pattern", 1, 30, 0.1, 4),
+];
+
 export const KITE_GROUPS = [
     {name: "Kite", open: true, note: "The nose points into the wind (+Z). The origin is the tow point, where the line attaches.", fields: [
         choice("kiteShape", "Type", KITE_SHAPES, "diamond"),
@@ -13,6 +33,7 @@ export const KITE_GROUPS = [
         number("height", "Length, nose to tail edge · m", 0.01, 30, 0.01, 0.9),
         number("depth", "Thickness (parafoil, octopus) · m", 0.01, 15, 0.01, 0.3),
         number("bow", "Bow / arc · °", 0, 40, 1, 12),
+        number("deltaNotch", "Delta tail notch · % of length", 0, 45, 1, 22),
         number("flyingAngle", "Flying attitude, nose up · °", 0, 60, 1, 30),
         number("cellCount", "Cells (parafoil)", 3, 24, 1, 8),
         check("bridle", "Bridle lines", true),
@@ -38,6 +59,16 @@ export const KITE_GROUPS = [
         number("roughness", "Surface roughness", 0.08, 1, 0.01, 0.7),
         number("opacity", "Fabric opacity", 0.3, 1, 0.01, 1),
     ]},
+    {name: "LED lights", open: true,
+        note: "Fixed bulbs on the underside of the sail. Only their colors and brightness animate. Layout changes rebuild the array; patterns use the same positions. Brightness is a visual setting, not measured photometry.",
+        fields: [...KITE_LED_PATTERN_FIELDS,
+            number("ledSpokes", "Fixed radial strips", 4, 24, 1, 16),
+            number("ledPerSpoke", "LEDs per strip", 2, 10, 1, 6),
+            number("ledRings", "Center rings", 0, 3, 1, 2),
+            number("ledCoverage", "Array diameter · % of sail", 10, 95, 1, 80),
+            number("ledCenter", "Array center toward nose · %", -25, 25, 1, -5),
+            number("ledRotation", "Array rotation · °", 0, 360, 1, 0),
+        ]},
     {name: "Flight", open: true, note: "Add Kite in Sitrec finds the line angle from these values and the wind. Lift and drag are estimates for the kite type, not measurements.", fields: [
         number("kiteMass", "Mass · kg", 0.005, 60, 0.005, 0.07),
         number("kiteArea", "Lifting area · m² (0 = from the shape)", 0, 300, 0.01, 0),

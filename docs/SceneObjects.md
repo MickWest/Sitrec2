@@ -239,6 +239,15 @@ select **Browse custom objects…**, then the **Kites** type. See
 wind, and its tails or tentacles move with the wind at the kite: faster in a stronger wind, and
 slower for a larger kite.
 
+For a lit kite, choose one of the **LED delta kite · 6 m** designs, or use
+**Edit design… → LED lights** to add LEDs to another kite. Fixed radial strips
+and center rings can show rotating spokes, a rotating bar, spirals, expanding
+bursts, chasing rings, rainbow colors, twinkle, pulses, or an automatic sequence.
+The object's **LED lights** folder adjusts the pattern, speed, phase, brightness
+and colors. **Edit design…** also changes the number and positions of the bulbs.
+Only their color and intensity animate; the bulbs remain fixed to the sail.
+Saved sitches and **Freeze as GLB** retain the pattern in Sitrec.
+
 **The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
 **Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
 so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind

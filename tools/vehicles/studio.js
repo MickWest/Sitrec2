@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 
-const directions = {perspective:[-1.6,.7,1],front:[0,0,1],rear:[0,0,-1],side:[-1,0,0],top:[0,1,.0001]};
+const directions = {perspective:[-1.6,.7,1],front:[0,0,1],rear:[0,0,-1],side:[-1,0,0],top:[0,1,.0001],underside:[0,-1,.4]};
 
 export function fitVehicleCamera(camera, controls, bounds, {view="perspective",direction=directions[view],paddingX=1.12,paddingY=1.18} = {}) {
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());

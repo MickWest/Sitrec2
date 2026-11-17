@@ -19,7 +19,7 @@ on a built Sitrec site. It fills the browser window, with collapsible parameter
 folders on the left and a Three.js preview on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
 
-Choose one of 347 presets, then drag sliders or type exact values. The model
+Choose a preset, then drag sliders or type exact values. The model
 updates live, including during a drag. Edits preserve the camera; **Fit** (or **F**) frames the new shape. Drag to orbit,
 scroll to zoom, and right-drag to pan. The presets use approximate proportions
 inspired by common vehicles, not manufacturer engineering geometry. Filter by object
@@ -320,7 +320,32 @@ None of these values is a measurement of a real kite. See
 [Kites](https://github.com/MickWest/Sitrec2/blob/main/docs/SceneObjects.md#kites)
 for the flight model and the line.
 
-Kites have no lights and no SITREC livery.
+Kites have no SITREC livery. **LED lights** adds a radial array of fixed bulbs
+to the underside of any kite. The three **LED delta kite · 6 m** presets start
+with rotating spokes, expanding fireworks, or an automatic light show. They
+use a full triangular sail; **Delta tail notch** adjusts its trailing edge.
+
+The patterns are rotating spokes, a rotating bar, a spiral chase, expanding
+fireworks, chasing rings, a rainbow wheel, twinkle, color pulse, steady lights,
+and an automatic sequence. Only color and intensity change: the bulbs stay
+fixed to the fabric. **Fixed radial strips**, **LEDs per strip**, and **Center
+rings** set the array's bulb count. **Array diameter**, **Array center**, and
+**Array rotation** place it; the diameter is reduced where needed to fit the sail.
+
+Adjust the pattern's speed (negative reverses it), phase, number of lit arms,
+width, unlit level, brightness, and three colors or a rainbow palette. Speed 0
+holds the pattern at the chosen phase. The automatic sequence has a duration
+control for each pattern. **Underside**, **Night**, and **Animate lights** help
+inspect the show in the designer. These are visual examples, with estimated
+dimensions, mass and brightness, rather than calibrated models of particular kits.
+
+In Sitrec, the object's **LED lights** folder changes the pattern without
+rebuilding the array. **Edit design…** changes its layout. The LEDs use the
+same light nodes as aircraft lamps and contribute to long exposures. They use
+sitch time, including simulation speed, so scrubbing repeats the same colors
+and intensities. Saves and **Freeze as GLB** retain the pattern settings and
+fixed positions; other GLB viewers see static punctual lights unless they
+implement Sitrec's pattern metadata. Existing kite designs start with LEDs off.
 
 ## Birds
 
@@ -514,7 +539,7 @@ Artwork is mesh geometry, so GLB exports need no external font or texture files.
 The **Lights** folder controls position lights, landing lights/headlights, beacons,
 aircraft strobes, taxi lights (with **Landing gear extended** on), beam angle, aim,
 intensity, flash timing and road indicators. **Night** changes the preview lighting,
-and **Flash lights** animates beacons/strobes/indicators. Switching the procedural lights off leaves unlit lenses.
+and **Animate lights** animates beacons/strobes/indicators and kite LED patterns. Switching the procedural lights off leaves unlit lenses.
 
 The implementation was compared with the repository's `PA28.glb` and
 `B737Max8.glb` assets and Sitrec's light importer. Exports contain
