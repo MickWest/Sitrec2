@@ -25,6 +25,13 @@ kite("delta-led-fireworks", "LED delta kite · fireworks, 6 m", "LED", "delta", 
     {...ledDelta, ledPattern: "burst", ledSpeed: 0.65});
 kite("delta-led-sequence", "LED delta kite · light show, 6 m", "LED", "delta", 6, 3, 2,
     {...ledDelta, ledPattern: "sequence"});
+const ledTailDelta = {bow: 8, flyingAngle: 22, deltaNotch: 0, ledTailEnabled: true, ledTailIntensity: 320,
+    bodyColor: "#234ba0", accentColor: "#e7e5db", tailColor: "#234ba0", tailWidth: 0.08};
+kite("delta-led-tail-blue", "LED tail kite · solid blue, 12 m tail", "LED", "delta", 3, 1.5, 0.8,
+    {...ledTailDelta, tailCount: 1, tailLength: 12, ledTailCount: 64, ledTailPattern: "solid", ledTailColor: "#3080ff"});
+kite("delta-led-tail-rainbow", "LED tail kite · twin rainbow, 8 m tails", "LED", "delta", 3, 1.5, 1,
+    {...ledTailDelta, tailCount: 2, tailLength: 8, tailSpread: 18, ledTailCount: 48,
+        ledTailPattern: "rainbow", ledTailRepeats: 2, ledTailSpeed: 0.2, ledTailStagger: 180});
 kite("rokkaku", "Rokkaku · hexagon", "Framed", "rokkaku", 1.2, 1.5, 0.35,
     {...noTail, bow: 14, flyingAngle: 28, bodyColor: "#f4f1e6", accentColor: "#c92f38"});
 kite("sled", "Sled kite", "Framed", "sled", 0.9, 1, 0.12,

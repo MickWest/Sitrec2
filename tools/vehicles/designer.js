@@ -245,7 +245,7 @@ function applyPreset(id = $("presetSelect").value, keepIdentity = true) {
     if (!preset) return;
     const identity = keepIdentity && params.brandLivery === "sitrec" ? {brandLivery:params.brandLivery,brandColor:params.brandColor,brandScale:params.brandScale} : {};
     params = {...preset.parameters,...identity}; activePreset = preset.id; designName = preset.name; modified = Boolean(identity.brandLivery);
-    error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); saveSession();
+    error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); setDesignNight(); saveSession();
 }
 function cyclePreset(direction) {
     if (!matchingPresets.length) return;
@@ -326,11 +326,14 @@ root.addEventListener("keydown", event => {
     }
 }, events);
 $("showGrid").addEventListener("change", () => {grid.visible = $("showGrid").checked; renderDirty = true;});
-$("nightPreview").addEventListener("change", () => {
-    const night = $("nightPreview").checked;
+function setNightPreview(night) {
+    $("nightPreview").checked = night;
     $("preview").classList.toggle("night", night);
     studio.setNight(night); renderDirty = true;
-});
+}
+// Choose a useful starting light when a design opens; manual Night changes survive edits.
+function setDesignNight() {setNightPreview(!!(params.ledEnabled || params.ledTailEnabled));}
+$("nightPreview").addEventListener("change", () => setNightPreview($("nightPreview").checked));
 $("animateLights").addEventListener("change", () => {animateVehicleLights(model,0,false);renderDirty=true;});
 $("wireframe").addEventListener("change", () => {setWireframe(model.root, $("wireframe").checked); renderDirty = true;});
 $("autoRotate").addEventListener("change", () => {controls.autoRotate = $("autoRotate").checked;});
@@ -351,7 +354,7 @@ $("fileInput").addEventListener("change", async () => {
         const data = await readVehicleRecipeFile(file);
         params = data.parameters; designName = data.name; modified = true;
         activePreset = data.presetId || "";
-        error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); saveSession(); status("Design opened");
+        error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); setDesignNight(); saveSession(); status("Design opened");
     } catch (e) {error(`Could not open the design: ${e.message}`);}
 });
 $("exportGLB").addEventListener("click", async () => {
@@ -378,7 +381,7 @@ function resize() {
 const observer = new ResizeObserver(resize); observer.observe($("canvasMount"));
 renderer.domElement.addEventListener("webglcontextlost", event => {event.preventDefault(); error("The 3D graphics context was lost. Save your design, then reload this page.");});
 renderer.domElement.addEventListener("webglcontextrestored", () => {error(""); renderDirty = true;});
-buildFields(); updateFields(); resize(); rebuild(); fit();
+buildFields(); updateFields(); resize(); rebuild(); fit(); setDesignNight();
 let lastTime = performance.now();
 function animate(now) {
     if (disposed) return;

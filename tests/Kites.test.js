@@ -35,7 +35,9 @@ describe("Kite designs", () => {
             if (part.isMesh) for (const attribute of [part.geometry.attributes.position, part.geometry.attributes.normal])
                 expect(Array.from(attribute.array).every(Number.isFinite)).toBe(true);
         });
-        expect(model.lamps).toHaveLength(p.ledEnabled ? p.ledSpokes * (p.ledPerSpoke + p.ledRings) : 0);
+        const sailLights = p.ledEnabled ? p.ledSpokes * (p.ledPerSpoke + p.ledRings) : 0;
+        const tailLights = p.ledTailEnabled ? p.tailCount * p.ledTailCount : 0;
+        expect(model.lamps).toHaveLength(sailLights + tailLights);
         expect(model.propellers).toHaveLength(0);
         expect(model.waves).toHaveLength(p.tailCount * (p.tailStyle === "tube" ? 24 : 14));
         disposeVehicle(model.root);

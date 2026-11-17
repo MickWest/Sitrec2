@@ -276,7 +276,7 @@ These are visual models; lift, buoyancy and heating are not simulated.
 
 ## Kites
 
-**Kites** has 15 examples of seven types: diamond, delta, rokkaku (hexagon), sled,
+**Kites** has examples of seven types: diamond, delta, rokkaku (hexagon), sled,
 box, parafoil and octopus. A kite model has its nose toward +Z, which is the
 direction the wind comes from, and its origin is the tow point, where the flying
 line attaches. **Flying attitude, nose up** tilts the sail or the head.
@@ -355,6 +355,12 @@ background level, and phase between tails are adjustable. Negative speed reverse
 the pattern and zero freezes it. **LEDs per tail** changes the layout; **Tails &
 tentacles** controls the number, dimensions and wind motion of the tails. A kite
 with zero tails needs a tail added before it can display tail LEDs.
+
+The two **LED tail kite** presets provide a solid-blue 12 m tail with 64 LEDs,
+and twin 8 m tails with 48 LEDs each running a rainbow chase. Both use a 3 m delta
+kite. Their gallery previews and thumbnails use night lighting. Opening a design
+with sail or tail LEDs also starts the designer in **Night**; the checkbox can
+switch it back to daylight.
 
 Tail lamps and lenses are attached to the moving joints, including in GLB exports.
 They retain their local positions while the fabric moves; Sitrec's aircraft-light

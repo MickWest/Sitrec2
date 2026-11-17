@@ -260,6 +260,9 @@ between tails** staggers multiple tails. The bulbs stay attached as the tails mo
 in the wind. A design needs at least one tail under **Tails & tentacles**. The
 object's **LED Tail** controls adjust the show without rebuilding the tails.
 
+For ready-made tail lights, choose an **LED tail kite** preset: a solid-blue 12 m
+tail or twin 8 m rainbow tails. Both have night previews and editable light patterns.
+
 **The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
 **Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
 so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind
