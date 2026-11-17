@@ -26,6 +26,22 @@ export const KITE_LED_PATTERN_FIELDS = [
     number("ledSequenceSeconds", "Seconds per pattern", 1, 30, 0.1, 4),
 ];
 
+export const KITE_LED_TAIL_PATTERNS = {solid: "Solid color", chase: "Chasing lights", comet: "Comet",
+    alternating: "Alternating colors", rainbow: "Rainbow chase", pulse: "Pulse", twinkle: "Twinkle"};
+export const KITE_LED_TAIL_PATTERN_FIELDS = [
+    check("ledTailEnabled", "LED Tail", false),
+    choice("ledTailPattern", "Tail pattern", KITE_LED_TAIL_PATTERNS, "solid"),
+    color("ledTailColor", "Tail LED color", "#3080ff"),
+    color("ledTailColor2", "Alternate color", "#ffffff"),
+    number("ledTailIntensity", "Tail LED intensity", 0, 500, 0.1, 80),
+    number("ledTailSpeed", "Tail speed · cycles / s (− = reverse)", -5, 5, 0.01, 0.4),
+    number("ledTailPhase", "Tail phase · °", 0, 360, 1, 0),
+    number("ledTailRepeats", "Pattern repeats along tail", 1, 12, 1, 3),
+    number("ledTailWidth", "Tail pattern width · %", 5, 100, 1, 35),
+    number("ledTailBackground", "Unlit tail LED level · %", 0, 50, 1, 0),
+    number("ledTailStagger", "Phase between tails · °", 0, 360, 1, 0),
+];
+
 export const KITE_GROUPS = [
     {name: "Kite", open: true, note: "The nose points into the wind (+Z). The origin is the tow point, where the line attaches.", fields: [
         choice("kiteShape", "Type", KITE_SHAPES, "diamond"),
@@ -68,6 +84,11 @@ export const KITE_GROUPS = [
             number("ledCoverage", "Array diameter · % of sail", 10, 95, 1, 80),
             number("ledCenter", "Array center toward nose · %", -25, 25, 1, -5),
             number("ledRotation", "Array rotation · °", 0, 360, 1, 0),
+        ]},
+    {name: "LED Tail", open: true,
+        note: "Lights attached along each tail or tentacle, following its motion in the wind. Independent of the sail LEDs; starts with steady blue light. Set Tails above to at least 1. Speed 0 holds the selected phase.",
+        fields: [...KITE_LED_TAIL_PATTERN_FIELDS,
+            number("ledTailCount", "LEDs per tail", 2, 64, 1, 32),
         ]},
     {name: "Flight", open: true, note: "Add Kite in Sitrec finds the line angle from these values and the wind. Lift and drag are estimates for the kite type, not measurements.", fields: [
         number("kiteMass", "Mass · kg", 0.005, 60, 0.005, 0.07),

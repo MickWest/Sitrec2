@@ -16,7 +16,7 @@ export function createVehiclePreview(mount) {
     function frame() {studio.fit(model.sweepBounds ?? model.bounds,{direction});}
     // A kite's tails move as in a steady 12-knot wind, and a bird's wings beat. Other models are drawn once.
     function animate(now) {
-        if (disposed || !(model?.waves?.length || model?.recipe.parameters.ledEnabled)) return;
+        if (disposed || !(model?.waves?.length || model?.recipe.parameters.ledEnabled || model?.recipe.parameters.ledTailEnabled)) return;
         poseVehicleSpinners(model.waves,now/1000,true);
         animateVehicleLights(model,now/1000,true); render();
         frameId = requestAnimationFrame(animate);
@@ -31,7 +31,7 @@ export function createVehiclePreview(mount) {
             const next = generateVehicle(recipe);
             if (model) disposeVehicle(model.root);
             model = next;
-            const led = model.recipe.parameters.ledEnabled;
+            const led = model.recipe.parameters.ledEnabled || model.recipe.parameters.ledTailEnabled;
             direction = led ? [0,-1,0.4] : [-1.6,.75,1];
             studio.setNight(!!led);
             studio.setModel(model); animateVehicleLights(model,0,false); scene.add(model.root); resize();

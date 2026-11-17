@@ -219,7 +219,7 @@ export function buildKite(p) {
 
     // Tails are chains of short joints, so that a wave can run along them. They
     // are in the root frame: they stream downwind, not along the tilted sail.
-    const waves = [], tube = p.tailStyle === "tube", joints = tube ? 24 : 14;
+    const waves = [], tails = [], tube = p.tailStyle === "tube", joints = tube ? 24 : 14;
     const stepLength = p.tailLength / joints, sizeAt = fraction => p.tailWidth * (1 - (1 - p.tailTaper / 100) * Math.pow(fraction, tube ? 1.4 : 1));
     const jointGeometry = Array.from({length: joints}, (_, joint) => {
         const start = sizeAt(joint / joints), end = sizeAt((joint + 1) / joints);
@@ -244,6 +244,7 @@ export function buildKite(p) {
     const droop = rad(p.tailDroop);
     sail.updateMatrix();
     for (let tail = 0; tail < p.tailCount; tail++) {
+        const links = []; tails.push(links);
         const tailMaterial = tailMaterials[tail % tailMaterials.length];
         const [aimPitch, aimYaw] = tailAim(tail, p.tailCount);
         let parent = root;
@@ -273,10 +274,10 @@ export function buildKite(p) {
                 terms: [[0, angle, lag, 1], [1, angle * 0.8, lag + 1.3 + tail, 0.83],
                     [0, angle * 0.6, lag * 0.6 + tail * 1.7, 0.47], [1, angle * 0.6, lag * 0.5 + tail * 0.9, 0.39]]};
             link.rotation.set(...rest);
-            parent.add(link); parent = link; waves.push(link);
+            parent.add(link); parent = link; waves.push(link); links.push(link);
         }
     }
     root.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(root);
-    return {root, propellers: [], waves, bounds, stats: {size: bounds.getSize(new THREE.Vector3())}};
+    return {root, propellers: [], waves, tails, bounds, stats: {size: bounds.getSize(new THREE.Vector3())}};
 }

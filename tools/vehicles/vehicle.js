@@ -28,11 +28,14 @@ export function buildVehicle(input) {
         // scale of 1 there is no group, so the model is the same as before this control existed.
         const group = new Group(); group.name = "Overall scale"; group.scale.setScalar(scale);
         group.add(...model.root.children.filter(child => !child.isLight)); model.root.add(group);
-        // The lamps stay on the root, at their scaled positions: Sitrec reads the position of a lamp in
-        // the root only. Their intensity goes with the square of the scale, so the scale model looks
+        // Fixed lamps stay on the root, at their scaled positions. Tail LEDs stay attached to
+        // their moving joints. Intensity goes with the square of the scale, so the scale model looks
         // the same as the full-size object from a distance that is in proportion.
         for (const light of model.root.children) if (light.isLight) {light.position.multiplyScalar(scale); light.intensity *= scale * scale;}
-        for (const lamp of model.lamps ?? []) lamp.intensity *= scale * scale;
+        for (const lamp of model.lamps ?? []) {
+            lamp.intensity *= scale * scale;
+            if (lamp.light.parent !== model.root) lamp.light.intensity *= scale * scale;
+        }
         // The builders made these for the full-size model.
         if (model.sweepBounds) {model.sweepBounds.min.multiplyScalar(scale); model.sweepBounds.max.multiplyScalar(scale);}
         for (const key of ["wingspan", "width", "height", "wheelbase", "bodyLength"]) if (Number.isFinite(model.stats[key])) model.stats[key] *= scale;

@@ -7,7 +7,7 @@ import {exportProceduralVehicle, loadProceduralVehicle, openVehicleBrowser} from
 import {refreshVehicleBakeUsage} from "../procedural/VehicleBakeAssets";
 import {collectVehicleSpinners, poseVehicleSpinners} from "../procedural/VehicleAnimation";
 import {applyVehicleLightOverrides, captureVehicleLightOverrides, vehicleLightState} from "../procedural/VehicleLightState";
-import {KITE_LED_PATTERN_FIELDS} from "../../tools/vehicles/kiteParameters.js";
+import {KITE_LED_PATTERN_FIELDS, KITE_LED_TAIL_PATTERN_FIELDS} from "../../tools/vehicles/kiteParameters.js";
 import {par} from "../par";
 
 export const proceduralObjectMethods = {
@@ -186,15 +186,20 @@ export const proceduralObjectMethods = {
         const settings = saved?.vehicleType === "kite" ? saved : leds[0].light.userData.kiteLED.settings;
         for (const node of leds) node.light.userData.kiteLED.settings = settings;
         if (!this.lightsFolder) return;
-        this.lightsFolder.title("LED lights");
-        this.lightsFolder.tooltip("Colors and intensity animate on fixed bulbs. Edit design… changes the number and position of the bulbs. Speed 0 holds the pattern at its Phase.");
-        for (const field of KITE_LED_PATTERN_FIELDS) {
+        const hasSail = leds.some(node => !node.light.userData.kiteLED.site.tail);
+        const hasTail = leds.some(node => node.light.userData.kiteLED.site.tail);
+        this.lightsFolder.title(hasSail ? "LED lights" : "LED Tail");
+        this.lightsFolder.tooltip("Colors and intensity animate on attached bulbs. Tail LEDs follow the tail motion. Edit design… changes the number and position of the bulbs. Speed 0 holds the pattern at its Phase.");
+        const groups = [];
+        if (hasSail) groups.push([this.lightsFolder, KITE_LED_PATTERN_FIELDS]);
+        if (hasTail) groups.push([hasSail ? this.lightsFolder.addFolder("LED Tail") : this.lightsFolder, KITE_LED_TAIL_PATTERN_FIELDS]);
+        for (const [folder, fields] of groups) for (const field of fields) {
             let control;
-            if (field.type === "color") control = this.lightsFolder.addColor(settings, field.key);
-            else if (field.type === "select") control = this.lightsFolder.add(settings, field.key,
+            if (field.type === "color") control = folder.addColor(settings, field.key);
+            else if (field.type === "select") control = folder.add(settings, field.key,
                 Object.fromEntries(Object.entries(field.options).map(([key, label]) => [label, key])));
-            else if (field.type === "number") control = this.lightsFolder.add(settings, field.key, field.min, field.max, field.step);
-            else control = this.lightsFolder.add(settings, field.key);
+            else if (field.type === "number") control = folder.add(settings, field.key, field.min, field.max, field.step);
+            else control = folder.add(settings, field.key);
             control.name(field.label).onChange(() => {
                 // The controls edit the recipe itself, so saving/reloading and
                 // Freeze as GLB retain the show without recording sampled colors.

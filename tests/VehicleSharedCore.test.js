@@ -13,6 +13,7 @@ import {readVehicleRecipeFile} from "../tools/vehicles/files.js";
 import {vehicleFileStem} from "../tools/vehicles/recipeFormat.js";
 import {sampleKiteLED} from "../tools/vehicles/kiteLEDPattern.js";
 import {disposeVehicle} from "../tools/vehicles/vehicle.js";
+import {collectVehicleSpinners, poseVehicleSpinners} from "../tools/vehicles/motion.js";
 
 // GLTFExporter uses the browser FileReader API to package its binary output.
 const previousFileReader = global.FileReader;
@@ -66,6 +67,30 @@ test("LED kite GLB preserves fixed bulbs and their editable pattern metadata", a
     for (const light of imported) {
         const {site, settings} = light.userData.kiteLED;
         expect(settings.ledPhase).toBe(27);
+        expect(sampleKiteLED(site, settings, 0.8)).toEqual(sampleKiteLED(site, recipe.parameters, 0.8));
+    }
+    disposeVehicle(loaded.scene);
+});
+
+test("LED tail GLB preserves joint attachment, scaled brightness and independent pattern settings", async () => {
+    const preset = PRESETS.find(item => item.id === "kite-delta-led");
+    const recipe = createVehicleRecipe({...preset.parameters, ledEnabled: false, ledTailEnabled: true,
+        tailCount: 2, ledTailCount: 16, overallScale: 0.5, ledTailPattern: "comet", ledTailSpeed: -0.7}, "Tail export");
+    const bytes = await nativeBake(recipe), loaded = await new GLTFLoader().parseAsync(bytes, ""), lights = [];
+    loaded.scene.traverse(part => {if (part.isLight) lights.push(part);});
+    expect(lights).toHaveLength(32);
+    const local = lights.map(light => light.position.toArray());
+    const world = () => lights.map(light => light.getWorldPosition(new Vector3()).toArray());
+    const joints = collectVehicleSpinners(loaded.scene);
+    poseVehicleSpinners(joints, 0.73, true); const first = world();
+    poseVehicleSpinners(joints, 2.19, true); expect(world()).not.toEqual(first);
+    expect(lights.map(light => light.position.toArray())).toEqual(local);
+    poseVehicleSpinners(joints, 0.73, true); expect(world()).toEqual(first);
+    for (const light of lights) {
+        expect(light.parent.userData.vehicleWave).toBeDefined();
+        expect(light.intensity).toBeCloseTo(recipe.parameters.ledTailIntensity * 0.25);
+        const {site, settings} = light.userData.kiteLED;
+        expect(site.tail).toBe(true); expect(settings.ledTailSpeed).toBe(-0.7);
         expect(sampleKiteLED(site, settings, 0.8)).toEqual(sampleKiteLED(site, recipe.parameters, 0.8));
     }
     disposeVehicle(loaded.scene);

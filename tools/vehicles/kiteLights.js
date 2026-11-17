@@ -1,8 +1,27 @@
 import {AdditiveBlending, Color, DataTexture, LinearFilter, Mesh, MeshStandardMaterial, PointLight,
     Raycaster, SphereGeometry, Sprite, SpriteMaterial, Vector3} from "three";
-import {sampleKiteLED} from "./kiteLEDPattern.js";
+import {kiteLEDIntensity, sampleKiteLED} from "./kiteLEDPattern.js";
 
 export function addKiteLights(model, p) {
+    if (p.ledEnabled) addSailLights(model, p);
+    if (p.ledTailEnabled) addTailLights(model, p);
+}
+
+function addBulb(model, p, parent, position, site, name, geometry, bulbRadius) {
+    const color = site.tail ? p.ledTailColor : p.ledColor1;
+    const intensity = kiteLEDIntensity(site, p);
+    const light = new PointLight(color, intensity, 0, 2);
+    light.name = name; light.position.copy(position);
+    light.userData = {vehicleLight: true, role: name, kiteLED: {site, settings: {...p}}};
+    const lens = new Mesh(geometry, new MeshStandardMaterial({color: "#202020", emissive: color,
+        emissiveIntensity: 1.8, roughness: 0.3}));
+    lens.name = `${name} lens`; lens.position.copy(position);
+    lens.userData.vehicleLightLens = name; lens.material.userData.vehicleLightLens = name;
+    parent.add(light, lens);
+    model.lamps.push({light, lens, intensity, phase: 0, bulbRadius, previewRoot: model.root});
+}
+
+function addSailLights(model, p) {
     if (!p.ledEnabled) return;
     const root = model.root, sail = root.getObjectByName("Kite sail");
     const skins = sail.children.filter(part => ["Kite sail panels", "Kite lower skin", "Kite head"].includes(part.name));
@@ -33,15 +52,7 @@ export function addKiteLights(model, p) {
         if (!position) return;
         const site = {angle: ((angle / (2 * Math.PI)) % 1 + 1) % 1, radius: fraction,
             ring, spokes: p.ledSpokes, index: model.lamps.length};
-        const light = new PointLight(p.ledColor1, p.ledIntensity, 0, 2);
-        light.name = name; light.position.copy(position);
-        light.userData = {vehicleLight: true, role: name, kiteLED: {site, settings: {...p}}};
-        const lens = new Mesh(geometry, new MeshStandardMaterial({color: "#202020", emissive: p.ledColor1,
-            emissiveIntensity: 1.8, roughness: 0.3}));
-        lens.name = `${name} lens`; lens.position.copy(position);
-        lens.userData.vehicleLightLens = name; lens.material.userData.vehicleLightLens = name;
-        root.add(light, lens);
-        model.lamps.push({light, lens, intensity: p.ledIntensity, phase: 0, bulbRadius});
+        addBulb(model, p, root, position, site, name, geometry, bulbRadius);
     }
     for (let strip = 0; strip < angles.length; strip++)
         for (let led = 0; led < p.ledPerSpoke; led++)
@@ -49,6 +60,26 @@ export function addKiteLights(model, p) {
     for (let ring = 0; ring < p.ledRings; ring++)
         for (let led = 0; led < angles.length; led++)
             bulb(angles[led], 0.22 * (ring + 1) / (p.ledRings + 1), true, `LED ring ${ring + 1} bulb ${led + 1}`);
+}
+
+function addTailLights(model, p) {
+    if (!model.tails.length) return;
+    const bulbRadius = Math.max(0.0001, Math.min(p.width, p.height) * 0.004);
+    const geometry = new SphereGeometry(bulbRadius, 8, 6);
+    const sizeAt = fraction => p.tailWidth * (1 - (1 - p.tailTaper / 100) * fraction ** (p.tailStyle === "tube" ? 1.4 : 1));
+    model.tails.forEach((links, tailIndex) => {
+        const step = p.tailLength / links.length;
+        for (let index = 0; index < p.ledTailCount; index++) {
+            const fraction = index / (p.ledTailCount - 1);
+            const joint = Math.min(links.length - 1, Math.floor(fraction * links.length));
+            const within = fraction * links.length - joint;
+            const start = sizeAt(joint / links.length), end = sizeAt((joint + 1) / links.length);
+            const radius = p.tailStyle === "tube" ? (start + (end - start) * within) / 2 : 0;
+            const position = new Vector3(0, -radius - bulbRadius * 1.5, -within * step);
+            const site = {tail: true, tailIndex, fraction, index: tailIndex * p.ledTailCount + index};
+            addBulb(model, p, links[joint], position, site, `LED tail ${tailIndex + 1} bulb ${index + 1}`, geometry, bulbRadius);
+        }
+    });
 }
 
 // Studio-only glows. Hundreds of illuminating PointLights would exceed WebGL's
@@ -69,13 +100,14 @@ export function animateKiteLamp(lamp, time, animate) {
     const {light, lens} = lamp, data = light.userData.kiteLED;
     const state = sampleKiteLED(data.site, data.settings, animate ? time : 0,
         lamp.ledState ??= {color: new Color(), level: 0});
+    const intensity = kiteLEDIntensity(data.site, data.settings);
     light.color.copy(state.color); light.intensity = lamp.intensity * state.level;
     light.visible = false;
     lens.material.emissive.copy(state.color);
-    lens.material.emissiveIntensity = state.level * data.settings.ledIntensity / 35 * 2.5;
+    lens.material.emissiveIntensity = state.level * intensity / 35 * 2.5;
     if (!lamp.glow) {
         // Share the texture between lamps; disposal follows the model's materials.
-        const texture = light.parent.userData.kitePreviewTexture ??= glowTexture();
+        const texture = lamp.previewRoot.userData.kitePreviewTexture ??= glowTexture();
         lamp.glow = new Sprite(new SpriteMaterial({map: texture, color: state.color,
             transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false}));
         lamp.glow.name = "LED preview glow"; lamp.glow.position.copy(lens.position);
@@ -83,5 +115,5 @@ export function animateKiteLamp(lamp, time, animate) {
     }
     lamp.glow.material.color.copy(state.color);
     lamp.glow.material.opacity = state.level;
-    lamp.glow.scale.setScalar(lamp.bulbRadius * 18 * Math.sqrt(data.settings.ledIntensity / 35));
+    lamp.glow.scale.setScalar(lamp.bulbRadius * 18 * Math.sqrt(intensity / 35));
 }

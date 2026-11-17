@@ -9,6 +9,7 @@ const SHOW = ["spokes", "bar", "burst", "spiral", "rings", "rainbow", "twinkle",
 // the designer and a frozen model all reproduce the same light show.
 // `site` describes a fixed bulb, never a moving piece of geometry.
 export function sampleKiteLED(site, p, seconds, out = {color: new Color(), level: 0}) {
+    if (site.tail) return sampleKiteTailLED(site, p, seconds, out);
     if (p.ledSpeed === 0) seconds = 0;
     const cycles = seconds * p.ledSpeed + p.ledPhase / 360;
     const pattern = p.ledPattern === "sequence"
@@ -50,5 +51,30 @@ export function sampleKiteLED(site, p, seconds, out = {color: new Color(), level
     out.level = p.ledEnabled ? p.ledBackground / 100 + (1 - p.ledBackground / 100) * level : 0;
     if (p.ledPalette === "rainbow" || pattern === "rainbow") out.color.setHSL(hue, 1, 0.5);
     else out.color.set(p.ledPalette === "solid" ? p.ledColor1 : [p.ledColor1, p.ledColor2, p.ledColor3][colorIndex]);
+    return out;
+}
+
+export const kiteLEDIntensity = (site, p) => site.tail ? p.ledTailIntensity : p.ledIntensity;
+
+function sampleKiteTailLED(site, p, seconds, out) {
+    const cycles = seconds * p.ledTailSpeed + (p.ledTailPhase + site.tailIndex * p.ledTailStagger) / 360;
+    const along = site.fraction * p.ledTailRepeats - cycles;
+    const width = Math.max(p.ledTailWidth / 100, p.ledTailRepeats / (p.ledTailCount - 1));
+    let level = 1;
+    out.color.set(p.ledTailColor);
+    switch (p.ledTailPattern) {
+        case "chase": level = clamp(1 - distance(along) / (width / 2)); break;
+        case "comet": level = clamp(1 - turn(-along) / width) ** 2; break;
+        case "alternating": out.color.set(turn(along) < 0.5 ? p.ledTailColor : p.ledTailColor2); break;
+        case "rainbow": out.color.setHSL(turn(along), 1, 0.5); break;
+        case "pulse": level = 0.5 + 0.5 * Math.cos(cycles * Math.PI * 2); break;
+        case "twinkle": {
+            const tick = Math.floor(cycles * 8);
+            const seed = Math.sin(site.index * 127.1 + tick * 311.7) * 43758.5453;
+            level = turn(seed) > 0.6 ? Math.sin(Math.PI * turn(cycles * 8)) ** 2 : 0;
+            break;
+        }
+    }
+    out.level = p.ledTailEnabled ? p.ledTailBackground / 100 + (1 - p.ledTailBackground / 100) * level : 0;
     return out;
 }

@@ -44,7 +44,7 @@ describe("Kite designs", () => {
     test("a kite has its own LED controls and no livery, and the SITREC livery does not break it", () => {
         const p = preset("kite-octopus-14");
         const names = parameterGroups(p).map(group => group.name);
-        expect(names).toEqual(["Scale", "Kite", "Tails & tentacles", "Colors & fabric", "LED lights", "Flight", "Thermal"]);
+        expect(names).toEqual(["Scale", "Kite", "Tails & tentacles", "Colors & fabric", "LED lights", "LED Tail", "Flight", "Thermal"]);
         const model = buildVehicle({...p, brandLivery: "sitrec"});
         expect(model.root.getObjectByName("SITREC livery")).toBeUndefined();
         disposeVehicle(model.root);

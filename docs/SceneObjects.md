@@ -252,6 +252,14 @@ and colors. **Edit design…** also changes the number and positions of the bulb
 Only their color and intensity animate; the bulbs remain fixed to the sail.
 Saved sitches and **Freeze as GLB** retain the pattern in Sitrec.
 
+**Edit design… → LED Tail** adds lights along each ribbon tail or tube tentacle,
+independently of the sail LEDs. It starts with solid blue light; choose another color
+or a chase, comet, alternating colors, rainbow, pulse, or twinkle pattern. Set the
+number of bulbs per tail, brightness, speed, phase, and pattern spacing. **Phase
+between tails** staggers multiple tails. The bulbs stay attached as the tails move
+in the wind. A design needs at least one tail under **Tails & tentacles**. The
+object's **LED Tail** controls adjust the show without rebuilding the tails.
+
 **The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
 **Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
 so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind

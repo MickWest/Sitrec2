@@ -8,7 +8,7 @@ import {CNodeGUIColor} from "./CNodeGUIColor";
 import {par} from "../par";
 import {Sit} from "../Globals";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
-import {sampleKiteLED} from "../../tools/vehicles/kiteLEDPattern.js";
+import {kiteLEDIntensity, sampleKiteLED} from "../../tools/vehicles/kiteLEDPattern.js";
 
 export class CNode3DLight extends CNode3D {
     constructor(v) {
@@ -318,7 +318,8 @@ export class CNode3DLight extends CNode3D {
         if (led) {
             const state = sampleKiteLED(led.site, led.settings, time,
                 this._ledState ??= {color: new Color(), level: 0});
-            this.light.intensity = led.settings.ledIntensity * (led.settings.overallScale ?? 1) ** 2 * state.level;
+            const intensity = kiteLEDIntensity(led.site, led.settings);
+            this.light.intensity = intensity * (led.settings.overallScale ?? 1) ** 2 * state.level;
             this.light.color.copy(state.color);
             const uniforms = this._object.material.uniforms;
             uniforms.uColor.value[0] = state.color.r; uniforms.uColor.value[1] = state.color.g; uniforms.uColor.value[2] = state.color.b;
@@ -327,7 +328,7 @@ export class CNode3DLight extends CNode3D {
             this._object.visible = this._object.visible && this.light.intensity > 0;
             if (this.vehicleLens?.material?.userData.vehicleLightLens === this.light.name) {
                 this.vehicleLens.material.emissive.copy(state.color);
-                this.vehicleLens.material.emissiveIntensity = this.lightVisible ? state.level * led.settings.ledIntensity / 35 * 1.8 : 0;
+                this.vehicleLens.material.emissiveIntensity = this.lightVisible ? state.level * intensity / 35 * 1.8 : 0;
             }
             return;
         }
@@ -381,6 +382,13 @@ export class CNode3DLight extends CNode3D {
 
     preRender(view) {
         const camera = view.camera;
+
+        // Tail lamps live on animated joints; the billboard lives on the object group.
+        // Copy the current transformed position for every view, after posing the tail.
+        if (this.light.userData.kiteLED?.site.tail) {
+            this.light.getWorldPosition(this._object.position);
+            this._object.parent?.worldToLocal(this._object.position);
+        }
 
         // make the billboard face the camera
         if (this._object) {

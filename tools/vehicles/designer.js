@@ -307,7 +307,7 @@ function rebuild() {
 
 function fit() {
     if (!model) return;
-    const view = currentView === "perspective" && params.ledEnabled ? "underside" : currentView;
+    const view = currentView === "perspective" && (params.ledEnabled || params.ledTailEnabled) ? "underside" : currentView;
     studio.fit(model.sweepBounds ?? model.bounds,{view,paddingX:1.25,paddingY:1.55});
     renderDirty = true;
 }

@@ -347,6 +347,20 @@ and intensities. Saves and **Freeze as GLB** retain the pattern settings and
 fixed positions; other GLB viewers see static punctual lights unless they
 implement Sitrec's pattern metadata. Existing kite designs start with LEDs off.
 
+**LED Tail** is independent of the sail array. Enable it to attach a fixed number
+of bulbs along every existing tail or tentacle. It defaults to **Solid color** in
+blue; the other patterns are chasing lights, comet, alternating colors, rainbow
+chase, pulse, and twinkle. Tail colors, intensity, speed, phase, repeats, width,
+background level, and phase between tails are adjustable. Negative speed reverses
+the pattern and zero freezes it. **LEDs per tail** changes the layout; **Tails &
+tentacles** controls the number, dimensions and wind motion of the tails. A kite
+with zero tails needs a tail added before it can display tail LEDs.
+
+Tail lamps and lenses are attached to the moving joints, including in GLB exports.
+They retain their local positions while the fabric moves; Sitrec's aircraft-light
+billboards follow their transformed positions for each view. The effect is inspired
+by the lit-tail examples in [Blue UFO Over Hawaii](https://www.metabunk.org/threads/blue-ufo-over-hawaii.11526/).
+
 ## Birds
 
 **Birds** has 40 examples of common species in flight: gulls, pelicans, cranes, a
