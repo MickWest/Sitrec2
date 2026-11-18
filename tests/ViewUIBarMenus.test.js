@@ -435,7 +435,7 @@ describe("populateViewUIBarIcons", () => {
             setCustomManager({videoExportManager: {renderSingleViewVideo}});
             const button = view.uiBar.bar.querySelector('[data-uibar-action="render-video"]');
             expect(button.querySelector('svg')).not.toBeNull();
-            expect(button.getAttribute('aria-label')).toContain('Render Single View Video');
+            expect(button.getAttribute('aria-label')).toContain('Render Single View');
             expect(view.uiBar.left.contains(button)).toBe(true);
             button.click();
             await new Promise(resolve => setTimeout(resolve, 0));

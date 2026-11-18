@@ -1,6 +1,7 @@
 // The .js extension is needed: this file is also copied unbundled to tools/src/ for
 // tools/flowgen.html, and a browser does not add a missing extension the way webpack does.
 import { sanitizeAvcDescription } from "./H264Utils.js";
+import {padVideoFrame} from "./VideoFrameCanvas.js";
 
 // Timer callbacks can be delayed by a minute in a hidden tab. Yield through
 // a message task so encoder backpressure and finalization still make progress.
@@ -177,16 +178,7 @@ export class MediabunnyExporter {
         const timestampMicros = Math.round(this.frameCount * 1_000_000 / this.fps);
         const frameDurationMicros = Math.round((this.frameCount + 1) * 1_000_000 / this.fps) - timestampMicros;
 
-        let frameCanvas = canvas;
-        if (canvas.width !== this.encodedWidth || canvas.height !== this.encodedHeight) {
-            frameCanvas = document.createElement('canvas');
-            frameCanvas.width = this.encodedWidth;
-            frameCanvas.height = this.encodedHeight;
-            const ctx = frameCanvas.getContext('2d');
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, this.encodedWidth, this.encodedHeight);
-            ctx.drawImage(canvas, 0, 0);
-        }
+        const frameCanvas = padVideoFrame(canvas, this.encodedWidth, this.encodedHeight);
 
         const videoFrame = new VideoFrame(frameCanvas, {
             timestamp: timestampMicros,

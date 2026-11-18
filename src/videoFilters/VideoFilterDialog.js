@@ -7,6 +7,8 @@
 
 import {blockViewEvents} from "../DragResizeUtils";
 import {Globals} from "../Globals";
+import {DEFAULT_IMAGE_ENCODING, encodeRenderedImage} from "../ImageExporter";
+import {padVideoFrame} from "../VideoFrameCanvas";
 import {AnalogVideoFilter} from "./AnalogVideoFilter";
 import {
     applyScreenPreset,
@@ -14,20 +16,21 @@ import {
     DEFAULT_ENCODING,
     defaultVideoFilterSettings,
     filterOutputSize,
+    isVideoFilterActive,
     SCREEN_PRESETS,
     SIGNAL_FORMATS,
 } from "./VideoFilterSettings";
 
 const STORAGE_KEY = "sitrec-video-filter-settings";
-const PREVIEW_WIDTH = 520;
-const PREVIEW_FPS = 20;
+const PREVIEW_FPS = 30;
 // Below this the two columns would each be too narrow to use, so they stack instead.
-const TWO_COLUMN_MIN_WIDTH = 940;
+const TWO_COLUMN_MIN_WIDTH = 800;
 
 // Settings survive across exports and across sessions: nobody wants to dial in a
 // third-generation tape look twice.
 function loadSavedSettings() {
     const settings = defaultVideoFilterSettings();
+    settings.image = {...DEFAULT_IMAGE_ENCODING};
     try {
         const raw = window.localStorage?.getItem(STORAGE_KEY);
         if (!raw) return settings;
@@ -41,7 +44,7 @@ function loadSavedSettings() {
         if (SIGNAL_FORMATS[saved.signal?.format]) applySignalPreset(settings, saved.signal.format);
         if (SCREEN_PRESETS[saved.screen?.preset]?.values) applyScreenPreset(settings, saved.screen.preset);
 
-        for (const section of ["signal", "screen", "encoding"]) {
+        for (const section of ["signal", "screen", "encoding", "image"]) {
             if (saved[section]) Object.assign(settings[section], saved[section]);
         }
         if (!SCREEN_PRESETS[settings.screen.preset]) settings.screen.preset = "handheld";
@@ -52,6 +55,7 @@ function loadSavedSettings() {
         // the file is already published. What each stage was tuned TO is still restored,
         // so re-selecting a format or re-ticking the camera brings the settings back;
         // only the choice to apply them has to be made again, deliberately, each time.
+        settings.image.format = "png";
         settings.signal.format = "digital";
         settings.screen.enabled = false;
     } catch (e) {
@@ -103,6 +107,7 @@ function slider(parent, label, object, key, min, max, step, onChange, digits = 2
 
     const input = element("input", "width: 130px; flex-shrink: 0;", container);
     input.type = "range";
+    input.setAttribute("aria-label", label);
     input.min = min;
     input.max = max;
     input.step = step;
@@ -148,6 +153,7 @@ function dropdown(parent, label, options, value, onChange) {
         option.textContent = text;
     }
     select.value = value;
+    select.setAttribute("aria-label", label);
     select.onchange = () => onChange(select.value);
     return select;
 }
@@ -234,7 +240,7 @@ function buildSourceCanvas(getPreviewCanvas, useBars) {
  * @returns {Promise<object|null>} the settings, or null if the export was cancelled
  */
 export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas = null, formatOptions = null, formatId = null,
-    sceneEffectsIncluded = false} = {}) {
+    sceneEffectsIncluded = false, allowImage = false, frame = 0, fps = PREVIEW_FPS} = {}) {
     const settings = loadSavedSettings();
     if (formatId && (!formatOptions || Object.values(formatOptions).includes(formatId))) {
         settings.encoding.formatId = formatId;
@@ -261,14 +267,17 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         // stays visible while you work down the parameters.
         const twoColumn = window.innerWidth >= TWO_COLUMN_MIN_WIDTH;
         const dialog = element("div", `
-            background: #2a2a2a; border-radius: 8px; padding: 18px;
-            width: ${twoColumn ? "1080px" : "560px"}; max-width: 96vw;
-            height: 94vh;
+            background: #2a2a2a; padding: 12px; box-sizing: border-box;
+            width: 100vw; height: 100dvh;
             display: flex; flex-direction: column;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             font-family: Arial, sans-serif; color: white;
         `, overlay);
 
+        overlay.dataset.renderDialog = "true";
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        dialog.setAttribute("aria-label", title);
         const heading = element("h3", "margin: 0 0 10px 0; font-size: 18px; flex-shrink: 0;", dialog);
         heading.textContent = title;
         if (sceneEffectsIncluded) {
@@ -277,7 +286,8 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         }
 
         const body = element("div", `
-            display: flex; flex-direction: ${twoColumn ? "row" : "column"};
+            display: grid; grid-template-columns: ${twoColumn ? "380px minmax(0, 1fr)" : "minmax(0, 1fr)"};
+            grid-template-rows: ${twoColumn ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)"};
             gap: 14px; flex: 1; min-height: 0;
         `, dialog);
 
@@ -286,20 +296,25 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
             overflow-y: auto; flex: 1 1 auto; min-height: 0; min-width: 0; padding-right: 6px;
         `, body);
 
-        // ── Preview, held at the top of its own column ──
-        const previewWrap = element("div", twoColumn
-            ? `flex: 0 0 ${PREVIEW_WIDTH}px; max-width: ${PREVIEW_WIDTH}px; align-self: flex-start;`
-            : `flex: 0 0 auto; order: -1;`, body);
-        const previewCanvas = element("canvas", `
-            width: 100%; background: #000; border-radius: 4px; display: block;
-            image-rendering: auto;
-        `, previewWrap);
+        // The preview gets every pixel left after the settings column and footer.
+        const previewWrap = element("div", "display: flex; flex-direction: column; min-width: 0; min-height: 0;", body);
+        const previewStage = element("div", "flex: 1; min-height: 0; background: #000;", previewWrap);
+        const previewCanvas = element("canvas", "width: 100%; height: 100%; object-fit: contain; display: block;", previewStage);
+        previewCanvas.dataset.renderPreview = "true";
+        const resize = () => {
+            const wide = window.innerWidth >= TWO_COLUMN_MIN_WIDTH;
+            body.style.gridTemplateColumns = wide ? "380px minmax(0, 1fr)" : "minmax(0, 1fr)";
+            body.style.gridTemplateRows = wide ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)";
+            previewWrap.style.order = wide ? "0" : "-1";
+        };
+        window.addEventListener("resize", resize);
+        resize();
         const previewBar = element("div", "display: flex; align-items: center; gap: 10px; margin-top: 5px;", previewWrap);
         const previewNote = element("span", "font-size: 11px; color: #999; flex: 1;", previewBar);
         const barsToggle = element("label", "font-size: 11px; color: #bbb; cursor: pointer; user-select: none; white-space: nowrap;", previewBar);
         const barsInput = element("input", "vertical-align: middle; margin-right: 4px;", barsToggle);
         barsInput.type = "checkbox";
-        barsToggle.appendChild(document.createTextNode("Colour bars"));
+        barsToggle.appendChild(document.createTextNode("Test pattern (preview only)"));
 
         const controls = [];
         const refreshAll = () => controls.forEach(c => c.refresh && c.refresh());
@@ -308,7 +323,7 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         const changed = () => { previewDirty = true; };
 
         // ── Signal format ──
-        const signalBody = section(scroll, "Signal format", true);
+        const signalBody = section(scroll, "Signal Format", true);
         const formatNames = Object.fromEntries(
             Object.entries(SIGNAL_FORMATS).map(([key, format]) => [key, format.name])
         );
@@ -435,7 +450,7 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         controls.push(slider(lensBody, "Sensor noise", scr, "noise", 0, 0.15, 0.002, changed, 3));
 
         // ── Compression ──
-        const encodingBody = section(scroll, "Compression", true);
+        const encodingBody = section(scroll, "Video Compression", true);
         let codecSelect = null;
         let encodableFormatIds = null;
         if (formatOptions && Object.keys(formatOptions).length > 0) {
@@ -470,60 +485,93 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
             keyframeControl.refresh();
         };
 
-        // ── Buttons ──
-        const buttonRow = element("div", "display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0;", dialog);
-        const renderButton = button(buttonRow, "Render", "#1976d2");
-        const cancelButton = button(buttonRow, "Cancel", "#757575");
+        let previewOutput = "video";
+        let outputSelect;
+        if (allowImage) {
+            const imageBody = section(scroll, "Image Compression", true);
+            const imageFormat = dropdown(imageBody, "Format", {png: "None (PNG)", jpeg: "JPEG (.jpg)"}, settings.image.format, value => {
+                settings.image.format = value;
+                quality.input.parentElement.style.display = value === "jpeg" ? "" : "none";
+                previewOutput = "image";
+                outputSelect.value = "image";
+                changed();
+            });
+            imageFormat.dataset.imageFormat = "true";
+            const quality = slider(imageBody, "JPEG quality", settings.image, "quality", 0.1, 1, 0.01, changed, 2);
+            quality.input.parentElement.style.display = settings.image.format === "jpeg" ? "" : "none";
+            controls.push(quality);
+            outputSelect = dropdown(previewBar, "Preview", {video: "Video frame", image: "Single image"}, previewOutput, value => {
+                previewOutput = value;
+                changed();
+            });
+        }
 
-        // ── Live preview loop ──
+        const buttonRow = element("div", "display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0;", dialog);
+        const renderButton = button(buttonRow, "Render Video", "#1976d2");
+        const imageButton = allowImage ? button(buttonRow, "Render Single Image", "#1976d2") : null;
+        const cancelButton = button(buttonRow, "Cancel", "#757575");
+        if (formatOptions && !Object.keys(formatOptions).length) {
+            renderButton.disabled = true;
+            renderButton.title = "This browser cannot encode video. You can still render an image.";
+        }
+
+        // Render at the export raster. CSS alone scales it to the available space.
+        // A fixed frame has fixed effects: redraw only when settings change.
         let filter = null;
         let sourceCanvas = buildSourceCanvas(getPreviewCanvas, false);
+        let renderedCanvas = null;
+        let imageBlob = null;
         let timer = null;
-
-        const rebuildFilter = () => {
-            if (filter) { filter.dispose(); filter = null; }
-            const out = filterOutputSize(settings, sourceCanvas.width, sourceCanvas.height);
-            const scale = PREVIEW_WIDTH / out.width;
-            const width = Math.ceil(PREVIEW_WIDTH / 2) * 2;
-            const height = Math.ceil(out.height * scale / 2) * 2;
-            previewCanvas.width = width;
-            previewCanvas.height = height;
-            try {
-                filter = new AnalogVideoFilter({width, height, settings, fps: PREVIEW_FPS});
-                previewNote.textContent =
-                    `Preview at ${width}x${height}; export renders at full resolution.`;
-            } catch (e) {
-                console.error("Video filter preview unavailable:", e);
-                previewNote.textContent = "Preview unavailable (WebGL2 required); the export will still run.";
-            }
-        };
-
+        let pending = null;
+        let closed = false;
         const previewCtx = previewCanvas.getContext("2d");
-        const tick = () => {
-            if (previewDirty) {
-                previewDirty = false;
-                rebuildFilter();
+        const redraw = async () => {
+            if (filter) { filter.dispose(); filter = null; }
+            const active = isVideoFilterActive(settings);
+            const out = active ? filterOutputSize(settings, sourceCanvas.width, sourceCanvas.height) : sourceCanvas;
+            const width = active ? Math.ceil(out.width / 2) * 2 : out.width;
+            const height = active ? Math.ceil(out.height / 2) * 2 : out.height;
+            const rendered = document.createElement("canvas");
+            rendered.width = width;
+            rendered.height = height;
+            if (active) filter = new AnalogVideoFilter({width, height, settings, fps});
+            rendered.getContext("2d").drawImage(filter ? filter.filterFrame(sourceCanvas) : sourceCanvas, 0, 0);
+            renderedCanvas = rendered;
+            imageBlob = null;
+            let bitmap = null;
+            if (previewOutput === "image") {
+                imageBlob = await encodeRenderedImage(rendered, settings.image);
+                bitmap = await createImageBitmap(imageBlob);
             }
-            if (!filter) {
-                previewCtx.drawImage(sourceCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-                return;
+            if (!closed) {
+                const display = bitmap ?? padVideoFrame(rendered);
+                previewCanvas.width = display.width;
+                previewCanvas.height = display.height;
+                previewCtx.drawImage(display, 0, 0);
+                previewNote.textContent = `${barsInput.checked ? "Test pattern" : "Frame " + frame} · ${display.width} × ${display.height} · scaled to fit`
+                    + (previewOutput === "video" ? " · before video compression" : "");
             }
-            try {
-                previewCtx.drawImage(filter.filterFrame(sourceCanvas), 0, 0);
-            } catch (e) {
-                console.error("Video filter preview failed:", e);
-                filter.dispose();
-                filter = null;
-            }
+            bitmap?.close();
         };
-
+        const tick = () => {
+            if (closed || pending || !previewDirty) return pending;
+            previewDirty = false;
+            pending = redraw().catch(error => {
+                renderedCanvas = null;
+                previewNote.textContent = `Preview failed: ${error.message}`;
+                console.error("Render preview failed:", error);
+            }).finally(() => { pending = null; });
+            return pending;
+        };
         barsInput.onchange = () => {
             sourceCanvas = buildSourceCanvas(getPreviewCanvas, barsInput.checked);
             changed();
         };
 
         const cleanup = (result) => {
+            closed = true;
             if (timer) clearInterval(timer);
+            window.removeEventListener("resize", resize);
             document.removeEventListener("keydown", onKey);
             if (filter) filter.dispose();
             if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
@@ -544,12 +592,38 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
             }
         };
 
-        const accept = () => {
-            saveSettings(settings);
-            cleanup(settings);
+        const accept = async (outputKind = "video") => {
+            if (outputKind === "video" && renderButton.disabled) return;
+            renderButton.disabled = true;
+            if (imageButton) imageButton.disabled = true;
+            try {
+                if (previewOutput !== outputKind) {
+                    previewOutput = outputKind;
+                    if (outputSelect) outputSelect.value = outputKind;
+                    changed();
+                }
+                // The optional test pattern is never exported in place of the view.
+                if (barsInput.checked) {
+                    barsInput.checked = false;
+                    sourceCanvas = buildSourceCanvas(getPreviewCanvas, false);
+                    changed();
+                }
+                if (pending) await pending;
+                if (previewDirty) await tick();
+                if (!renderedCanvas) throw new Error("The preview must render before export.");
+                const blob = outputKind === "image" ? imageBlob ?? await encodeRenderedImage(renderedCanvas, settings.image) : null;
+                if (closed) return;
+                saveSettings(settings);
+                cleanup({...settings, outputKind, frame, ...(blob ? {imageBlob: blob} : {})});
+            } catch (error) {
+                previewNote.textContent = `Render failed: ${error.message}`;
+                renderButton.disabled = !!formatOptions && !Object.keys(formatOptions).length;
+                if (imageButton) imageButton.disabled = false;
+            }
         };
 
-        renderButton.onclick = accept;
+        renderButton.onclick = () => accept("video");
+        if (imageButton) imageButton.onclick = () => accept("image");
         cancelButton.onclick = () => cleanup(null);
         overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) cleanup(null); });
         document.addEventListener("keydown", onKey);
@@ -557,9 +631,8 @@ export function showVideoFilterDialog({title = "Render Video", getPreviewCanvas 
         updateFormatDescription();
         updateScreenEnabled();
         document.body.appendChild(overlay);
-        rebuildFilter();
-        previewDirty = false;
-        timer = setInterval(tick, 1000 / PREVIEW_FPS);
+        tick();
+        timer = setInterval(tick, 50);
         renderButton.focus();
     });
 }

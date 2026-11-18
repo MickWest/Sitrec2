@@ -171,6 +171,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         camera._panoramaProxyFor = live._panoramaProxyFor ?? live;
         camera._fisheyeProxyFor = live._fisheyeProxyFor ?? live;
         camera._videoSky = live._videoSky;
+        camera._skyPhotoProject = live._skyPhotoProject;
+        camera._skyPhotoPlate = live._skyPhotoPlate;
         if (atOrigin) {
             camera.position.set(0, 0, 0);
             camera.updateMatrix();
@@ -325,7 +327,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
     projectCatalogPosition(ra, dec, camera, earthSphere, observer, date) {
         const pos = applyAnnualAberration(raDec2Celestial(ra, dec, 100), date);
-        if (refractionUniforms.uRefractionEnabled.value > 0.5) {
+        if (!camera._skyPhotoProject && refractionUniforms.uRefractionEnabled.value > 0.5) {
             applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractionOptsFromUniforms());
         }
         pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
@@ -422,7 +424,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         const camera = this.displayedCamera(live, true);
         const pos = V3();
         const forward = camera.getWorldDirection(V3());
-        const nonlinear = isFisheyeCamera(camera) || isPanoramicCamera(camera);
+        const nonlinear = !!camera._skyPhotoPlate?.lens || isFisheyeCamera(camera) || isPanoramicCamera(camera);
         // Sky directions have no depth. Place them between the camera's clip
         // planes so the label projection also works with a distant main camera.
         const distance = Math.sqrt(camera.near * camera.far);
@@ -485,7 +487,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         // addConstellationLines), so the lines are bent in the shader. The names have to be bent
         // by the same amount or they part from their figures near the horizon, where the bend is
         // most of half a degree.
-        const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
+        const refractApplies = !camera._skyPhotoProject && refractionUniforms.uRefractionEnabled.value > 0.5;
         const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
 
         const target0 = V3();
@@ -495,6 +497,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             // Cloned because applyRefractionECI, applyMatrix4 and project all mutate, and the
             // cached position has to survive for the next frame.
             const pos = c.pos.clone();
+            if (camera._skyPhotoProject) applyAnnualAberration(pos, date);
             if (refractApplies) {
                 applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractOpts);
             }
@@ -538,7 +541,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         if (!this.onlyLabelPlanets) {
             this.ctx.fillStyle = "#ffffff" + alphaHex;
-            const refractApplies = refractionUniforms.uRefractionEnabled.value > 0.5;
+            const refractApplies = !camera._skyPhotoProject && refractionUniforms.uRefractionEnabled.value > 0.5;
             const refractOpts = refractApplies ? refractionOptsFromUniforms() : null;
             for (var HR in this.nightSky.starField.commonNames) {
                 const n = HR - 1

@@ -2208,6 +2208,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         const starTracker = NodeMan.get("starTrackCameraController", false);
+        if (this.id === "video" && starTracker && !Globals.deserializing
+            && restoreIndex === undefined && !this.pendingVideoRestore) {
+            starTracker.photoRegistration = null;
+        }
         const autoStarAnalysis = shouldAnalyzeImportedStarImage({
             template: Sit.templateSource?.name,
             automatic: starTracker?.autoAnalyzeImages,

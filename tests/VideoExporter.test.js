@@ -8,8 +8,11 @@ import {
     VideoExportManager,
 } from "../src/VideoExporter";
 import {ViewMan} from "../src/CViewManager";
+import * as Utils from "../src/utils";
 
 jest.mock('../src/CViewManager', () => ({ViewMan: {get: jest.fn()}}));
+jest.mock('../src/ImageExporter', () => ({downloadRenderedImage: jest.fn(() => ({filename: 'frame.png'}))}));
+import {downloadRenderedImage} from "../src/ImageExporter";
 
 describe('per-view render dialog', () => {
     afterEach(() => jest.restoreAllMocks());
@@ -27,7 +30,7 @@ describe('per-view render dialog', () => {
         jest.spyOn(manager, 'promptExportSettings').mockResolvedValue(videoFilter);
         await manager.renderSingleViewVideo('mainView');
         expect(ViewMan.get).toHaveBeenCalledWith('mainView', false);
-        expect(manager.promptExportSettings).toHaveBeenCalledWith(expect.stringContaining('mainView'), {viewId: 'mainView'});
+        expect(manager.promptExportSettings).toHaveBeenCalledWith(expect.stringContaining('mainView'), {viewId: 'mainView', allowImage: true});
         expect(view.exportVideo).toHaveBeenCalledWith('mp4-h264', true, true, {
             loops: 3, uniqueFramesOnly: true, uniqueFrameMeanAbsDiffThreshold: 1, videoFilter,
         });
@@ -40,6 +43,18 @@ describe('per-view render dialog', () => {
         ViewMan.get.mockReturnValue(view);
         jest.spyOn(manager, 'promptExportSettings').mockResolvedValue(null);
         await manager.renderSingleViewVideo('lookView');
+        expect(view.exportVideo).not.toHaveBeenCalled();
+    });
+
+    test('Render Single Image downloads the exact preview blob without starting video export', async () => {
+        jest.spyOn(Utils, 'getExportPrefix').mockReturnValue('Sitrec');
+        const manager = new VideoExportManager();
+        const view = {canvas: {}, exportVideo: jest.fn()};
+        ViewMan.get.mockReturnValue(view);
+        const imageBlob = {type: 'image/png'};
+        jest.spyOn(manager, 'promptExportSettings').mockResolvedValue({outputKind: 'image', imageBlob, frame: 42});
+        await manager.renderSingleViewVideo('lookView');
+        expect(downloadRenderedImage).toHaveBeenCalledWith(imageBlob, expect.objectContaining({viewId: 'lookView', frame: 42}));
         expect(view.exportVideo).not.toHaveBeenCalled();
     });
 

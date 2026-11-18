@@ -1113,12 +1113,12 @@ const en = {
             tooltip: "Options for rendering and exporting video files from Sitrec views or full viewport",
         },
         renderView: {
-            label: "Render Video View",
-            tooltip: "Select which view to export as video",
+            label: "View to Render",
+            tooltip: "Select which view to export as a video or single image",
         },
         renderSingleVideo: {
-            label: "Render Single View Video",
-            tooltip: "Render the view chosen in Render Video View to a video file, from the In frame to the Out frame.\nA dialog opens first, where you can add effects and see a preview.",
+            label: "Render Single View",
+            tooltip: "Preview and export the selected view, including labels and overlays. Render Video exports the In–Out range; Render Single Image saves the current frame as PNG or JPEG.",
         },
         videoFormat: {
             label: "Video Format",

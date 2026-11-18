@@ -274,6 +274,10 @@ patterns.push({
     from: './src/H264Utils.js',
     to: './tools/src/H264Utils.js'
 });
+patterns.push({
+    from: './src/VideoFrameCanvas.js',
+    to: './tools/src/VideoFrameCanvas.js'
+});
 
 // Copy mediabunny bundle for tools
 patterns.push({

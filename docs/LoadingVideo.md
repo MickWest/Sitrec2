@@ -356,7 +356,7 @@ fewer rows.
 
 The header also has icons: a **readout** toggle, a **100%** zoom button (press it again to go
 back to the previous zoom), and a **render** button that exports this view on its own
-(**Render Single View Video**, see [Rendering and Exporting Video](Video.md)).
+(**Render Single View**, see [Rendering and Exporting Video](Video.md)).
 
 ---
 

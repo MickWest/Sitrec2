@@ -611,58 +611,44 @@ export class VideoExportManager {
     // Every user-facing render opens this first: signal format, the recorded-off-a-screen
     // simulation and the compression settings, over a live preview of a real frame.
     // Returns null when the user cancels, in which case the export must not start.
-    async promptExportSettings(title, {viewId = this.videoExportView} = {}) {
-        const { ViewMan } = await import("./CViewManager");
-        const { par } = await import("./par");
-        const { showVideoFilterDialog } = await import("./videoFilters/VideoFilterDialog");
-        const {createVideoFormatExportLayer, videoFormatOSDViews} = await import("./videoFilters/VideoFormatLayer");
-
-        // Snapshot a frame for the preview. The view renderers do not set
-        // preserveDrawingBuffer, so the canvas has to be re-rendered and copied within
-        // the same task or it reads back empty.
-        let previewCanvas = null;
-        let sceneEffectsIncluded = false;
+    async promptExportSettings(title, {viewId = this.videoExportView, allowImage = false} = {}) {
+        const {ViewMan} = await import("./CViewManager");
+        const {par} = await import("./par");
+        const {Sit, setRenderOne} = await import("./Globals");
+        const {showVideoFilterDialog} = await import("./videoFilters/VideoFilterDialog");
+        const {createSingleViewCapture} = await import("./SingleViewCapture");
         const view = ViewMan.get(viewId, false) ?? ViewMan.get("lookView", false);
-        if (view && view.canvas && view.canvas.width > 0 && view.canvas.height > 0) {
-            let formatLayer = null;
-            try {
-                formatLayer = await createVideoFormatExportLayer(view, {
-                    width: view.canvas.width,
-                    height: Math.max(2, Math.round(view.canvas.width * view.heightPx / view.widthPx / 2) * 2),
-                    fps: 30,
-                });
-                const frame = Math.floor(par.frame);
-                view.renderCanvas(frame);
-                previewCanvas = document.createElement("canvas");
-                previewCanvas.width = view.canvas.width;
-                previewCanvas.height = formatLayer?.source.height ?? view.canvas.height;
-                const ctx = previewCanvas.getContext("2d");
-                if (formatLayer) {
-                    for (const child of videoFormatOSDViews(view)) child.renderCanvas(frame);
-                    formatLayer.capture();
-                    formatLayer.draw(ctx, 0, 0, previewCanvas.width, previewCanvas.height);
-                    sceneEffectsIncluded = true;
-                } else {
-                    ctx.drawImage(view.canvas, 0, 0);
-                }
-            } catch (e) {
-                // No preview frame available; the dialog falls back to colour bars.
-                previewCanvas = null;
-            } finally {
-                formatLayer?.dispose();
+        if (!view?.canvas?.width) return null;
+        const frame = Math.floor(par.frame), paused = par.paused;
+        par.paused = true;
+        let capture;
+        try {
+            const plan = createVideoExportFramePlan({startFrame: Sit.aFrame, endFrame: Sit.bFrame,
+                sourceFps: Sit.fps, playbackSpeed: par.playbackSpeed ?? 1, pingPong: par.pingPong, loops: this.videoExportLoops});
+            capture = await createSingleViewCapture(view, {retina: this.retinaExport, fps: plan.fps});
+            await capture.render(frame);
+            if (this.waitForBackgroundLoading) {
+                await waitForExportFrameSettled({frame, viewIds: view.camera ? [view.id] : [],
+                    renderFrame: () => capture.render(frame), logPrefix: "Render preview"});
             }
+            const previewCanvas = capture.finish();
+            const encodingSupport = await checkVideoEncodingSupport();
+            const settings = await showVideoFilterDialog({
+                title, formatOptions: getFilteredVideoFormatOptions(encodingSupport), formatId: this.videoFormat,
+                getPreviewCanvas: () => previewCanvas, sceneEffectsIncluded: capture.sceneEffectsIncluded,
+                allowImage, frame, fps: plan.fps,
+            });
+            if (settings?.encoding?.formatId) this.videoFormat = settings.encoding.formatId;
+            return settings;
+        } catch (error) {
+            showError(`Render preview failed: ${error.message}`);
+            return null;
+        } finally {
+            capture?.dispose();
+            par.frame = frame;
+            par.paused = paused;
+            setRenderOne(true);
         }
-
-        const encodingSupport = await checkVideoEncodingSupport();
-        const settings = await showVideoFilterDialog({
-            title,
-            formatOptions: getFilteredVideoFormatOptions(encodingSupport),
-            formatId: this.videoFormat,
-            getPreviewCanvas: () => previewCanvas,
-            sceneEffectsIncluded,
-        });
-        if (settings?.encoding?.formatId) this.videoFormat = settings.encoding.formatId;
-        return settings;
     }
 
     // Used by the Video menu and each view's camera icon. Keep the target local
@@ -672,8 +658,13 @@ export class VideoExportManager {
         const view = ViewMan.get(viewId, false);
         if (!view?.canvas) return;
         const title = `${t("videoExport.renderSingleVideo.label")} — ${view.uiBar?.titleMenu?._title ?? viewId}`;
-        const videoFilter = await this.promptExportSettings(title, {viewId});
+        const videoFilter = await this.promptExportSettings(title, {viewId, allowImage: true});
         if (!videoFilter) return;
+        if (videoFilter.outputKind === "image") {
+            const {downloadRenderedImage} = await import("./ImageExporter");
+            const {getExportPrefix} = await import("./utils");
+            return downloadRenderedImage(videoFilter.imageBlob, {viewId, frame: videoFilter.frame, prefix: getExportPrefix()});
+        }
         if (view.exportVideo) {
             return view.exportVideo(this.videoFormat, this.exportAudio, this.waitForBackgroundLoading, {
                 loops: this.videoExportLoops,
@@ -1263,9 +1254,14 @@ export class VideoExportManager {
         }
 
         let formatLayer = null;
+        let singleCapture = null;
         try {
+            if (exportView) {
+                const {createSingleViewCapture} = await import("./SingleViewCapture");
+                singleCapture = await createSingleViewCapture(exportView, {width, height, fps: plan.fps});
+            }
             const host = ViewMan.get("lookView", false);
-            if (host?.widthPx > 0 && host?.heightPx > 0 && includesView(host)) {
+            if (!singleCapture && host?.widthPx > 0 && host?.heightPx > 0 && includesView(host)) {
                 formatLayer = await createVideoFormatExportLayer(host, {
                     width: Math.max(2, Math.round(host.widthPx * scale / 2) * 2),
                     height: Math.max(2, Math.round(host.heightPx * scale / 2) * 2),
@@ -1293,6 +1289,10 @@ export class VideoExportManager {
 
             const visible3DViewIds = [];
             const renderCompositeFrame = async (frame) => {
+                if (singleCapture) {
+                    await singleCapture.render(frame);
+                    return;
+                }
                 par.frame = frame;
                 GlobalDateTimeNode.update(frame);
 
@@ -1433,6 +1433,10 @@ export class VideoExportManager {
             };
 
             const finishCompositeFrame = () => {
+                if (singleCapture) {
+                    compositeCtx.drawImage(singleCapture.finish(), 0, 0);
+                    return;
+                }
                 if (formatLayer) {
                     const host = formatLayer.host;
                     formatLayer.draw(compositeCtx, (host.leftPx - originX) * scale, (host.topPx - originY) * scale,
@@ -1535,6 +1539,7 @@ export class VideoExportManager {
             alert('Viewport video export failed: ' + e.message);
         } finally {
             formatLayer?.dispose();
+            singleCapture?.dispose();
             progress.remove();
             par.frame = savedFrame;
             par.paused = savedPaused;

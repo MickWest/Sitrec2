@@ -1,6 +1,7 @@
-// The look camera's attitude projected into the source picture, before the
-// video's own crop, zoom, pan and stabilization. Shared by all celestial overlays.
-import {NodeMan} from "./Globals";
+// Project through the photo's saved plate, or through Look when no photo is
+// registered, before the video's crop, zoom, pan and stabilization.
+import {GlobalDateTimeNode, NodeMan} from "./Globals";
+import {activeSkyPhoto, registeredPhotoCamera} from "./SkyPhotoRegistration";
 import {withDisplayedCamera} from "./ViewUtils";
 import {applyAffine, viewStabilizationMatrix} from "./CVideoData";
 import {getFlowAlignRotation} from "./FlowAlignment";
@@ -13,13 +14,14 @@ export function videoSkyProjection(video, frame) {
     const width = video.videoWidth, height = video.videoHeight;
     if (!look?.camera || !(width > 0 && height > 0)) return null;
     const fov = look._lodSavedFov ?? look.camera.fov;
-    const camera = withDisplayedCamera(look, live => {
+    const plate = activeSkyPhoto(video);
+    const camera = plate ? registeredPhotoCamera(plate, look.camera, GlobalDateTimeNode.frameToDate(frame)) : withDisplayedCamera(look, live => {
         const copy = live.clone();
         copy._fisheyeProxyFor = live;
         copy._panoramaProxyFor = live;
         return copy;
     });
-    camera.fov = fov;
+    if (!plate) camera.fov = fov;
     camera._videoSky = true;
     camera.aspect = width / height;
     camera.zoom = 1;
@@ -54,6 +56,12 @@ export function videoSkyProjection(video, frame) {
 
 // Unlike the look pane, a video's panorama has the source picture's aspect.
 export function projectSkyPoint(pos, camera) {
+    if (camera._skyPhotoProject) {
+        const pixel = camera._skyPhotoProject(pos);
+        const plate = camera._skyPhotoPlate;
+        return pixel ? pos.set(pixel[0] / plate.width * 2 - 1, 1 - pixel[1] / plate.height * 2, 0)
+            : pos.set(0, 0, 2);
+    }
     if (camera._videoSky) {
         if (isPanoramicCamera(camera) || isFisheyeCamera(camera)) {
             pos.applyMatrix4(camera.matrixWorldInverse);

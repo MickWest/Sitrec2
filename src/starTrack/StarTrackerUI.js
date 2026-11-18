@@ -1,4 +1,6 @@
 import {canUseSharedStarLabels} from "./StarChartPolicy";
+import {makeSkyPhotoPlate} from "./SkyPhotoPlate";
+import {activeSkyPhoto, disposeSkyPhoto} from "../SkyPhotoRegistration";
 import {findNightView} from "./StarNightView";
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
@@ -1510,7 +1512,9 @@ class CNodeControllerStarTrack extends CNodeController {
         // frame's centre, and of a point above it - starting at frame0. See bakeFrom().
         this.autoAnalyzeImages = v.autoAnalyzeImages ?? (Sit.templateSource?.name?.trim().toLowerCase() === "star tracker");
         this.allowNightViewDateChange = v.allowNightViewDateChange ?? false;
-        this.addSimpleSerials(["autoAnalyzeImages", "allowNightViewDateChange"]);
+        this.registerPhotoInSky = v.registerPhotoInSky ?? false;
+        this.photoRegistration = v.photoRegistration ?? null;
+        this.addSimpleSerials(["autoAnalyzeImages", "allowNightViewDateChange", "registerPhotoInSky", "photoRegistration"]);
         this.frame0 = v.frame0 ?? 0;
         this.poseTrack = Array.isArray(v.poseTrack) ? v.poseTrack : null;
         this.vfovDeg = Number.isFinite(v.vfovDeg) ? v.vfovDeg : null;
@@ -1614,6 +1618,11 @@ class CNodeControllerStarTrack extends CNodeController {
         };
     }
 
+    dispose() {
+        disposeSkyPhoto(this);
+        super.dispose();
+    }
+
     modSerialize() {
         return {
             ...super.modSerialize(),
@@ -1627,6 +1636,7 @@ class CNodeControllerStarTrack extends CNodeController {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        if (this.registerPhotoInSky) params.syncCameraToStars = false;
         if (Number.isFinite(v.frame0)) this.frame0 = v.frame0;
         if (Array.isArray(v.poseTrack)) this.poseTrack = v.poseTrack;
         if (Number.isFinite(v.vfovDeg)) this.vfovDeg = v.vfovDeg;
@@ -2065,6 +2075,11 @@ function pointSourceStats(track) {
  * After a new identification - blind or manual - put it on the camera.
  */
 function applySolveToCamera(r) {
+    const registration = NodeMan.get("starTrackCameraController", false);
+    if (registration?.registerPhotoInSky && videoView()?.videoData instanceof CVideoImageData) {
+        if (!activeSkyPhoto()) registerSkyPhoto();
+        return;
+    }
     // With the sync flag set, a successful identify TAKES the camera - that is what the
     // flag means, and it is why the flag replaced a button. syncCameraToStarTrack does
     // the bake, the attach and the option selection, and writes its own status; the
@@ -5011,8 +5026,44 @@ export function autoAnalyzeStarImage({videoData, viewId}) {
 }
 
 function sharedStarLabelsActive() {
-    return canUseSharedStarLabels(result, NodeMan.get("CameraLOSController", false)?.choice,
+    return !!activeSkyPhoto() || canUseSharedStarLabels(result, NodeMan.get("CameraLOSController", false)?.choice,
         NodeMan.get("fovSwitch", false)?.choice);
+}
+
+function releaseRegisteredPhotoCamera() {
+    const camera = NodeMan.get("lookCamera", false)?.camera;
+    if (!camera) return;
+    NodeMan.get("ptzAngles", false)?.syncFromCamera(camera);
+    NodeMan.get("CameraLOSController", false)?.selectOption("Manual");
+    NodeMan.get("fovSwitch", false)?.selectOption("userFOV");
+    camera.zoom = 1;
+    params.syncCameraToStars = false;
+    setRenderOne();
+}
+
+function registerSkyPhoto() {
+    const video = videoView(), controller = NodeMan.get("starTrackCameraController", false);
+    if (!controller || !(video?.videoData instanceof CVideoImageData)) {
+        params.status = "sky registration requires a still photo";
+        return false;
+    }
+    if (result?.videoData !== video.videoData || !result.identify?.solved?.ok) {
+        params.status = "identify the stars to register this photo";
+        return false;
+    }
+    const plate = makeSkyPhotoPlate(result, result.frame0);
+    if (!plate) { params.status = "this solve has no photo calibration"; return false; }
+    plate.source = video.imageFileID || video.fileName;
+    // Aim at the photo once; after this, Look and Video have independent projections.
+    syncCameraToStarTrack();
+    NodeMan.get("lookCamera")?.update(par.frame);
+    controller.photoRegistration = plate;
+    controller.registerPhotoInSky = true;
+    releaseRegisteredPhotoCamera();
+    enableSharedStarLabels();
+    params.status = "photo registered in the sky — Look can pan and zoom independently";
+    setRenderOne();
+    return true;
 }
 
 function enableSharedStarLabels() {
@@ -5121,7 +5172,7 @@ export function setupStarTrackerMenu() {
     // is evaluated (the same reason StarAdjustOptimize installs its hook late).
     if (isLocal && typeof window !== "undefined") {
         window.__starTracker = {result: () => result, setStarLabel, addStarAt, applyManualLabels,
-            runFullStarTracker, moveToNightView, enableSharedStarLabels, sharedStarLabelsActive,
+            runFullStarTracker, moveToNightView, enableSharedStarLabels, sharedStarLabelsActive, registerSkyPhoto,
             status: () => ({running, trackerHasWork, status: params.status}),
             router: () => getInteractionRouter()};
     }
@@ -5142,6 +5193,17 @@ export function setupStarTrackerMenu() {
     if (starController) {
         folder.add(starController, "autoAnalyzeImages").name("Analyze New Images").listen()
             .tooltip("Automatically analyze an imported image in a fresh scene, before a search, camera setup or earlier analysis. On by default in the Star Tracker template.");
+        folder.add(starController, "registerPhotoInSky").name("Register Photo in Sky").listen()
+            .onChange(on => {
+                if (on) {
+                    if (activeSkyPhoto()) { releaseRegisteredPhotoCamera(); enableSharedStarLabels(); }
+                    else registerSkyPhoto();
+                }
+                setRenderOne();
+            })
+            .tooltip("Keep this photo at its solved position in the sky. Look can pan and zoom independently; Video labels stay on the photo. Turn on before analysis to register the first successful solve. The Look photo overlay and its opacity controls still apply. Registration is saved with the scene.");
+        folder.add({register: registerSkyPhoto}, "register").name("Re-register Photo")
+            .tooltip("Replace the saved photo registration with the current successful solve and center Look on it.");
         folder.add({move: moveToNightView}, "move").name("Find Nighttime Viewpoint")
             .tooltip("Move to a dark viewing location with the fitted star field above the horizon. This is a viewing aid, not a measurement of where the photograph was taken. Undo restores the previous location and time.");
         folder.add(starController, "allowNightViewDateChange").name("Allow Date Change").listen()
@@ -5178,7 +5240,7 @@ export function setupStarTrackerMenu() {
     // success, so this is the button for the case where it did NOT - a run that had to be tuned
     // by hand, or one whose sync was undone by moving the camera afterwards. That is a
     // main-folder action following a main-folder action, not a tweak.
-    folder.add(params, "syncCameraToStars").name("Sync Camera to Star Field")
+    folder.add(params, "syncCameraToStars").name("Sync Camera to Star Field").listen()
         .onChange((v) => { if (v) syncCameraToStarTrack(); else restoreCameraChoices(); })
         .tooltip("Point the look camera with the solve: \"Star Track\" selected as both the "
             + "heading and the FOV source, so the rendered sky matches the footage's pointing "

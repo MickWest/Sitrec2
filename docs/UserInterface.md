@@ -203,7 +203,7 @@ Next to the name, the busiest of those are repeated as one-click icons.
 
 **Main** then adds the three things only it draws: red parallel lines for Lines of Sight, a white line down a greyed-out frustum for Current LOS, and a cyan triangle for the Camera Frustum.
 
-**Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout and the **video overlay** button after it. **Video** adds the data panel for its own. Each of the three bars ends with a video camera icon, **Render Single View Video**, which exports that view as a video file.
+**Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout and the **video overlay** button after it. **Video** adds the data panel for its own. Each of the three bars ends with a video camera icon, **Render Single View**, which previews and exports that view as a video or a single PNG/JPEG image.
 
 **Video** also has **100%**, which sets the video zoom to 100% and stays lit while it is there. At 100% the whole frame fits in the view, as large as it can be. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
 

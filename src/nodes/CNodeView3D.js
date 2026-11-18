@@ -1,3 +1,5 @@
+import {createSingleViewCapture} from "../SingleViewCapture";
+import {activeSkyPhoto, renderSkyPhoto} from "../SkyPhotoRegistration";
 import {clearThermalStatus, disposeThermalView, ensureThermalView, releaseThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
 import {effectiveRenderMode, frameEffectPasses, frameRenderModeFor} from "../rendering/ViewRenderMode";
@@ -17,13 +19,10 @@ import {
     getVideoExportSpeedSuffix,
     getVideoExtension,
     findFirstVideoData,
-    getCanvasDisplayRect,
     scanDuplicateVideoFrames
 } from "../VideoExporter";
-import {drawVideoWatermark, ExportProgressWidget} from "../utils";
-import {drawAttributionOnCanvas} from "../AttributionOverlay";
+import {ExportProgressWidget} from "../utils";
 import {ECEFToLLAVD_radii, wgs84} from "../LLA-ECEF-ENU";
-import {Frame2Az, Frame2El} from "../JetUtils";
 import {
     CustomManager,
     getEffectiveMSAASamples,
@@ -94,7 +93,7 @@ import * as LAYER from "../LayerMasks";
 import {globalProfiler} from "../VisualProfiler";
 import {fixXRLayerMasks, renderCelestialScene, renderFullscreenQuadStereo} from "../CXRRenderer";
 import {waitForExportFrameSettled} from "../ExportFrameSettler";
-import {createVideoFormatExportLayer, getVideoFormatExportSettings} from "../videoFilters/VideoFormatLayer";
+import {getVideoFormatExportSettings} from "../videoFilters/VideoFormatLayer";
 import {t} from "../i18n";
 import {mouseMethods} from "./CNodeView3DMouse";
 import {cloneTerrainDayNightMaterialForView} from "../js/map33/material/TerrainDayNightMaterial";
@@ -116,6 +115,13 @@ function linearToSrgb(color) {
 }
 
 export class CNodeView3D extends CNodeViewCanvas {
+    // Retain the scene's sync preferences while a registered photo frees Look.
+    get independentSkyPhoto() { return this.id === "lookView" && !!activeSkyPhoto(); }
+    get syncVideoZoom() { return this._syncVideoZoom && !this.independentSkyPhoto; }
+    set syncVideoZoom(value) { this._syncVideoZoom = value; }
+    get syncPixelZoomWithVideo() { return this._syncPixelZoomWithVideo && !this.independentSkyPhoto; }
+    set syncPixelZoomWithVideo(value) { this._syncPixelZoomWithVideo = value; }
+
     constructor(v) {
 
         assert(v.camera !== undefined, "Missing Camera creating CNodeView 3D, id=" + v.id)
@@ -563,11 +569,6 @@ export class CNodeView3D extends CNodeViewCanvas {
             console.log("Audio export skipped: playback speed, A-B pingpong, loops, or unique-frame export would desync from video");
         }
         
-        const compositeCanvas = document.createElement('canvas');
-        compositeCanvas.width = width;
-        compositeCanvas.height = height;
-        const compositeCtx = compositeCanvas.getContext('2d');
-
         // Render Fade drives the video overlay's opacity per output frame instead of, or as well
         // as, the frame number. The compositing pass below reads childView.transparency, so
         // setting it is all that is needed here; forcing the overlay visible and restoring it
@@ -579,9 +580,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             if (fadeOverlay.canvas) fadeOverlay.canvas.style.opacity = alpha;
         };
 
-        let formatLayer = null;
+        let capture = null;
         try {
-            formatLayer = await createVideoFormatExportLayer(this, {width, height, fps: plan.fps});
+            capture = await createSingleViewCapture(this, {width, height, fps: plan.fps});
             const exporter = await createVideoExporter(formatId, {
                 width,
                 height,
@@ -600,90 +601,13 @@ export class CNodeView3D extends CNodeViewCanvas {
             
             await exporter.initialize();
             
-            let UpdatePRFromEA = null;
-            if (Sit.azSlider) {
-                const jetStuff = await import("../JetStuff");
-                UpdatePRFromEA = jetStuff.UpdatePRFromEA;
-            }
-            
             for (let i = 0; i < plan.totalFrames; i++) {
                 if (progress.shouldStop()) break;
                 
                 const frame = plan.frameAt(i);
                 const renderSingleViewFrame = async () => {
                     if (fadeOverlay) setOverlayAlpha(plan.alphaAt(i));
-                    par.frame = frame;
-                    GlobalDateTimeNode.update(frame);
-                    
-                    if (Sit.azSlider) {
-                        par.az = Frame2Az(par.frame);
-                        par.el = Frame2El(par.frame);
-                        UpdatePRFromEA();
-                    }
-                    
-                    for (const entry of Object.values(NodeMan.list)) {
-                        const node = entry.data;
-                        if (node.isController && !node.allowUpdate) {
-                            assert(node.update === CNode.prototype.update,
-                                `Controller ${node.id} has overridden update() - move logic to apply()`);
-                            continue;
-                        }
-                        if (node.update !== undefined) {
-                            node.update(frame);
-                        }
-                        if (node.videoData && node.videoData.waitForFrame) {
-                            await node.videoData.waitForFrame(frame);
-                        }
-                    }
-                    
-                    this.camera.updateMatrix();
-                    this.camera.updateMatrixWorld();
-                    NodeMan.preRenderAll(this);
-
-                    this.renderCanvas(frame);
-
-                    compositeCtx.drawImage(this.canvas, 0, 0);
-
-                    // Also render visible child views (overlays and relativeTo children like compass, MQ9UI)
-                    // Scale from CSS pixels to composite canvas backing pixels.
-                    //
-                    // The composite IS this view's canvas, so the mapping basis is the rect that
-                    // canvas occupies on screen, not the whole div. With matchVideoAspect the two
-                    // differ: the canvas is letterboxed inside the div, so a child mapped against
-                    // the div lands stretched across the full frame while the 3D behind it is the
-                    // letterboxed crop. Child coordinates are in div space, hence the -rect.x/y.
-                    const rect = getCanvasDisplayRect(this);
-                    const scaleX = width / rect.width;
-                    const scaleY = height / rect.height;
-                    ViewMan.computeEffectiveVisibility();
-                    ViewMan.iterate((id, childView) => {
-                        if (childView === this) return;
-                        if (!childView._effectivelyVisible) return;
-                        const isOverlayChild = (childView.overlayView === this);
-                        const isChild = isOverlayChild ||
-                                        (childView.in.relativeTo === this);
-                        if (!isChild) return;
-                        if (isOverlayChild && childView.canvas &&
-                            (childView.canvas.style.display === "none" || childView.canvas.style.visibility === "hidden")) {
-                            // Hidden overlay canvases can retain stale pixels if they were previously shown.
-                            // Skip drawing them to match on-screen presentation.
-                            return;
-                        }
-
-                        childView.renderCanvas(frame);
-                        if (childView.canvas) {
-                            const dx = (childView.leftPx - this.leftPx - rect.x) * scaleX;
-                            const dy = (childView.topPx - this.topPx - rect.y) * scaleY;
-                            const dw = childView.widthPx * scaleX;
-                            const dh = childView.heightPx * scaleY;
-                            const alpha = childView.transparency !== undefined ? childView.transparency : 1;
-                            if (alpha < 1) compositeCtx.globalAlpha = alpha;
-                            compositeCtx.drawImage(childView.canvas, dx, dy, dw, dh);
-                            if (alpha < 1) compositeCtx.globalAlpha = 1;
-                        }
-                    });
-
-                    formatLayer?.capture();
+                    await capture.render(frame);
                 };
 
                 await renderSingleViewFrame();
@@ -697,10 +621,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     });
                 }
                 
-                formatLayer?.draw(compositeCtx, 0, 0, width, height);
-                drawVideoWatermark(compositeCtx, width);
-                drawAttributionOnCanvas(compositeCtx, width, height);
-                await exporter.addFrame(compositeCanvas, i);
+                await exporter.addFrame(capture.finish(), i);
                 
                 if (i % 10 === 0) {
                     progress.update(i + 1);
@@ -731,7 +652,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             console.error('Export failed:', e);
             alert('Video export failed: ' + e.message);
         } finally {
-            formatLayer?.dispose();
+            capture?.dispose();
             progress.remove();
             par.frame = savedFrame;
             par.paused = savedPaused;
@@ -1217,7 +1138,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // `syncVideoZoom` alone — equivalent while every video-synced view sets both. And the
         // matchVideoAspect block is already effectively self-scoping, keying on a per-camera
         // `<cameraNode>_Frustum` node that the main camera does not have.
-        if (this.id === "lookView") {
+        if (this.id === "lookView" && !this.independentSkyPhoto) {
             let videoView = null;
             if (NodeMan.exists("mirrorVideo")) videoView = NodeMan.get("mirrorVideo");
             else if (NodeMan.exists("video")) videoView = NodeMan.get("video");
@@ -1231,7 +1152,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // Apply matchVideoAspect: adjust FOV and aspect to match video,
         // same as renderTargetAndEffects() does for actual rendering.
         const frustum = NodeMan.get(this.cameraNode.id + "_Frustum", false);
-        if (frustum && frustum.matchVideoAspect && frustum.videoAspect) {
+        if (!this.independentSkyPhoto && frustum && frustum.matchVideoAspect && frustum.videoAspect) {
             const videoAspect = frustum.videoAspect;
             const viewAspect = this.camera.aspect;
             if (videoAspect > viewAspect) {
@@ -2244,7 +2165,12 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 if (globalProfiler) globalProfiler.push('#ffa500', 'rtSetup');
                 // if the lookView, then check for the video view
-                if (this.id === "lookView" && !panoramaPass) {
+                if (this.independentSkyPhoto) {
+                    this._matchVideoAspect = false;
+                    this.fovOverride = undefined;
+                    this.camera.zoom = 1;
+                }
+                if (this.id === "lookView" && !panoramaPass && !this.independentSkyPhoto) {
 
                     let videoView = null;
                     // we default the the mirrorVideo, but if that doesn't exist, then we use the video view
@@ -2781,6 +2707,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         refraction?.captureBackground(this, currentRenderTarget);
                         this.renderAtmosphereScene(GlobalScene, this.camera);
                         captureRidgeline(this);
+                        renderSkyPhoto(this);
                     }
                 } finally {
                     // Reverse order of acquisition.

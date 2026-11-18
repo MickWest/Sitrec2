@@ -1,4 +1,6 @@
 import {CNodeVideoView} from "./CNodeVideoView";
+import {activeSkyPhoto} from "../SkyPhotoRegistration";
+import {CNodeViewCanvas} from "./CNodeViewCanvas";
 
 export class CNodeMirrorVideoView extends CNodeVideoView {
     // Answered from the prototype so it is already true while the base constructor runs,
@@ -20,6 +22,15 @@ export class CNodeMirrorVideoView extends CNodeVideoView {
     }
 
     // update just checks to see if the video has changed
+    renderCanvas(frame) {
+        if (activeSkyPhoto(this.in.mirror)) {
+            CNodeViewCanvas.prototype.renderCanvas.call(this, frame);
+            this.ctx.clearRect(0, 0, this.widthPx, this.heightPx);
+            return;
+        }
+        super.renderCanvas(frame);
+    }
+
     // use the new video if it has, and sync pan offset
     update() {
         if (this.in.mirror.videoData !== this.videoData) {

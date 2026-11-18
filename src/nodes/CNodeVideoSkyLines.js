@@ -1,4 +1,6 @@
 import {applyAffine, viewStabilizationMatrix} from "../CVideoData";
+import {activeSkyPhoto, registeredPhotoCamera} from "../SkyPhotoRegistration";
+import {applyAnnualAberration} from "../CelestialMath";
 import {lensToRay} from "../CameraLens";
 // Celestial lines drawn over the video picture: the V boxes of the night sky's Lines folder.
 //
@@ -13,7 +15,7 @@ import {lensToRay} from "../CameraLens";
 // the horizon.
 
 import {CNodeViewUI} from "./CNodeViewUI";
-import {Globals, NodeMan, Sit} from "../Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit} from "../Globals";
 import {Matrix4, Vector3} from "three";
 import {directionToVideoPixel} from "../VideoPixelRay";
 import {applyRefractionECI, prepareObserverRefraction, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
@@ -99,9 +101,13 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         // withDisplayedCamera it also has the zoom and the fit of the look view's own pane.
         const verticalFov = lookView._lodSavedFov ?? lookView.camera.fov;
         let lens = "pinhole";
+        const plate = activeSkyPhoto(video);
+        const date = plate ? GlobalDateTimeNode.frameToDate(frame) : null;
+        let photoCamera;
         withDisplayedCamera(lookView, camera => {
             if (isPanoramicCamera(camera)) lens = "panorama";
             else if (isFisheyeCamera(camera)) lens = "fisheye";
+            if (plate) camera = photoCamera = registeredPhotoCamera(plate, camera, date);
             this.viewMatrix.copy(camera.matrixWorldInverse);
             this.cameraPosition.setFromMatrixPosition(camera.matrixWorld);
         });
@@ -124,7 +130,7 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         const stabilization = viewStabilizationMatrix(video, frame, pictureWidth, pictureHeight);
 
         const aspect = pictureWidth / pictureHeight;
-        const pinhole = lens === "pinhole";
+        const pinhole = !plate && lens === "pinhole";
         const panoramaVFov = panoramaFrame(panoramic.hfov, pictureWidth, pictureHeight).vfov;
         const halfDiagonal = Math.atan(Math.tan(verticalFov * Math.PI / 360) * Math.hypot(1, aspect));
         const gridMinForward = Math.cos(Math.min(PINHOLE_MAX_ANGLE, halfDiagonal + GRID_CULL_MARGIN));
@@ -135,12 +141,14 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         // y up, -z forward), with refraction. False for a grid vertex that is too far outside
         // the picture to be an end of a segment in it.
         const toView = (x, y, z, set, out) => {
-            direction.set(x, y, z).transformDirection(set.horizon ? this.horizonMatrix : skyMatrix);
+            direction.set(x, y, z);
+            if (plate && !set.horizon) applyAnnualAberration(direction, date);
+            direction.transformDirection(set.horizon ? this.horizonMatrix : skyMatrix);
             if (pinhole && set.grid) {
                 out.copy(direction).transformDirection(this.viewMatrix);
                 if (-out.z < gridMinForward) return false;
             }
-            if (set.refracted && refraction.enabled) {
+            if (!plate && set.refracted && refraction.enabled) {
                 applyRefractionECI(direction, refraction.zenith, refraction.opts);
             }
             out.copy(direction).transformDirection(this.viewMatrix);
@@ -150,7 +158,12 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         // A direction on the camera's axes -> canvas pixels. False where the lens has no image
         // of it. The direction is changed.
         const toCanvas = (view, out) => {
-            if (pinhole) {
+            if (photoCamera) {
+                view.transformDirection(photoCamera.matrixWorld);
+                const p = photoCamera._skyPhotoProject(view);
+                if (!p) return false;
+                [pixel.x, pixel.y] = p;
+            } else if (pinhole) {
                 if (!directionToVideoPixel(view.x, view.y, -view.z, verticalFov, pictureWidth, pictureHeight, pixel)) {
                     return false;
                 }
@@ -207,7 +220,7 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
 
         // A wide lens can put the two ends of one short segment on opposite sides of the
         // picture (the rear seam of a panorama). Such a segment is not drawn.
-        const maxStep = pinhole ? Infinity : dWidth / 2;
+        const maxStep = pinhole || plate?.transform ? Infinity : dWidth / 2;
         const right = dx + dWidth, bottom = dy + dHeight;
         const faded = [];
         const a = {x: 0, y: 0}, b = {x: 0, y: 0}, pole = {x: 0, y: 0};

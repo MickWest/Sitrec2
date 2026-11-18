@@ -46,7 +46,17 @@ To check the match, compare the stars in the look view with the stars in the vid
 
 **Time and place.** Identification needs neither. The camera sync does need the time: Sitrec turns the solved sky position into a camera direction with the sitch's date and time. Each second of error in Start Time turns the camera by about 15 arcseconds about the Earth's axis. A wrong camera position does not change that direction in space, but it changes the ground under it, and so the azimuth and elevation. Set the Start Time and the camera position first if the look view must also match the ground. See [Time, Frames and Syncing](TimeAndSync.md).
 
-**Keeping the result.** Saving a sitch keeps the camera track from the sync, but not the analysis or its circles, so run the analysis again after a reload. A **MISB TS (H.264)** export carries the camera's orientation and field of view for each frame: see [Rendering and Exporting Video](Video.md).
+**Keeping the result.** Saving a sitch keeps the camera track from the sync and any photo registration, but not the analysis or its circles. Run the analysis again if you need those circles after a reload. A **MISB TS (H.264)** export carries the camera's orientation and field of view for each frame: see [Rendering and Exporting Video](Video.md).
+
+## Registering a photo in the sky
+
+Turn on **Video → Star Tracker → Register Photo in Sky** to attach a still photo to its solved sky coordinates. You can turn it on before analysis to capture the first successful solve, or after identifying the stars.
+
+Look initially points at the photo, then its heading and field of view return to Manual. Pan and zoom Look to see the photo in its wider sky context. With the Look photo overlay enabled, the image stays at its registered position and changes shape with the viewing projection, including curved edges in a fisheye view. The existing overlay opacity control still applies.
+
+Video keeps its own projection from the saved registration. Its star names, constellation lines and other celestial annotations stay aligned with the photo while Look moves. Video's own zoom and pan still work independently.
+
+The registration is saved with the scene and works after reload without another analysis. A later solve does not replace it automatically: use **Re-register Photo** to accept the current solve and center Look on it. Turn **Register Photo in Sky** off to use the existing flat overlay again. Importing a new photo clears the previous registration.
 
 ## Glossary
 
@@ -203,6 +213,8 @@ The Star Tracker folder lives under **Video**.
 
 | Control | What it does |
 |---|---|
+| **Register Photo in Sky** | Keep a still photo at its solved sky position, with independent Look navigation and Video annotations. Captures the first successful solve and saves the registration with the scene |
+| **Re-register Photo** | Replace the photo registration with the current successful solve and center Look on it |
 | **Star Tracker Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Analysis Resolution** / **Analysis pixels** | The resolution the frames are analysed at, shared with the other video analysis tools. See [Analysis resolution](PointTrack.md#analysis-resolution) in Point Track |
 | **Find Candidate Stars** | Run the analysis only: find the stars, track them from the **In** frame to the **Out** frame, and sort the tracks. It does not identify the stars |

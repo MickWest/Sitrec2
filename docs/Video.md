@@ -12,7 +12,7 @@ Standards Board) metadata, and the optional simulations of analog video and of f
 
 1. Set the In and Out frames (`Alt`+`I` and `Alt`+`O`) around the part you want.
 2. In **Video → Video Render & Export**, press **Render Viewport Video**.
-3. The render dialog opens. Leave it as it is and press **Render**.
+3. The render dialog opens. Leave it as it is and press **Render Video**.
 
 The browser downloads the video file when the render ends. For a better result, see
 [Getting a good-looking export](#getting-a-good-looking-export).
@@ -25,13 +25,13 @@ They differ in *what* they capture:
 
 | Button | What it captures |
 |---|---|
-| **Render Single View Video** | One view and the overlays on it, at that view's own resolution. Pick which one with *Render Video View* |
+| **Render Single View** | One view and its labels and overlays. Pick the view with *View to Render*, then export the In/Out range as video or the current frame as PNG/JPEG |
 | **Render Viewport Video** | All visible views and their overlays, composited and laid out as you see them |
 | **Render Source Video** | The video alone, at its original resolution, without the 3D scene — but **not** an untouched copy. See the warning below |
 | **Render Fullscreen Video** | The same viewport render, but it hides the menu bar and puts the browser into fullscreen first, so you get the layout at full screen size with no UI in shot |
 | **Record Browser Window** | A screen capture of the tab, via the browser's own screen-sharing prompt. The tab is captured as shown, except that the render menus are closed first |
 
-All of them step through the **In/Out range** frame by frame — including
+Video exports step through the **In/Out range** frame by frame — including
 *Record Browser Window*, which despite the name is not a live recording of you using the app.
 It advances the same frame sequence as the others and captures the screen at each step, so
 the result is the same clip, not a screencast. A-B in a label or tooltip means the In/Out range.
@@ -69,36 +69,35 @@ stabilization, use *Render Source Video*.
 
 ## Choosing the view
 
-*Render Video View* lists every view that can export — by default `lookView`. Overlay views
+*View to Render* lists every view that can export — by default `lookView`. Overlay views
 are not offered on their own; they composite into the render of their parent view and into the
 viewport render.
 
 The headers of the main view, the look view and the video view each have a render-video icon. It
-runs **Render Single View Video** for that view directly, without changing the *Render Video View*
+runs **Render Single View** for that view directly, without changing the *View to Render*
 selection.
 
 ## The render dialog
 
-Every render button opens a settings dialog first. Nothing is captured until you press
-**Render**; **Cancel** or Escape backs out without starting. For a plain export, leave the
+Every render button opens a settings dialog first. No file is exported until you press
+**Render Video** or **Render Single Image**; **Cancel** or Escape backs out without starting. For a plain export, leave the
 dialog as it opens: [Signal format](#signal-format) and
 [Recorded off a screen](#recorded-off-a-screen) are optional, and both start off.
 
+The dialog fills the window, with a scrollable settings column and the largest preview that fits beside it. **Render Video** exports the In/Out range. In **Render Single View**, **Render Single Image** saves the current frame. Image compression starts at **None (PNG)**; choose **JPEG (.jpg)** and a quality level for a smaller, lossy image.
+
+Single-view previews use the same compositor as the export, including visible labels, overlays, scene effects, watermark and attribution. Effects run at export resolution; only the display is scaled to fit the dialog. **Preview → Single image** shows the decoded PNG or JPEG that will be saved. **Preview → Video frame** shows the frame sent to the video encoder, before lossy video compression.
+
 The dialog previews a real frame with your settings applied, updating as you change them,
 so you can judge a look in a second rather than after a five-minute export. The preview shows one
-view, even for a render of the whole viewport: the view in *Render Video View*, the video view for
+view, even for a render of the whole viewport: the view in *View to Render*, the video view for
 *Render Source Video*, or the view whose header icon you pressed. Tick
-**Colour bars** to preview against a test pattern instead — saturated vertical edges and a
+**Test pattern (preview only)** to preview against a test pattern instead — saturated vertical edges and a
 fine grating show the analog artifacts below far better than a photograph does.
-
-![The Render Viewport Video dialog. At the left are the Signal format section with Format set to Pure digital (no filter), the closed Recorded off a screen section, and the Compression section with Container / codec, Bitrate and Keyframe interval. At the right is a preview of a sitch, with a Colour bars checkbox under it. Render and Cancel buttons are along the bottom.](docimages/video-render-dialog.jpg)
-
-The render dialog as it opens. The settings are at the left, and the preview is at the right. The
-title names the render.
 
 **An export always starts unfiltered**: *Pure digital (no filter)*, with *Recorded off a screen* off,
 however the last one was set up. The filter setting is not remembered between exports. Pressing
-**Render** does save your camera settings, *Output resolution*, *Bitrate* and *Keyframe interval*,
+**Render Video** or **Render Single Image** does save your camera settings, *Output resolution*, *Bitrate* and *Keyframe interval*,
 so re-ticking *Recorded off a screen* brings the camera settings back. **Cancel** saves nothing.
 
 If the [live video format effects](#live-video-format-effects) are switched on and the
@@ -188,7 +187,11 @@ Three **Camera** presets — **Phone, handheld**, **Phone, handheld (unsteady)**
   between that grid and the output raster, not from a drawn-on pattern), the rolling refresh
   beat, a reflection on the glass, the monitor bezel, vignette and sensor noise.
 
-### Compression
+### Image Compression
+
+Available in **Render Single View**. **None (PNG)** preserves the rendered pixels without quality loss and is the default each time the dialog opens. **JPEG (.jpg)** uses the independent **JPEG quality** slider. The video bitrate and keyframe interval do not affect still images.
+
+### Video Compression
 
 | Control | Default | What it does |
 |---|---|---|
@@ -225,7 +228,7 @@ MISB TS does not fall back to another format: if the browser cannot encode it at
 render's resolution, the export stops with an error rather than silently dropping the
 metadata.
 
-For **Render Single View Video**, metadata describes that view's camera. Source-video and
+For **Render Single View**, metadata describes that view's camera. Source-video and
 combined-view exports use the look camera. A combined-view export therefore describes the
 look camera, rather than every panel in the image.
 Metadata describes the camera before image cropping, rotation, and simulated lens or screen effects.
@@ -282,7 +285,7 @@ Renders the chosen view while crossfading between the simulation and the video o
 if the look view's *Vid Overlay Trans %* slider were being moved up and down. Useful for a
 direct comparison of the recreation against the footage.
 
-The fade needs a loaded video, and *Render Video View* must be a view with that overlay, normally
+The fade needs a loaded video, and *View to Render* must be a view with that overlay, normally
 `lookView`. A view without it stops with an error, even with *Render Whole Viewport* on.
 
 | Control | Default | What it does |
@@ -294,7 +297,7 @@ The fade needs a loaded video, and *Render Video View* must be a view with that 
 | **Fades** | 2 | Number of crossfades. Each goes to the other view, so 2 goes there and back |
 | **Hold Current Frame** | on | Freezes on the current frame for a still comparison. Off plays the In/Out range while fading, looping it if the fades outlast the clip |
 | **Render Whole Viewport** | off | Renders every visible view as laid out on screen, not just the one view. The fade still runs on the look view's overlay |
-| **Render Fade Video** | — | Opens the render dialog, then renders the view chosen in *Render Video View* (or the whole viewport). Length is Initial Delay + Fades × (Fade Time + Hold Time) |
+| **Render Fade Video** | — | Opens the render dialog, then renders the view chosen in *View to Render* (or the whole viewport). Length is Initial Delay + Fades × (Fade Time + Hold Time) |
 
 ---
 
