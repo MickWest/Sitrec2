@@ -1263,6 +1263,20 @@ describe('CSitrecAPI menu control resolution', () => {
             expect(checkbox.getValue()).toBe(false);
         });
 
+        test('a repeated edit reports the preceding value', async () => {
+            await set('Sat Brightness', 3);
+            const result = await set('Sat Brightness', 4);
+            expect(result.result.oldValue).toBe(3);
+        });
+
+        test('a value edit cannot overwrite a button action', async () => {
+            const action = jest.fn();
+            search.setValue(action);
+            const result = await set('Search Loaded Satellites', 'replace');
+            expect(result.result.error).toContain('executeMenuButton');
+            expect(search.getValue()).toBe(action);
+        });
+
         test('a checkbox refuses a value that is not true or false', async () => {
             const r = await set('Label Flares Only', 'maybe');
 

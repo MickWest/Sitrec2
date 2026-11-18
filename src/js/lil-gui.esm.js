@@ -560,11 +560,14 @@ function normalizeColorString( string ) {
 
     let match, result;
 
-    if ( match = string.match( /(#|0x)?([a-f0-9]{6})/i ) ) {
+    string = string.trim();
+    if ( match = string.match( /^(#|0x)?([a-f0-9]{6})$/i ) ) {
 
         result = match[ 2 ];
 
-    } else if ( match = string.match( /rgb\(\s*(\d*)\s*,\s*(\d*)\s*,\s*(\d*)\s*\)/ ) ) {
+    } else if ( match = string.match( /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i ) ) {
+
+        if ( match.slice( 1 ).some( channel => Number( channel ) > 255 ) ) return false;
 
         result = parseInt( match[ 1 ] ).toString( 16 ).padStart( 2, 0 )
             + parseInt( match[ 2 ] ).toString( 16 ).padStart( 2, 0 )
@@ -652,7 +655,15 @@ const OBJECT = {
     }
 };
 
-const FORMATS = [ STRING, INT, ARRAY, OBJECT ];
+// Three stores linear RGB internally. The picker and its hex strings use sRGB.
+const THREE_COLOR = {
+    isPrimitive: false,
+    match: value => value?.isColor === true && typeof value.getHexString === 'function',
+    fromHexString: ( string, target ) => target.setHex( INT.fromHexString( string ) ),
+    toHexString: value => '#' + value.getHexString()
+};
+
+const FORMATS = [ STRING, INT, ARRAY, THREE_COLOR, OBJECT ];
 
 function getColorFormat( value ) {
     return FORMATS.find( format => format.match( value ) );
@@ -724,12 +735,40 @@ class ColorController extends Controller {
         return this;
     }
 
+    // Scripted edits use setValue directly. Keep the representation chosen at
+    // construction, including the identity of RGB values shared with renderers.
+    setValue( value ) {
+        const source = getColorFormat( value );
+        if ( source === ARRAY || source === OBJECT || source === THREE_COLOR ) {
+            const channels = source === ARRAY ? value : [ value.r, value.g, value.b ];
+            if ( channels.length !== 3 || !channels.every( Number.isFinite ) ) {
+                throw new TypeError( 'Expected three numeric color channels' );
+            }
+            if ( !this._format.isPrimitive && (source === this._format || source === OBJECT && this._format === THREE_COLOR) ) {
+                const target = this.getValue();
+                if ( source === ARRAY ) {
+                    [ target[ 0 ], target[ 1 ], target[ 2 ] ] = channels;
+                } else {
+                    [ target.r, target.g, target.b ] = channels;
+                }
+                return super.setValue( target );
+            }
+        }
+        if ( !source || source === INT && ( !Number.isInteger( value ) || value < 0 || value > 0xffffff ) ) {
+            throw new TypeError( 'Invalid color value' );
+        }
+        const hex = source.toHexString( value, this._rgbScale );
+        if ( !hex ) throw new TypeError( 'Invalid color value' );
+        this._setValueFromHexString( hex );
+        return this;
+    }
+
     _setValueFromHexString( value ) {
 
         if ( this._format.isPrimitive ) {
 
             const newValue = this._format.fromHexString( value );
-            this.setValue( newValue );
+            super.setValue( newValue );
 
         } else {
 

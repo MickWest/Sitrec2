@@ -3045,6 +3045,13 @@ class CSitrecAPI {
 
         const controller = result.controller;
         try {
+            const currentValue = controller.getValue?.();
+            if (typeof currentValue === "function") {
+                return {success: false, error: `Use executeMenuButton for '${path}'.`};
+            }
+            // A color edit can mutate its RGB object in place. Capture the old
+            // color before writing, using the same hex format as the picker.
+            const oldValue = controller._format ? controller.save() : currentValue;
             let finalValue = value;
 
             const typed = this._valueForControl(controller, value);
@@ -3069,7 +3076,7 @@ class CSitrecAPI {
             
             controller.setValue(finalValue);
             this.invalidateMenuDocCache();
-            return { success: true, oldValue: controller.initialValue, newValue: finalValue };
+            return { success: true, oldValue, newValue: finalValue };
         } catch (e) {
             return { success: false, error: e?.message ?? String(e) };
         }
