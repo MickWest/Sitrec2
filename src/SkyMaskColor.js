@@ -66,9 +66,9 @@ export function refineSkyMaskWithColor(rgba, W, H, ground, {luma, texture}, opts
     // corner cannot bend the sky model before trimming has a chance to reject it.
     let state = 0x51a7, best = Infinity;
     const probe = samples.filter((_, i) => i % Math.max(1, Math.floor(samples.length / 300)) === 0);
-    for (let trial = 0; trial < 64; trial++) {
+    for (let trial = 0; trial < 128; trial++) {
         const subset = [];
-        for (let k = 0; k < 12; k++) {
+        for (let k = 0; k < 6; k++) {
             state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
             subset.push(samples[state % samples.length]);
         }
@@ -86,7 +86,11 @@ export function refineSkyMaskWithColor(rgba, W, H, ground, {luma, texture}, opts
             1.4826 * median(live.map(s => Math.abs(s.v[c] - value(model[c], s.b))))));
         const ranked = samples.map(s => ({s, error: Math.max(...scales.map((scale, c) =>
             Math.abs(s.v[c] - value(model[c], s.b)) / scale))})).sort((a, b) => a.error - b.error);
-        live = ranked.slice(0, Math.max(100, Math.floor(samples.length * .75))).map(r => r.s);
+        // A zoom can make a smooth wall cover more than a quarter of the frame.
+        // Never force its samples back into the sky fit to fill a fixed quota.
+        const inliers = ranked.filter(r => r.error <= 3);
+        if (inliers.length < Math.max(100, samples.length * .35)) return null;
+        live = inliers.slice(0, Math.max(100, Math.floor(samples.length * .75))).map(r => r.s);
         model = floors.map((_, c) => fit(live, c));
         if (model.some(c => !c)) return null;
     }

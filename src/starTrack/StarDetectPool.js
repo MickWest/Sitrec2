@@ -73,7 +73,7 @@ function makeSlot() {
             if (fail) fail(new Error(`star detect worker: ${e.data.error}`));
             return;
         }
-        if (done) done(e.data.sources);
+        if (done) done(e.data);
     };
     slot.w.onerror = (err) => {
         const fail = slot.reject;
@@ -105,7 +105,7 @@ export function ensureDetectPool(W, H) {
 /**
  * Detect sources in one frame on the pool. TAKES OWNERSHIP of rgba: the underlying buffer is
  * transferred to the worker, so the caller's view is detached the moment this is called.
- * Resolves to the detector's `sources` array.
+ * Resolves to {sources, foregroundMask}, matching the synchronous detector.
  */
 export function detectInPool(rgba, W, H, opts) {
     return new Promise((resolve, reject) => {

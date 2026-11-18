@@ -181,6 +181,32 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.showMaskPreview = !!show;
         this.updateVisibility();
     }
+
+    // Derived analysis layers are display-only here. They must never enter the
+    // painted canvas, its undo history, or the serialized static mask.
+    setFrameMaskProvider(provider) {
+        this.frameMaskProvider = provider;
+        this.frameMaskImage = null;
+        this.frameMaskPreview = null;
+        setRenderOne(true);
+    }
+
+    frameMaskCanvas(frame) {
+        const mask = this.frameMaskProvider?.(frame);
+        if (!mask) return null;
+        if (mask !== this.frameMaskImage) {
+            const canvas = this.frameMaskPreview ?? document.createElement("canvas");
+            canvas.width = mask.width; canvas.height = mask.height;
+            const ctx = canvas.getContext("2d"), image = ctx.createImageData(mask.width, mask.height);
+            for (let i = 0; i < mask.data.length; i++) if (mask.data[i]) {
+                image.data[4 * i] = 255; image.data[4 * i + 3] = 255;
+            }
+            ctx.putImageData(image, 0, 0);
+            this.frameMaskImage = mask;
+            this.frameMaskPreview = canvas;
+        }
+        return this.frameMaskPreview;
+    }
     
     updateVisibility() {
         const shouldBeVisible = this.editing || this.showMaskPreview;
@@ -685,6 +711,18 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         // the video moved underneath it.
         const ov = this.overlayView;
         ov.getSourceAndDestCoords();
+        const movingMask = this.frameMaskCanvas(frame);
+        if (movingMask) {
+            const sx = movingMask.width / ov.videoWidth, sy = movingMask.height / ov.videoHeight;
+            if (ov.in.zoom !== undefined) {
+                ctx.drawImage(movingMask, ov.sx * sx, ov.sy * sy, ov.sWidth * sx, ov.sHeight * sy,
+                    ov.dx, ov.dy, ov.dWidth, ov.dHeight);
+            } else {
+                ctx.drawImage(movingMask, 0, 0, movingMask.width, movingMask.height,
+                    ov.widthPx * (0.5 + ov.posLeft), ov.heightPx * 0.5 + ov.widthPx * ov.posTop,
+                    ov.widthPx * (ov.posRight - ov.posLeft), ov.widthPx * (ov.posBot - ov.posTop));
+            }
+        }
         if (ov.in.zoom !== undefined) {
             ctx.drawImage(this.maskCanvas,
                 ov.sx, ov.sy, ov.sWidth, ov.sHeight,

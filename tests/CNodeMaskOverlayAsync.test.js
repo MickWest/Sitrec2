@@ -38,6 +38,7 @@ beforeEach(() => {
     global.document = {createElement: () => {
         const canvas = {width: 0, height: 0};
         const context = {drawImage: jest.fn(), clearRect: jest.fn(), putImageData: jest.fn(),
+            createImageData: (w, h) => ({width:w, height:h, data:new Uint8ClampedArray(w*h*4)}),
             getImageData: jest.fn(() => ({width: canvas.width, height: canvas.height, data: []}))};
         canvas.getContext = () => context;
         return canvas;
@@ -218,4 +219,26 @@ describe('brush circle', () => {
         overlay.dispose();
         expect(mockPage.listeners).toHaveLength(0);
     });
+});
+
+
+test('moving preview uses the requested frame without changing or saving the painted mask', () => {
+    const overlay = restored(), original = overlay.maskData;
+    const masks = [
+        {width:2, height:1, data:new Uint8Array([1,0])},
+        {width:2, height:1, data:new Uint8Array([0,1])},
+    ];
+    overlay.setFrameMaskProvider(frame => masks[frame] ?? null);
+    const first = overlay.frameMaskCanvas(0);
+    expect(first.getContext().putImageData.mock.calls.at(-1)[0].data[3]).toBe(255);
+    overlay.frameMaskCanvas(1);
+    const second = first.getContext().putImageData.mock.calls.at(-1)[0].data;
+    expect(second[3]).toBe(0);
+    expect(second[7]).toBe(255);
+    expect(overlay.frameMaskCanvas(2)).toBeNull();
+    expect(overlay.maskData).toBe(original);
+    expect(overlay.maskCtx.putImageData).not.toHaveBeenCalled();
+    expect(overlay.modSerialize()).not.toHaveProperty('frameMaskProvider');
+    overlay.setFrameMaskProvider(null);
+    expect(overlay.frameMaskCanvas(0)).toBeNull();
 });

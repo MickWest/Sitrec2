@@ -8,18 +8,18 @@
 // is what makes this a one-line body.
 //
 // PROTOCOL. One message in: {rgba: ArrayBuffer, W, H, opts}, the pixel buffer TRANSFERRED by the
-// pool so a frame is never copied. One message out: {sources} on success, {error} on failure.
-// Only the sources go back - the background model detectSources also returns is several
+// pool so a frame is never copied. One message out: {sources, foregroundMask} or {error}.
+// Sources and the small foreground mask go back - the background model is several
 // Float32Array planes the analysis loop never reads, and cloning them per frame would be most of
 // the reply's cost for nothing.
 
-import {detectSources} from "../starTrack/StarDetect";
+import {detectFrameSources} from "../starTrack/StarForegroundMask";
 
 self.onmessage = (e) => {
     const {rgba, W, H, opts} = e.data;
     try {
-        const {sources} = detectSources(new Uint8ClampedArray(rgba), W, H, opts);
-        self.postMessage({sources});
+        const result = detectFrameSources(new Uint8ClampedArray(rgba), W, H, opts);
+        self.postMessage(result, result.foregroundMask ? [result.foregroundMask.data.buffer] : []);
     } catch (err) {
         // Reported rather than thrown, so the pool can re-run the frame on the main thread with
         // a reason instead of seeing an opaque `onerror`.

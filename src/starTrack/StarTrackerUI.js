@@ -24,6 +24,7 @@ import {ECEFToLLAVD_radii, LLAToECEFVD} from "../LLA-ECEF-ENU";
 import * as Astronomy from "astronomy-engine";
 import {CVideoImageData} from "../CVideoImageData";
 import {detectionMaskFromAlpha} from "./StarMask";
+import {combineForegroundMask, detectFrameSources, foregroundMaskForFrame, ForegroundMaskSequence} from "./StarForegroundMask";
 import {applyQuadTreeGroundMask} from "../SkyMaskTool";
 import {applyAffine, invertAffine, viewStabilizationMatrix, viewVideoFrame} from "../CVideoData";
 import {registerFrameRemap} from "../VFRTimeline";
@@ -31,7 +32,7 @@ import {par} from "../par";
 import {abFrameRange} from "../TraverseAnalysisData";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 
-import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
+import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma,
     rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
 import {TRIPLE_DEFAULTS} from "./StarTriples";
@@ -445,7 +446,22 @@ export function starTrackerDetectOptions(W, H) {
  */
 export function starTrackerVideoMask() {
     const maskNode = params.useMask ? NodeMan.get("videoMask", false) : null;
+    if (!maskNode || maskNode.maskEnabled === false) return null;
     if (maskNode?.maskCanvas) maskNode.updateMaskImageData();
+    const view = videoView();
+    if (view?.videoData && videoForegroundMaskEnabled(view)) {
+        const frame = view.lockToInFrame ? Math.max(0, Math.round(par.frame) - (Sit.aFrame ?? 0)) : Math.round(par.frame);
+        const image = view.videoData.getImage(frame);
+        if (image?.width) {
+            const px = view.getFramePixels(image, frame, !!params.applyAdjustments);
+            if (px) {
+                const mask = combineForegroundMask(foregroundMaskForFrame(px.data, px.W, px.H),
+                    detectionMaskFromAlpha(maskNode.maskImageData, px.W, px.H), px.W, px.H);
+                return {maskCanvas: {width: px.W, height: px.H}, isPointMasked: (x, y) =>
+                    x >= 0 && y >= 0 && x < px.W && y < px.H && !!mask[Math.floor(y) * px.W + Math.floor(x)]};
+            }
+        }
+    }
     return (maskNode?.maskCanvas && maskNode.maskImageData) ? maskNode : null;
 }
 
@@ -520,11 +536,16 @@ export function setStarTrackerTweaks({threshSigma, minArea,
  * analysis while the menu describes another.
  */
 export function captureStarTrackerResult() {
-    return {result, quads: liveQuads, status: params.status};
+    return {result, quads: liveQuads, status: params.status, foregroundPreview};
 }
 
 export function restoreStarTrackerResult(snapshot) {
     if (!snapshot) return;
+    clearForegroundPreview();
+    foregroundPreview = snapshot.foregroundPreview ?? null;
+    if (foregroundPreview && NodeMan.get("videoMask", false) === foregroundPreview.node) {
+        foregroundPreview.node.setFrameMaskProvider(foregroundPreview.provider);
+    }
     result = snapshot.result;
     liveQuads = snapshot.quads ?? [];
     Globals.starTrackerResult = snapshot.result ?? undefined;
@@ -609,6 +630,35 @@ export async function detectStarSize(opts = {}) {
 }
 
 const autoMaskedStills = new WeakSet();
+let foregroundPreview = null;
+
+function clearForegroundPreview() {
+    if (foregroundPreview && foregroundPreview.node.frameMaskProvider === foregroundPreview.provider) {
+        foregroundPreview.node.setFrameMaskProvider(null);
+    }
+    foregroundPreview = null;
+}
+
+function videoForegroundMaskEnabled(view) {
+    return params.autoMaskForeground && params.useMask && !(view.videoData instanceof CVideoImageData)
+        && NodeMan.get("videoMask", false)?.maskEnabled !== false;
+}
+
+function startForegroundPreview(view, enabled) {
+    clearForegroundPreview();
+    const node = NodeMan.get("videoMask", false);
+    if (!enabled || !node) return null;
+    const videoData = view.videoData, sequence = new ForegroundMaskSequence();
+    const provider = frame => {
+        if (view.videoData !== videoData || !params.useMask || !params.autoMaskForeground) return null;
+        const sourceFrame = view.lockToInFrame ? Math.max(0, Math.round(frame) - (Sit.aFrame ?? 0)) : Math.round(frame);
+        return sequence.get(sourceFrame);
+    };
+    foregroundPreview = {node, provider};
+    node.setFrameMaskProvider(provider);
+    node.setShowMaskPreview(true);
+    return sequence;
+}
 
 function prepareStillForegroundMask(view) {
     const data = view?.videoData;
@@ -675,6 +725,10 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
         if (!px) { params.status = "no decoded frame to measure"; return true; }
         prepareStillForegroundMask(view);
         const maskImage = starMaskSnapshot();
+        const autoVideoMask = videoForegroundMaskEnabled(view);
+        const calibrationMask = pixels => combineForegroundMask(autoVideoMask
+            ? foregroundMaskForFrame(pixels.data, pixels.W, pixels.H) : null,
+        detectionMaskFromAlpha(maskImage, pixels.W, pixels.H), pixels.W, pixels.H);
 
         let autoNote = "";
         if (params.autoSigma) {
@@ -691,7 +745,7 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
                 if (ctx.stale() || request !== calibrationRequest) return false;
                 if (!ppx) continue;
                 const pick = chooseDetectionSigma(ppx.data, ppx.W, ppx.H,
-                    {excludeMask: detectionMaskFromAlpha(maskImage, ppx.W, ppx.H)});
+                    {excludeMask: calibrationMask(ppx)});
                 if (pick.ok) sigmas.push(pick.sigma);
             }
             if (sigmas.length) {
@@ -705,7 +759,7 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
         }
 
         const cal = calibrateDetection(px.data, px.W, px.H, {threshSigma: params.threshSigma,
-            excludeMask: detectionMaskFromAlpha(maskImage, px.W, px.H)});
+            excludeMask: calibrationMask(px)});
         if (!cal.ok) {
             // Keep whatever calibration exists. A failed measurement is not evidence the
             // previous one was wrong - and clearing it while params.minArea kept its measured
@@ -2720,6 +2774,10 @@ async function runStarTrackerAtResolution(opts) {
         const maskNode = params.useMask ? NodeMan.get("videoMask", false) : null;
         const maskImage = starMaskSnapshot();
         const maskUsable = !!maskImage;
+        const autoVideoMask = videoForegroundMaskEnabled(view);
+        const foregroundMasks = startForegroundPreview(view, autoVideoMask);
+        const foregroundMaskStats = {measured: 0, declined: 0};
+        let stillMask = null;
         const masksBySize = new Map();
         const maskAtSize = (W, H) => {
             const key = `${W}x${H}`;
@@ -2741,6 +2799,7 @@ async function runStarTrackerAtResolution(opts) {
             * Math.max(1, (W * H) / (1276 * 720)));
         const detectOpts = (maxArea, W, H) => ({
             excludeMask: maskAtSize(W, H),
+            autoMaskForeground: autoVideoMask,
             threshSigma: ctx.threshSigma,
             minArea: ctx.minArea,
             maxArea,
@@ -2764,6 +2823,12 @@ async function runStarTrackerAtResolution(opts) {
             // window the render loop maintains around par.frame.
             par.frame = f;
             if (!det) { perFrame.push([]); return; }
+            if (det.foregroundMask) {
+                foregroundMasks?.set(sourceFrameOf(ctx, f), det.foregroundMask);
+                foregroundMaskStats.measured++;
+                if (!det.foregroundMask.reliable) foregroundMaskStats.declined++;
+            }
+            if (still) stillMask = combineForegroundMask(det.foregroundMask, maskAtSize(det.W, det.H), det.W, det.H);
             // The WHOLE detector record is kept, not a trimmed copy. Stage 3's photometry reads
             // apertureFlux/apertureComplete/apertureContaminated off it, and stripping the object
             // down to positions silently demotes every magnitude to the biased isophotal fallback.
@@ -2851,8 +2916,8 @@ async function runStarTrackerAtResolution(opts) {
                     continue;
                 }
                 const maxArea = dynMaxArea(px.W, px.H);
-                const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
-                finalizeFrame(f, {sources, W: px.W, H: px.H, maxArea});
+                const detected = detectFrameSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
+                finalizeFrame(f, {...detected, W: px.W, H: px.H, maxArea});
             }
         } else {
             // The pipelined pass. Decode stays HERE - the decoder, the canvas readback and
@@ -2899,8 +2964,8 @@ async function runStarTrackerAtResolution(opts) {
                         const px = await framePixels(view, det.retry, ctx);
                         if (px) {
                             const maxArea = dynMaxArea(px.W, px.H);
-                            det = {sources: detectSources(px.data, px.W, px.H,
-                                detectOpts(maxArea, px.W, px.H)).sources, W: px.W, H: px.H, maxArea};
+                            det = {...detectFrameSources(px.data, px.W, px.H,
+                                detectOpts(maxArea, px.W, px.H)), W: px.W, H: px.H, maxArea};
                         } else {
                             det = null;
                         }
@@ -2967,14 +3032,14 @@ async function runStarTrackerAtResolution(opts) {
                 if (workersBroken) {
                     // The synchronous pass's shape, one frame at a time, yield included.
                     await yieldToBrowser();
-                    const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
-                    results.set(idx, {sources, W: px.W, H: px.H, maxArea});
+                    const detected = detectFrameSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
+                    results.set(idx, {...detected, W: px.W, H: px.H, maxArea});
                     continue;
                 }
 
                 inFlight++;
                 detectInPool(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H))
-                    .then((sources) => { results.set(idx, {sources, W: px.W, H: px.H, maxArea}); })
+                    .then((detected) => { results.set(idx, {...detected, W: px.W, H: px.H, maxArea}); })
                     .catch((e) => {
                         // Rejected because the run went stale and tore the pool down: the loop
                         // has already returned, nothing will read this frame, and warning would
@@ -3338,10 +3403,11 @@ async function runStarTrackerAtResolution(opts) {
         detachStarTrackCamera();
         result = {frame0, frame1: analysedLast, generation, videoData, perFrame, chain, solved,
             clusters, videoW, videoH, still, rejectCounts, rejectSamples, lensInfo,
+            foregroundMaskStats: autoVideoMask ? foregroundMaskStats : null,
             // A still's reference chart is its pixel grid. A stitched video chart
             // is not: do not apply a fixed frame mask to its transformed stars.
-            visibilityMask: still && maskAtSize(videoW, videoH) ? {
-                data: maskAtSize(videoW, videoH), width: videoW, height: videoH,
+            visibilityMask: stillMask ? {
+                data: stillMask, width: videoW, height: videoH,
                 bounds: [0, 0, videoW, videoH],
             } : null,
             stoppedEarly: analysedLast < lastFrame,
@@ -4977,6 +5043,7 @@ function setStarStabilization(on) {
  * time a fresh one is needed.
  */
 export function resetStarTracker() {
+    clearForegroundPreview();
     // Stabilize on Stars was made from this solve.
     if (result?.videoData?.stabilizationAffine) result.videoData.clearStabilization();
     // The camera options rest on the solve being discarded; remove them FIRST so the switches
@@ -5344,9 +5411,9 @@ export function setupStarTrackerMenu() {
             + "measurement and photometry. On still images, identification also excludes "
             + "catalog stars hidden by the mask. Use Mask Ground (auto) to mask foreground.");
     folder.add(params, "autoMaskForeground").name("Auto mask foreground")
-        .tooltip("Before analyzing a still image, propose a foreground mask from its color and "
-            + "texture and show it for inspection. Keeps existing masks and brush edits. "
-            + "For video, use Video > Masking; this automatic proposal is for still images.");
+        .tooltip("Mask foreground using color and texture. On video, recompute it for every "
+            + "analyzed frame so it follows pans and zooms. Show Mask previews analyzed frames. "
+            + "Painted masks remain separate, fixed exclusions. Turn this off to use only those masks.");
     folder.add(params, "applyAdjustments").name("Apply adjustments")
         .tooltip("Analyze the frame as you SEE it, with the Video Adjustments applied - levels, "
             + "curves, sharpen, blur, brightness and the rest. Off analyzes the raw decoded "
