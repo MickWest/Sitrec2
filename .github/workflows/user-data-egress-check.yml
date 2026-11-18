@@ -34,10 +34,18 @@ on:
         description: 'Base commit to compare against (default: the parent of the checked-out commit)'
         required: false
         default: ''
+      model:
+        description: 'Copilot model for the review (default: the COPILOT_MODEL_NAME default below)'
+        required: false
+        default: ''
 
 env:
-  # GPT-5.6 Sol needs Copilot Pro+ or above; Terra and Luna are available on Copilot Pro.
-  COPILOT_MODEL_NAME: gpt-5.6-terra
+  # A Copilot Pro model. GitHub retired gpt-5.6-terra from Copilot on 2026-11-16; after that
+  # every review stopped at once with 'Model "gpt-5.6-terra" is not available.' When GitHub
+  # retires this model too, the review gives INCOMPLETE until this names a current model.
+  # A manual run can name a current model with the `model` input. Run on a release tag
+  # (--ref <tag>), that reviews the released commit and records the result on it.
+  COPILOT_MODEL_NAME: ${{ github.event.inputs.model || 'gpt-6.1-terra' }}
   MAX_AI_CREDITS: '100'
 
 defaults:
