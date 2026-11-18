@@ -403,6 +403,9 @@ does not preview another frame.
 **In and Out lines.** The **green** line is the In frame and the **red** line is the Out
 frame. Each has a small circle at the top. Put the pointer near a line (the cursor becomes a
 double arrow), then drag it. In always stays before Out. **Ctrl/Cmd+Z** undoes the drag.
+Where the round thumb covers a line, a drag on the thumb moves the current frame. To drag
+that line, drag the small circle at its top, or move the thumb away first. Where the two
+lines are near each other, the drag takes the line that is nearer to the pointer.
 
 **Resetting In and Out.** Double-click the timeline to the left of the In line to put In
 back to frame 0. Double-click to the right of the Out line to put Out back on the last

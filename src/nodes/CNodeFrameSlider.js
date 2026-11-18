@@ -11,6 +11,17 @@ import {CValueBox} from "../CValueBox";
 import {TimelineMarkers} from "../TimelineMarkers";
 import {markerDisplayName, showTimelineMenu} from "../TimelineMenu";
 
+// The thumb of the range input is the playhead. The browser draws it and has no
+// API for its size; 16 px is the Chrome default. Its center moves from half a
+// thumb inside the left edge of the input to half a thumb inside the right edge.
+const THUMB_WIDTH = 16;
+// The playhead also takes a press this near to the side of its thumb.
+const THUMB_GUARD = 3;
+// The In and Out handles and the marker flags are in this band at the top of the
+// bar, and they take a press there. Below the band, the playhead takes a press
+// on its thumb, so a mark that the thumb covers can only be reached in the band.
+const HANDLE_BAND_HEIGHT = 7;
+
 export class CNodeFrameSlider extends CNode {
     constructor(v) {
         super(v);
@@ -116,18 +127,40 @@ export class CNodeFrameSlider extends CNode {
         this.needsCanvasRedraw = true;
     }
 
-    // Canvas x of a frame, and the frame at a canvas x. The padding matches
-    // the drawing in update().
+    // A function that gives the canvas x of a frame: the x of the center of the
+    // playhead thumb when the playhead is on that frame. All the marks on the bar
+    // are drawn and hit-tested with this mapping, so a mark is at the center of the
+    // thumb when the playhead is on its frame. The canvas and the range input have
+    // the same parent, so the offsets of the input are canvas coordinates.
+    // Make one mapper for a loop over many frames: it reads the layout once.
+    frameMapper() {
+        const {start, travel, lastFrame} = this.thumbTravel();
+        return frame => start + travel * frame / lastFrame;
+    }
+
+    // Canvas x of the thumb center at frame 0, how far it moves to the last frame,
+    // and the number of that frame (at least 1, so a sitch of one frame can divide by it).
+    thumbTravel() {
+        return {
+            start: this.sliderInput.offsetLeft + THUMB_WIDTH / 2,
+            travel: this.sliderInput.offsetWidth - THUMB_WIDTH,
+            lastFrame: Math.max(1, lastSitFrame()),
+        };
+    }
+
+    // Canvas x of a frame, and the frame at a canvas x.
     frameToCanvasX(frame) {
-        const padding = 5;
-        return padding + (this.canvas.offsetWidth - 2 * padding) * frame / Sit.frames;
+        return this.frameMapper()(frame);
     }
 
     canvasXToFrame(x) {
-        const padding = 5;
-        const drawableWidth = this.canvas.offsetWidth - 2 * padding;
-        const frame = Math.round(Math.max(0, Math.min(drawableWidth, x - padding)) / drawableWidth * Sit.frames);
-        return Math.max(0, Math.min(Sit.frames - 1, frame));
+        const {start, travel, lastFrame} = this.thumbTravel();
+        return Math.max(0, Math.min(lastSitFrame(), Math.round((x - start) / travel * lastFrame)));
+    }
+
+    // True when the pointer is over the playhead thumb, or within `guard` pixels of its side.
+    overThumb(mouseX, guard = 0) {
+        return Math.abs(mouseX - this.frameToCanvasX(par.frame)) <= THUMB_WIDTH / 2 + guard;
     }
 
     // 'A' or 'B' when the pointer is on the In or Out limit line or its handle, else null.
@@ -135,59 +168,32 @@ export class CNodeFrameSlider extends CNode {
         // A marker flag wins in its band at the top of the bar, so a marker on the
         // In or Out frame stays clickable; the limit line can still be dragged lower down.
         if (this.getNearMarker(mouseX, mouseY) !== null) return null;
+        // Below the handle band, the playhead wins on its thumb and near the side of it.
+        if (mouseY >= HANDLE_BAND_HEIGHT && this.overThumb(mouseX, THUMB_GUARD)) return null;
+
         const aPixel = this.frameToCanvasX(Sit.aFrame);
         const bPixel = this.frameToCanvasX(Sit.bFrame);
-        const currentFramePixel = this.frameToCanvasX(par.frame);
-
-        // Define slider thumb area (prioritize this over A/B limits)
-        const thumbWidth = 14; // Approximate width of slider thumb (scaled down)
-        const thumbArea = {
-            left: currentFramePixel - thumbWidth / 2,
-            right: currentFramePixel + thumbWidth / 2,
-            top: 7, // Allow A/B dragging above the slider track
-            bottom: 28 // Full height of slider container
-        };
-
-        // If mouse is in the slider thumb area, don't allow A/B limit dragging
-        if (mouseX >= thumbArea.left && mouseX <= thumbArea.right &&
-            mouseY >= thumbArea.top && mouseY <= thumbArea.bottom) {
-            return null;
-        }
-
-        // Check if near A limit line or handle
-        if (Math.abs(mouseX - aPixel) <= threshold) {
-            return 'A';
-        }
-        // Check if near A handle circle (top of line) - prioritize this area
-        if (Math.abs(mouseX - aPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-            return 'A';
-        }
-
-        // Check if near B limit line or handle
-        if (Math.abs(mouseX - bPixel) <= threshold) {
-            return 'B';
-        }
-        // Check if near B handle circle (top of line) - prioritize this area
-        if (Math.abs(mouseX - bPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-            return 'B';
-        }
-
-        return null;
+        const nearA = Math.abs(mouseX - aPixel) <= threshold;
+        const nearB = Math.abs(mouseX - bPixel) <= threshold;
+        // In reach of the two lines: the nearer one. Where they are on the same
+        // pixel, a press on the left takes In and a press on the right takes Out.
+        if (nearA && nearB) return mouseX < (aPixel + bPixel) / 2 ? 'A' : 'B';
+        return nearA ? 'A' : nearB ? 'B' : null;
     }
 
     // The frame in `frames` whose mark is nearest the pointer, within 6 px, or null.
     // overThumb: the pointer is on the playhead thumb, which then wins over a mark it covers.
     nearestMarkFrame(frames, mouseX, overThumb) {
-        const thumbX = this.frameToCanvasX(par.frame);
-        const thumbHalfWidth = 7;
+        const xOf = this.frameMapper();
+        const thumbX = xOf(par.frame);
         const xTolerance = 6;
         let bestFrame = null;
         let bestDist = xTolerance + 1;
         for (const frame of frames) {
-            const x = this.frameToCanvasX(frame);
+            const x = xOf(frame);
             const dx = Math.abs(mouseX - x);
             if (dx <= xTolerance && dx < bestDist) {
-                if (overThumb && Math.abs(x - thumbX) <= thumbHalfWidth) continue;
+                if (overThumb && Math.abs(x - thumbX) <= THUMB_WIDTH / 2) continue;
                 bestDist = dx;
                 bestFrame = frame;
             }
@@ -973,7 +979,7 @@ export class CNodeFrameSlider extends CNode {
         const ctx = this.canvas.getContext('2d');
         this.canvas.width = currentWidth;
         this.canvas.height = currentHeight;
-        this.drawTimeline(ctx, currentWidth, currentHeight);
+        this.drawTimeline(ctx, currentHeight);
     }
 
     // Everything the slider draws on top of its range input: the status lines,
@@ -981,10 +987,9 @@ export class CNodeFrameSlider extends CNode {
     // update() draws it on the slider's own canvas. A video export draws it on
     // its frame (drawForExport), and passes limitsActive so that the In and Out
     // limits have the bright colors that they have during a drag.
-    drawTimeline(ctx, width, height, {limitsActive = false} = {}) {
-        // Add padding to ensure handles are visible at the edges
-        const padding = 5; // pixels of padding on each side
-        const drawableWidth = width - (2 * padding);
+    // xOf gives the x of a frame. The slider's own canvas follows the thumb of
+    // the range input; a video export passes the mapping of the thumb it draws.
+    drawTimeline(ctx, height, {limitsActive = false, xOf = this.frameMapper()} = {}) {
 
         // Draw status overlay if set. Values are drawn in their own colour, so a
         // caller can distinguish kinds of frame — Point Track uses this to show
@@ -1004,7 +1009,7 @@ export class CNodeFrameSlider extends CNode {
             let inSegment = false;
             let segmentStartX = 0;
             for (let i = 0; i < statusOverlay.length; i++) {
-                const x = padding + (drawableWidth * i / Sit.frames);
+                const x = xOf(i);
                 if (statusOverlay[i] === value) {
                     if (!inSegment) {
                         ctx.moveTo(x, this.statusOverlayOffset);
@@ -1023,7 +1028,7 @@ export class CNodeFrameSlider extends CNode {
                 }
             }
             if (inSegment) {
-                const lastX = padding + drawableWidth;
+                const lastX = xOf(statusOverlay.length);
                 ctx.lineTo(Math.max(lastX, segmentStartX + minLength), this.statusOverlayOffset);
                 ctx.stroke();
             }
@@ -1034,8 +1039,8 @@ export class CNodeFrameSlider extends CNode {
             const groupY = this.statusOverlayOffset + 4;
             ctx.lineWidth = 3;
             for (const entry of this.groupOverlay) {
-                const x0 = padding + (drawableWidth * entry.start / Sit.frames);
-                const x1 = padding + (drawableWidth * entry.end / Sit.frames);
+                const x0 = xOf(entry.start);
+                const x1 = xOf(entry.end);
                 if (entry.status === 'cached') {
                     ctx.strokeStyle = '#0088ff';
                 } else if (entry.status === 'partial') {
@@ -1053,7 +1058,7 @@ export class CNodeFrameSlider extends CNode {
         }
 
         // Draw A limit line (green)
-        const aPixel = padding + (drawableWidth * Sit.aFrame / Sit.frames);
+        const aPixel = xOf(Sit.aFrame);
         let aColor = '#008000'; // Default green
         let aLineWidth = 1.5;
         let aHandleRadius = 3;
@@ -1082,7 +1087,7 @@ export class CNodeFrameSlider extends CNode {
         ctx.fill();
 
         // Draw B limit line (red)
-        const bPixel = padding + (drawableWidth * Sit.bFrame / Sit.frames);
+        const bPixel = xOf(Sit.bFrame);
         let bColor = '#800000'; // Default red
         let bLineWidth = 1.5;
         let bHandleRadius = 3;
@@ -1116,7 +1121,7 @@ export class CNodeFrameSlider extends CNode {
         if (this.markerFrames.length > 0 && Sit.frames > 0) {
             for (const f of this.markerFrames) {
                 if (f < 0 || f > Sit.frames) continue;
-                const x = padding + (drawableWidth * f / Sit.frames);
+                const x = xOf(f);
                 const hovered = (this.hoveringMarker === f);
                 ctx.strokeStyle = hovered ? 'rgba(160, 232, 255, 0.9)' : 'rgba(64, 200, 255, 0.45)';
                 ctx.lineWidth = 1;
@@ -1146,7 +1151,7 @@ export class CNodeFrameSlider extends CNode {
             const yKF = height - 5;
             for (const f of this.keyframeFrames) {
                 if (f < 0 || f > Sit.frames) continue;
-                const x = padding + (drawableWidth * f / Sit.frames);
+                const x = xOf(f);
                 const hovered = (this.hoveringKeyframe === f);
                 this.drawDiamond(ctx, x, yKF, hovered ? 5 : 4,
                     hovered ? '#ffff66' : '#ffcc00',
@@ -1204,7 +1209,7 @@ export class CNodeFrameSlider extends CNode {
         ctx.restore();
         ctx.save();
         ctx.translate(0, top);
-        this.drawTimeline(ctx, width, height, {limitsActive: true});
+        this.drawTimeline(ctx, height, {limitsActive: true, xOf});
         ctx.restore();
     }
 
@@ -1241,8 +1246,7 @@ export class CNodeFrameSlider extends CNode {
 
         // Don't intercept clicks that land on the slider thumb area —
         // dragging the playhead remains the primary action there.
-        const overThumb = Math.abs(mouseX - this.frameToCanvasX(par.frame)) <= 7;
-        return this.nearestMarkFrame(this.keyframeFrames, mouseX, overThumb);
+        return this.nearestMarkFrame(this.keyframeFrames, mouseX, this.overThumb(mouseX));
     }
 
     // The frame of the marker flag nearest the pointer, or null. mouseY null
@@ -1253,7 +1257,7 @@ export class CNodeFrameSlider extends CNode {
         if (frames.length === 0 || !Sit.frames) return null;
         if (mouseY !== null && mouseY > 12) return null;
         // As for keyframes, the playhead thumb wins where it covers a flag.
-        const overThumb = mouseY !== null && mouseY >= 7 && Math.abs(mouseX - this.frameToCanvasX(par.frame)) <= 7;
+        const overThumb = mouseY !== null && mouseY >= HANDLE_BAND_HEIGHT && this.overThumb(mouseX);
         return this.nearestMarkFrame(frames, mouseX, overThumb);
     }
 
@@ -1496,7 +1500,7 @@ export class CNodeFrameSlider extends CNode {
 
     // Where the box sits for a given frame: over the slider thumb, not the mouse
     frameDisplayX(frame) {
-        return this.sliderDiv.getBoundingClientRect().left + this.getFramePixelPosition(frame);
+        return this.canvas.getBoundingClientRect().left + this.frameToCanvasX(frame);
     }
 
     // Each editor owns its request, so closing a second, inactive editor cannot
@@ -1553,27 +1557,6 @@ export class CNodeFrameSlider extends CNode {
         }
     }
 
-    // Helper method to get pixel position of a frame on the slider
-    getFramePixelPosition(frame) {
-        if (!this.sliderInput || !Sit.frames) return 0;
-        
-        // Calculate the percentage position of the frame
-        const percentage = frame / Sit.frames;
-        
-        // For HTML range inputs, the thumb position is calculated as:
-        // position = (value - min) / (max - min) * (width - thumbWidth) + thumbWidth/2
-        const sliderRect = this.sliderInput.getBoundingClientRect();
-        const min = parseFloat(this.sliderInput.min);
-        const max = parseFloat(this.sliderInput.max);
-        const thumbWidth = 20; // Standard thumb width for range inputs
-        
-        // Calculate the actual thumb center position
-        const range = max - min;
-        const valuePosition = range > 0 ? (frame - min) / range : 0;
-        const trackWidth = sliderRect.width - thumbWidth;
-        
-        return valuePosition * trackWidth + (thumbWidth / 2);
-    }
 }
 
 // Define the sprite locations by button name

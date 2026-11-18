@@ -21,8 +21,9 @@ jest.mock('../src/CEventManager', () => ({EventManager: {dispatchEvent: jest.fn(
 jest.mock('../src/showError', () => ({}));
 
 let slider, limits;
-// Canvas x of a frame: 5 px padding each side of a 1010 px canvas, so 10 px per frame.
-const x = frame => 5 + frame * 10;
+// Canvas x of a frame: the center of the 16 px thumb moves 990 px over the 99 frames after
+// the first, in a 1006 px range input, so 10 px per frame.
+const x = frame => 8 + frame * 10;
 const at = frame => ({clientX: x(frame), clientY: 20});
 
 beforeEach(() => {
@@ -34,7 +35,7 @@ beforeEach(() => {
     jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({});
     registerSurfaceInteraction.mockClear();
     slider = new CNodeFrameSlider({id: 'FrameSlider'});
-    Object.defineProperty(slider.canvas, 'offsetWidth', {value: 1010});
+    Object.defineProperty(slider.sliderInput, 'offsetWidth', {value: 1006});
     limits = registerSurfaceInteraction.mock.calls.map(call => call[1]).find(options => options.profile === 'limits');
     Object.assign(Sit, {aFrame: 40, bFrame: 60});
     markSitchDirty.mockClear();
