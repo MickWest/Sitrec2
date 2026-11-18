@@ -28,7 +28,12 @@
 // foliage; a median removes it while leaving scene structure intact. This is the step the daylight
 // literature has no reason to include.
 
+import {refineSkyMaskWithColor} from "./SkyMaskColor";
+
 export const SKY_MASK_DEFAULTS = {
+    // Learn smooth sky colour/illumination as well as texture. Disable for a
+    // comparison with the original texture-only segmentation.
+    useColor: true,
     // Everything is measured at a fixed working width, so SCENE-scale structure - a treeline, a
     // horizon - occupies the same number of working pixels whatever the sensor. Point sources are
     // the exception: a star's size is set by the optics, not by how much sky it covers, which is
@@ -646,6 +651,17 @@ export function quadTreeGroundMask(rgba, W, H, opts = {}) {
     }
 
     const out = quadTreeGround(luma, texture, dead, W, H, O);
+    const training = O.useColor ? quadTreeGround(luma, texture, dead, W, H,
+        {...O, groundGrowCells: 0, adjacencyPasses: 0}) : null;
+    const color = training ? refineSkyMaskWithColor(rgba, W, H, training.ground,
+        {luma, texture}, {splitTolerance: out.splitTolerance}) : null;
+    if (color) {
+        // Remove point-source-sized islands before adding a small boundary margin.
+        // Stars must not mask themselves, including red and blue stars.
+        dropSmallComponents(color.ground, W, H, 256);
+        out.ground = dilate(color.ground, W, H, 2);
+        for (let i = 0; i < W * H; i++) if (dead[i]) out.ground[i] = 1;
+    }
 
     let groundCells = 0;
     for (let i = 0; i < W * H; i++) if (out.ground[i]) groundCells++;
@@ -653,7 +669,8 @@ export function quadTreeGroundMask(rgba, W, H, opts = {}) {
     const skyCells = live - (groundCells - deadCells);
 
     const diagnostics = {
-        method: "quadtree",
+        method: color ? "color-texture" : "quadtree",
+        ...(color ? {colorLimits: color.colorLimits, colorSamples: color.colorSamples} : {}),
         leaves: out.leaves,
         skyLeaves: out.skyLeaves,
         splitTolerance: out.splitTolerance,

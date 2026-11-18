@@ -11,7 +11,7 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 ## Quickstart
 
 1. Load a video of the night sky and open **Video → Star Tracker**.
-2. If trees, buildings or burned-in text are in the frame, mask them first. See [Masking out the ground](#masking-out-the-ground).
+2. On a still image, **Auto mask foreground** proposes and shows a mask before analysis. Check the overlay and correct it if needed. For video or burned-in text, mask them first. See [Masking out the ground](#masking-out-the-ground).
 3. Set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
 4. Click **Star Tracker Analysis**.
 5. Wait. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, and with the resolution and busyness of the footage. Press **Enough (solve what we have)** at any point to stop scanning and solve what has been measured so far.
@@ -226,7 +226,8 @@ The Star Tracker folder lives under **Video**.
 | **Fade at completion** | On by default. After a successful identification, fade out the quad lines, then the star circles, then most HIP-number labels, and turn off their switches in [Star Tracker Display](#star-tracker-display). See [Reading the results](#reading-the-results). Tick a switch again to bring its layer back. A failed run never fades |
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
-| **Use mask** | Discard detections that fall inside the video mask, so trees, rooftops and other lit foreground are never mistaken for stars. On by default, and does nothing unless a mask has been painted — see [Masking out the ground](#masking-out-the-ground) |
+| **Use mask** | Exclude the enabled video mask from detection, background estimation and photometry. On still images, identification also excludes hidden catalog stars and accounts for the remaining sky area. On by default — see [Masking out the ground](#masking-out-the-ground) |
+| **Auto mask foreground** | Propose and show a color-and-texture foreground mask before still-image analysis when no mask exists. Preserves existing masks and brush edits. On by default; video masks remain manual or generated with **Mask Ground (auto)** |
 | **Apply adjustments** | Analyse the frame as you see it, with **Video → Video Adjustments** applied — levels, curves, sharpen, blur, brightness and the rest. On by default, and does nothing unless you have set some adjustments. Turn it off to analyse the raw decoded frame instead, which can find stars that are not visible on screen, or miss ones that only the adjustments bring out |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. It needs a lens: the Fisheye render, or a successful **Fit lens from stars**. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
@@ -358,12 +359,16 @@ and failed. With the ground masked it kept 423 detections, none in the trees, an
 2. Check the red overlay covers the foliage, and tidy it by hand with **Edit Mask** if not.
 3. Leave **Use mask** ticked in the Star Tracker folder — it is on by default.
 
-Detections inside the mask are discarded before classification. They are not drawn, and they do
-not appear in *Show rejected*, which covers only tracks that failed classification. If an expected
-star is missing, turn on **Video → Masking → Show Mask** and check whether it is under the mask.
-Note the detector still *looks* inside masked regions, so the
-local background near a mask edge is measured from those pixels; that is a small effect, but it
-means a mask is not quite the same as cropping the frame.
+Masked pixels are excluded from background and noise estimates, detection smoothing, color
+measurements and photometry. They cannot produce star detections. A source cut by a mask edge
+is rejected, and an aperture crossing the mask is marked incomplete. Masked pixels do not
+appear in *Show rejected*, which covers tracks that failed classification. If an expected star
+is missing, turn on **Video → Masking → Show Mask** and inspect the boundary.
+
+For a still image, the catalog verifier also ignores stars predicted behind the mask and uses
+the unmasked image area when estimating chance matches. Video identification works on a stitched
+reference chart, so it does not apply a fixed frame mask to that chart. Video detection still
+honors the enabled mask on each frame; the mask does not follow a pan or zoom automatically.
 
 See [Masking](Masking.md) for the other ways to build a mask — including masking a burned-in
 timestamp or reticle, which is worth doing for the same reason.

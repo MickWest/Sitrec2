@@ -17,7 +17,7 @@ import fs from "fs";
 import path from "path";
 import {
     STAR_IDENTIFY_DEFAULTS, parseStarCatalog, buildQuadIndex, solveField, scalePriorFromFov,
-    rankPointSources, raDecToVec,
+    rankPointSources, raDecToVec, certifySolve,
 } from "../src/starTrack/StarIdentify";
 import {TRIPLE_DEFAULTS, identifyBrightTriples} from "../src/starTrack/StarTriples";
 
@@ -85,6 +85,37 @@ describe("a photo with clipped stars", () => {
         // matches 387 stars against 105 needed - but a search that never proposes it.
         const refused = await solveField(withoutClip, catalog, [wide], solveOpts);
         expect(refused.ok).toBe(false);
+    });
+
+    test("an obscured part of the image supplies neither matches nor missing-star evidence", async () => {
+        const width = 40, height = 30, data = new Uint8Array(width * height);
+        for (let y = 0; y < height; y++) for (let x = 0; x < 13; x++) data[y * width + x] = 1;
+        const visibilityMask = {data, width, height, bounds: [0, 0, W, H]};
+        // Pass the whole list deliberately: masked detections may not generate a
+        // hypothesis, and returned match indices must still refer to the caller's list.
+        const opts = {...solveOpts, visibilityMask};
+        const masked = await solveField(stars, catalog, [wide], opts);
+        expect(masked.ok).toBe(true);
+        expect(masked.matches.length).toBeGreaterThan(180);
+        const baselineNames = new Map(solved.matches.map(m => [m.image, m.hip]));
+        let compared = 0, agreed = 0;
+        for (const m of masked.matches) {
+            expect(stars[m.image].x).toBeGreaterThanOrEqual(W * 13 / 40);
+            if (baselineNames.has(m.image)) { compared++; if (m.hip === baselineNames.get(m.image)) agreed++; }
+        }
+        // Faint near-neighbours can exchange at the matching tolerance; the
+        // baseline is not independent ground truth for those ambiguous pairs.
+        expect(agreed / compared).toBeGreaterThan(.98);
+        const named = new Map(masked.matches.map(m => [m.image, m.hip]));
+        expect(named.get(VEGA)).toBe(truth.vega);
+        expect(named.get(DENEB)).toBe(truth.deneb);
+        expect(named.has(ALTAIR)).toBe(false);
+        expect(Math.abs(masked.centerRaDeg / 15 - truth.centerRaHours)).toBeLessThan(.01);
+        expect(Math.abs(masked.centerDecDeg - truth.centerDecDeg)).toBeLessThan(.05);
+        const certified = certifySolve(masked, stars, catalog, opts);
+        expect(certified.ok).toBe(true);
+        expect(certified.nImage).toBe(stars.filter(s => s.x >= W * 13 / 40).length);
+        for (const m of certified.matches) expect(stars[m.image].x).toBeGreaterThanOrEqual(W * 13 / 40);
     });
 
     test("Bright Triples names its stars right", () => {

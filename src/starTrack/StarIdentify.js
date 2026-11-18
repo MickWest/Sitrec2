@@ -23,6 +23,8 @@
 //
 // Pure: plain arrays in, plain objects out. No DOM, no THREE, no Sitrec globals.
 
+import {starIsMasked, visibleStarArea} from "./StarMask";
+
 export const STAR_IDENTIFY_DEFAULTS = {
     // Quad index tiers, tried in order. A tier is characterised by how faint its stars go and
     // how far apart quad members may be: wide fields are made of bright, well-separated stars,
@@ -711,7 +713,10 @@ function invertSim(T) {
 export async function solveField(imageStars, catalog, indexes, opts = {}) {
     DIAG = opts.debug ? newDiag() : null;
     try {
-        const out = await solveFieldInner(imageStars, catalog, indexes, opts);
+        const indices = opts.visibilityMask ? imageStars.map((s, i) => i)
+            .filter(i => !starIsMasked(opts.visibilityMask, imageStars[i].x, imageStars[i].y)) : null;
+        const out = await solveFieldInner(indices ? indices.map(i => imageStars[i]) : imageStars, catalog, indexes, opts);
+        if (indices && out.matches) for (const m of out.matches) m.image = indices[m.image];
         if (DIAG) out.diag = DIAG;
         return out;
     } finally {
@@ -746,6 +751,9 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
     // detected stars' bounding box, padded.
     const bounds = O.bounds
         ?? [minX - 4 * tolPx, minY - 4 * tolPx, maxX + 4 * tolPx, maxY + 4 * tolPx];
+    const verificationBounds = [bounds[0] - tolPx, bounds[1] - tolPx, bounds[2] + tolPx, bounds[3] + tolPx];
+    O.visibleArea = visibleStarArea(O.visibilityMask, verificationBounds);
+    if (O.visibleArea <= 0) return {ok: false, reason: "no unmasked sky to identify"};
 
     // The image quads are built from the brightest POINT SOURCES: see rankPointSources.
     const brightIdx = rankPointSources(imageStars, width, O).slice(0, O.imageQuadStars);
@@ -965,7 +973,7 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
  *   evidence against the density it was actually collected at.
  */
 function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, width, centerPx,
-    bounds, catalog, maxProjected) {
+    bounds, catalog, maxProjected, visibilityMask, visibleArea) {
     const inv = invertSim(T);
     // TANGENT UNITS per pixel, not radians. Half a frame spans tan(fov/2), so an angle is the
     // ARCTANGENT of a tangent extent - the conversion scalePriorFromFov exists to get right at
@@ -1003,6 +1011,7 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
         const p = applySim(inv, g[0], g[1]);
         const px = p[0], py = mirrored ? -p[1] : p[1];
         if (px < bx0 || px > bx1 || py < by0 || py > by1) continue;
+        if (starIsMasked(visibilityMask, px, py)) continue;
         proj.push([px, py, deep[k]]);
     }
     diagMax("nProjectedRaw", proj.length);
@@ -1038,7 +1047,7 @@ function projectAndMatch(imageStars, mirrored, T, c0, b0, deep, deepVec, tolPx, 
     // this dense and the tolerance this wide, each image star has a chance hit probability of
     // 1 - exp(-density * pi * tol^2). The match count is only evidence in the amount it
     // EXCEEDS this.
-    const area = Math.max(1, (bx1 - bx0) * (by1 - by0));
+    const area = Math.max(1, visibleArea ?? (bx1 - bx0) * (by1 - by0));
     const pChance = 1 - Math.exp(-proj.length * Math.PI * t2 / area);
     const expected = imageStars.length * pChance;
     return {matches, centre, nProjected: proj.length, expected};
@@ -1122,7 +1131,8 @@ function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, dee
     const T1 = fitSimilarityFree(P, Q1);
     if (!T1) { diagCount("rej.recentreFit"); return null; }
 
-    const pm = projectAndMatch(imageStars, mirrored, T1, c1, b1, deep, deepVec, tolPx, width, centerPx, bounds);
+    const pm = projectAndMatch(imageStars, mirrored, T1, c1, b1, deep, deepVec, tolPx, width, centerPx, bounds,
+        catalog, undefined, O.visibilityMask, O.visibleArea);
     if (!pm) return null;                                  // projectAndMatch counted its own
     const {matches} = pm;
     diagMax("provisionalMatches", matches.length);
@@ -1240,7 +1250,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
         // required consensus through, and the final gate then rejects a solve that was valid
         // before refinement touched it, instead of the failed round being rolled back.
         const pm = projectAndMatch(imageStars, mirrored, T, c0, b0, allIdx, allVec, tolPx,
-            width, centerPx, bounds, catalog, maxProjected);
+            width, centerPx, bounds, catalog, maxProjected, O.visibilityMask, O.visibleArea);
         // A FIRST-round rematch that cannot re-find even half the provisional matches under
         // its own refit is not a failed refinement to roll back from - it is the provisional
         // count confessing to being chance. Both wrong-field acceptances measured on the
@@ -1376,6 +1386,10 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
 export function certifySolve(solved, fullStars, catalog, opts = {}) {
     if (!solved?.ok || !solved.model) return {ok: false, reason: "nothing to certify"};
     const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
+    const originalIndices = fullStars.map((s, i) => i)
+        .filter(i => !starIsMasked(O.visibilityMask, fullStars[i].x, fullStars[i].y));
+    fullStars = originalIndices.map(i => fullStars[i]);
+    if (fullStars.length < O.minMatches) return {ok: false, reason: "too few unmasked stars to certify"};
     const {T, c0, b0, mirrored} = solved.model;
 
     // The verification geometry of the FULL set: its own bounds, its own tolerance. Using the
@@ -1393,6 +1407,8 @@ export function certifySolve(solved, fullStars, catalog, opts = {}) {
     const width = opts.width ?? Math.max(bx1 - bx0, by1 - by0);
     const centerPx = opts.center ?? [(bx0 + bx1) / 2, (by0 + by1) / 2];
     const tolPx = Math.max(O.verifyPixelMin, O.verifyPixelFraction * width);
+    const area = visibleStarArea(O.visibilityMask,
+        [bounds[0] - tolPx, bounds[1] - tolPx, bounds[2] + tolPx, bounds[3] + tolPx]);
 
     const deep = [];
     for (let i = 0; i < catalog.n; i++) {
@@ -1401,19 +1417,19 @@ export function certifySolve(solved, fullStars, catalog, opts = {}) {
     const deepVec = deep.map((i) => raDecToVec(catalog.ra[i], catalog.dec[i]));
 
     const pm = projectAndMatch(fullStars, mirrored, T, c0, b0, deep, deepVec, tolPx,
-        width, centerPx, bounds, catalog, Math.max(3 * fullStars.length, 100));
+        width, centerPx, bounds, catalog, Math.max(3 * fullStars.length, 100), O.visibilityMask, area);
     if (!pm) return {ok: false, reason: "pose does not project as a camera field"};
     if (pm.matches.length < O.minMatches
         || !consensusMet(O, fullStars.length, pm.matches.length, pm.nProjected, pm.expected)) {
         return {ok: false, reason: "pose does not hold the full set's consensus",
-            matches: pm.matches, nImage: fullStars.length};
+            matches: pm.matches.map(m => ({...m, image: originalIndices[m.image]})), nImage: fullStars.length};
     }
     let sse = 0;
     for (const m of pm.matches) sse += m.dPx * m.dPx;
     return {
         ok: true,
         matches: pm.matches.map((m) => ({
-            image: m.image,
+            image: originalIndices[m.image],
             cat: m.cat,
             hip: catalog.hip[m.cat],
             raDeg: catalog.ra[m.cat] * 180 / Math.PI,

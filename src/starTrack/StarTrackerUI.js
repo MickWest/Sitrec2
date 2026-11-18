@@ -23,6 +23,8 @@ import {isLocal, SITREC_APP} from "../configUtils";
 import {ECEFToLLAVD_radii, LLAToECEFVD} from "../LLA-ECEF-ENU";
 import * as Astronomy from "astronomy-engine";
 import {CVideoImageData} from "../CVideoImageData";
+import {detectionMaskFromAlpha} from "./StarMask";
+import {applyQuadTreeGroundMask} from "../SkyMaskTool";
 import {applyAffine, invertAffine, viewStabilizationMatrix, viewVideoFrame} from "../CVideoData";
 import {registerFrameRemap} from "../VFRTimeline";
 import {par} from "../par";
@@ -166,6 +168,7 @@ let calibrationRequest = 0;
 let calibrationPending = false;
 
 const params = {
+    autoMaskForeground: true,
     // Detection
     threshSigma: STAR_DETECT_DEFAULTS.threshSigma,
     // Resolve threshSigma from the footage before each run (chooseDetectionSigma over a few
@@ -605,6 +608,41 @@ export async function detectStarSize(opts = {}) {
     finally { session.end(); }
 }
 
+const autoMaskedStills = new WeakSet();
+
+function prepareStillForegroundMask(view) {
+    const data = view?.videoData;
+    if (!params.autoMaskForeground || !params.useMask || !(data instanceof CVideoImageData)
+        || autoMaskedStills.has(data)) return;
+    const node = NodeMan.get("videoMask", false);
+    if (!node || node.maskEnabled === false) return;
+    // Restored data can still be decoding. A normal new-image import clears the
+    // old mask through saveMask(), which advances maskRevision even when empty.
+    if (node.maskData && !node.maskRevision) return;
+    node.ensureMaskInitialized();
+    node.updateMaskImageData();
+    // An existing mask belongs to the user. Never regenerate over brush edits,
+    // saved masks, or a deliberate clearing after the first automatic proposal.
+    const pixels = node.maskImageData?.data;
+    if (pixels) for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 128) return;
+    const masked = applyQuadTreeGroundMask();
+    if (masked.error) {
+        console.warn("Star Tracker foreground mask:", masked.error);
+        return;
+    }
+    autoMaskedStills.add(data);
+    node.setShowMaskPreview(true);
+}
+
+function starMaskSnapshot() {
+    const node = params.useMask ? NodeMan.get("videoMask", false) : null;
+    if (!node?.maskCanvas || node.maskEnabled === false) return null;
+    node.updateMaskImageData();
+    const image = node.maskImageData;
+    return image ? {width: image.width, height: image.height,
+        data: new Uint8ClampedArray(image.data)} : null;
+}
+
 async function detectStarSizeAtResolution(opts, resolutionSession) {
     // opts.measure marks the button - an explicit "measure it for me", which overwrites the blob
     // size whatever its provenance. The Star Tracker Analysis chain calls this WITHOUT it, because there
@@ -635,6 +673,8 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
         // both the current video and the current request.
         if (ctx.stale() || request !== calibrationRequest) return false;
         if (!px) { params.status = "no decoded frame to measure"; return true; }
+        prepareStillForegroundMask(view);
+        const maskImage = starMaskSnapshot();
 
         let autoNote = "";
         if (params.autoSigma) {
@@ -650,7 +690,8 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
                 const ppx = await framePixels(view, f, ctx);
                 if (ctx.stale() || request !== calibrationRequest) return false;
                 if (!ppx) continue;
-                const pick = chooseDetectionSigma(ppx.data, ppx.W, ppx.H);
+                const pick = chooseDetectionSigma(ppx.data, ppx.W, ppx.H,
+                    {excludeMask: detectionMaskFromAlpha(maskImage, ppx.W, ppx.H)});
                 if (pick.ok) sigmas.push(pick.sigma);
             }
             if (sigmas.length) {
@@ -663,7 +704,8 @@ async function detectStarSizeAtResolution(opts, resolutionSession) {
             }
         }
 
-        const cal = calibrateDetection(px.data, px.W, px.H, {threshSigma: params.threshSigma});
+        const cal = calibrateDetection(px.data, px.W, px.H, {threshSigma: params.threshSigma,
+            excludeMask: detectionMaskFromAlpha(maskImage, px.W, px.H)});
         if (!cal.ok) {
             // Keep whatever calibration exists. A failed measurement is not evidence the
             // previous one was wrong - and clearing it while params.minArea kept its measured
@@ -2224,6 +2266,7 @@ export async function identifyStars(opts = {}) {
         // fourth window of a pan.
         let searchLabel = "matching";
         const commonSolveOpts = {
+            ...(!sphereChart && myResult.visibilityMask ? {visibilityMask: myResult.visibilityMask} : {}),
             ...(scalePrior ? {scalePrior} : {}),
             ...(sphereChart ? {verifyPixelFraction: SPHERE_CHART_VERIFY_FRACTION} : {}),
             // Yielding and progress are NOT gated on showDuringAnalysis - that toggle governs
@@ -2428,7 +2471,7 @@ export async function identifyStars(opts = {}) {
                     if (attempt.ok) break;
                 }
                 if (!attempt?.ok) continue;
-                const cert = certifySolve(attempt, stars, catalog);
+                const cert = certifySolve(attempt, stars, catalog, commonSolveOpts);
                 if (!cert.ok) continue;
                 solved = {...attempt, matches: cert.matches, nImage: cert.nImage,
                     matchedFraction: cert.matchedFraction, rmsPx: cert.rmsPx,
@@ -2671,18 +2714,18 @@ async function runStarTrackerAtResolution(opts) {
         const rejectCounts = {};
         const rejectSamples = [];
 
-        // The shared video mask, when the user wants it respected. Resolved ONCE for the run: it
-        // is a user artefact that should not change mid-pass, and refreshing its pixels per frame
-        // would cost a full getImageData on every one.
-        //
-        // Note what this does and does not do. Detections inside masked regions are DISCARDED
-        // after detection, which keeps foliage out of the tracks, the solve and identification.
-        // It does not stop the detector looking there, so masked pixels still contribute to the
-        // local background estimate near the mask boundary. Detecting less would mean pushing the
-        // mask down into detectSources, which is a bigger change for a smaller gain.
+        // Snapshot once so editing a mask while a worker runs cannot change the
+        // meaning of its result. The same pixels feed extraction and verification.
+        prepareStillForegroundMask(view);
         const maskNode = params.useMask ? NodeMan.get("videoMask", false) : null;
-        if (maskNode?.maskCanvas) maskNode.updateMaskImageData();
-        const maskUsable = !!(maskNode?.maskCanvas && maskNode.maskImageData);
+        const maskImage = starMaskSnapshot();
+        const maskUsable = !!maskImage;
+        const masksBySize = new Map();
+        const maskAtSize = (W, H) => {
+            const key = `${W}x${H}`;
+            if (!masksBySize.has(key)) masksBySize.set(key, detectionMaskFromAlpha(maskImage, W, H));
+            return masksBySize.get(key);
+        };
 
         const lastFrame = still ? frame0 : frame1;
         // The frame the run actually reached. Reported as the result's frame1 so the overlay and
@@ -2696,7 +2739,8 @@ async function runStarTrackerAtResolution(opts) {
         // a fixed bound silently deletes exactly the brightest stars in the image.
         const dynMaxArea = (W, H) => Math.round(STAR_DETECT_DEFAULTS.maxArea
             * Math.max(1, (W * H) / (1276 * 720)));
-        const detectOpts = (maxArea) => ({
+        const detectOpts = (maxArea, W, H) => ({
+            excludeMask: maskAtSize(W, H),
             threshSigma: ctx.threshSigma,
             minArea: ctx.minArea,
             maxArea,
@@ -2745,25 +2789,9 @@ async function runStarTrackerAtResolution(opts) {
                 }
             }
 
-            // Drop what the mask excludes, tallied like any other rejection so the accounting
-            // stays honest - a star missing because it is under the mask should be answerable.
-            //
-            // Detections are in the ANALYSED decode space, which is not necessarily the space the
-            // mask was painted in: a 4K clip may be decoded at a capped resolution while the mask
-            // canvas is video-sized. Scale into the mask canvas rather than assuming one grid.
-            let accepted = kept;
-            if (maskUsable && det.W && det.H) {
-                const msx = maskNode.maskCanvas.width / det.W;
-                const msy = maskNode.maskCanvas.height / det.H;
-                accepted = [];
-                for (const s of kept) {
-                    if (maskNode.isPointMasked(s.x * msx, s.y * msy)) {
-                        rejectCounts.masked = (rejectCounts.masked || 0) + 1;
-                    } else {
-                        accepted.push(s);
-                    }
-                }
-            }
+            // Trail extraction has its own mask handling; ordinary detections
+            // already excluded the mask before measuring background or sources.
+            const accepted = kept;
             perFrame.push(accepted);
 
             // Live preview. `accepted` is handed over by reference rather than copied: the array
@@ -2823,7 +2851,7 @@ async function runStarTrackerAtResolution(opts) {
                     continue;
                 }
                 const maxArea = dynMaxArea(px.W, px.H);
-                const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea));
+                const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
                 finalizeFrame(f, {sources, W: px.W, H: px.H, maxArea});
             }
         } else {
@@ -2872,7 +2900,7 @@ async function runStarTrackerAtResolution(opts) {
                         if (px) {
                             const maxArea = dynMaxArea(px.W, px.H);
                             det = {sources: detectSources(px.data, px.W, px.H,
-                                detectOpts(maxArea)).sources, W: px.W, H: px.H, maxArea};
+                                detectOpts(maxArea, px.W, px.H)).sources, W: px.W, H: px.H, maxArea};
                         } else {
                             det = null;
                         }
@@ -2939,13 +2967,13 @@ async function runStarTrackerAtResolution(opts) {
                 if (workersBroken) {
                     // The synchronous pass's shape, one frame at a time, yield included.
                     await yieldToBrowser();
-                    const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea));
+                    const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H));
                     results.set(idx, {sources, W: px.W, H: px.H, maxArea});
                     continue;
                 }
 
                 inFlight++;
-                detectInPool(px.data, px.W, px.H, detectOpts(maxArea))
+                detectInPool(px.data, px.W, px.H, detectOpts(maxArea, px.W, px.H))
                     .then((sources) => { results.set(idx, {sources, W: px.W, H: px.H, maxArea}); })
                     .catch((e) => {
                         // Rejected because the run went stale and tore the pool down: the loop
@@ -3310,6 +3338,12 @@ async function runStarTrackerAtResolution(opts) {
         detachStarTrackCamera();
         result = {frame0, frame1: analysedLast, generation, videoData, perFrame, chain, solved,
             clusters, videoW, videoH, still, rejectCounts, rejectSamples, lensInfo,
+            // A still's reference chart is its pixel grid. A stitched video chart
+            // is not: do not apply a fixed frame mask to its transformed stars.
+            visibilityMask: still && maskAtSize(videoW, videoH) ? {
+                data: maskAtSize(videoW, videoH), width: videoW, height: videoH,
+                bounds: [0, 0, videoW, videoH],
+            } : null,
             stoppedEarly: analysedLast < lastFrame,
             // The trails, for the lens fit: starts at the In frame, ends at the Out frame.
             timelapse: trailInfo ? {...trailInfo, startFrame: frame0, endFrame: frame1} : null};
@@ -3637,7 +3671,7 @@ export async function identifyByBrightTriples(opts = {}) {
     let res;
     try {
         res = await identifyBrightTriplesOffThread(
-            {stars, objects, width: r.videoW, height: r.videoH, maxFovDeg},
+            {stars, objects, width: r.videoW, height: r.videoH, maxFovDeg, visibilityMask: r.visibilityMask},
             {
                 onProgress: (stage, f) => updateProgress(stage === "catalog"
                     ? {percent: 15 * f, status: "Making the triangles of bright objects"}
@@ -5306,10 +5340,13 @@ export function setupStarTrackerMenu() {
     }
 
     folder.add(params, "useMask").name("Use mask")
-        .tooltip("Ignore detections that fall inside the video mask, painted under Video > "
-            + "Masking. Foliage, rooftops and OSD graphics detect as hundreds of bright blobs "
-            + "that the solver would otherwise treat as stars. Masked detections are counted as "
-            + "rejections, so nothing goes missing silently.");
+        .tooltip("Exclude the enabled Video > Masking mask from star detection, background "
+            + "measurement and photometry. On still images, identification also excludes "
+            + "catalog stars hidden by the mask. Use Mask Ground (auto) to mask foreground.");
+    folder.add(params, "autoMaskForeground").name("Auto mask foreground")
+        .tooltip("Before analyzing a still image, propose a foreground mask from its color and "
+            + "texture and show it for inspection. Keeps existing masks and brush edits. "
+            + "For video, use Video > Masking; this automatic proposal is for still images.");
     folder.add(params, "applyAdjustments").name("Apply adjustments")
         .tooltip("Analyze the frame as you SEE it, with the Video Adjustments applied - levels, "
             + "curves, sharpen, blur, brightness and the rest. Off analyzes the raw decoded "

@@ -2488,7 +2488,7 @@ function createMaskingFolder(parentFolder) {
             const result = applyQuadTreeGroundMask();
             if (result.error) { console.warn("Mask Ground (auto):", result.error); return; }
             const d = result.diagnostics;
-            console.log(`[SkyMask] quadtree: ${d.skyLeaves}/${d.leaves} leaves sky, `
+            console.log(`[SkyMask] ${d.method}: ${d.skyLeaves}/${d.leaves} leaves sky, `
                 + `split tolerance ${d.splitTolerance.toFixed(2)}, `
                 + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
             // Show the new mask, so the user can see what it covers. Show Mask, not Edit

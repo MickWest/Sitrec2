@@ -121,11 +121,14 @@ function medianOf(arr, n) {
  */
 export function estimateBackground(L, W, H, opts = {}) {
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
+    const excluded = P.excludeMask;
+    if (excluded && excluded.length !== W * H) throw new Error("Star detection mask dimensions do not match the image");
     const TS = P.tileSize;
     const TX = Math.max(1, Math.ceil(W / TS));
     const TY = Math.max(1, Math.ceil(H / TS));
     const bg = new Float32Array(TX * TY);
     const sg = new Float32Array(TX * TY);
+    const valid = new Uint8Array(TX * TY);
 
     // Sample on a stride-2 lattice: 4x fewer samples, no measurable change in the estimate.
     const cap = Math.ceil(TS / 2) * Math.ceil(TS / 2) + 4;
@@ -137,9 +140,13 @@ export function estimateBackground(L, W, H, opts = {}) {
             const y0 = ty * TS, y1 = Math.min(H, y0 + TS);
             let n = 0;
             for (let y = y0; y < y1; y += 2) {
-                for (let x = x0; x < x1; x += 2) samples[n++] = L[y * W + x];
+                for (let x = x0; x < x1; x += 2) {
+                    const i = y * W + x;
+                    if (!excluded || !excluded[i]) samples[n++] = L[i];
+                }
             }
             if (n === 0) { bg[ty * TX + tx] = 0; sg[ty * TX + tx] = 1; continue; }
+            valid[ty * TX + tx] = !excluded || n >= 8 ? 1 : 0;
 
             let med = medianOf(samples, n);
             let sigma = 1;
@@ -162,6 +169,21 @@ export function estimateBackground(L, W, H, opts = {}) {
             }
             bg[ty * TX + tx] = med;
             sg[ty * TX + tx] = sigma;
+        }
+    }
+    // Empty/undersampled tiles carry no background evidence. Extend the nearest
+    // measured sky tile, so interpolation at a skyline never mixes in black zeros
+    // or the brightness of the excluded building. The mask itself stays excluded.
+    if (excluded) {
+        const measured = [];
+        for (let i = 0; i < valid.length; i++) if (valid[i]) measured.push(i);
+        for (let i = 0; i < valid.length; i++) if (!valid[i] && measured.length) {
+            let nearest = measured[0], distance = Infinity;
+            for (const j of measured) {
+                const d = (i % TX - j % TX) ** 2 + (Math.floor(i / TX) - Math.floor(j / TX)) ** 2;
+                if (d < distance) { distance = d; nearest = j; }
+            }
+            bg[i] = bg[nearest]; sg[i] = sg[nearest];
         }
     }
     return {bg, sigma: sg, TX, TY, tileSize: TS, W, H};
@@ -189,8 +211,16 @@ export function backgroundAt(model, field, x, y) {
 }
 
 /** Separable Gaussian blur of a Float32 plane. Used for detection only, never for measurement. */
-export function gaussianBlur(L, W, H, sigma) {
+export function gaussianBlur(L, W, H, sigma, excluded = null) {
     if (!(sigma > 0)) return L;
+    if (excluded) {
+        const weighted = new Float32Array(W * H), weights = new Float32Array(W * H);
+        for (let i = 0; i < weighted.length; i++) if (!excluded[i]) { weighted[i] = L[i]; weights[i] = 1; }
+        const numerator = gaussianBlur(weighted, W, H, sigma);
+        const denominator = gaussianBlur(weights, W, H, sigma);
+        for (let i = 0; i < numerator.length; i++) numerator[i] = denominator[i] > 1e-8 ? numerator[i] / denominator[i] : 0;
+        return numerator;
+    }
     const r = Math.max(1, Math.ceil(sigma * 3));
     const k = new Float32Array(2 * r + 1);
     let s = 0;
@@ -394,12 +424,15 @@ function splitAtPeaks(blob, peaks, L, W, bgPix, P) {
  */
 export function detectSources(rgba, W, H, opts = {}) {
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
+    // One byte per measurement pixel, 1 = excluded. Also used by calibration and
+    // worker callers; masking is part of detection, not a later centroid filter.
+    const excluded = P.excludeMask;
     const N = W * H;
     const L = lumaFromRGBA(rgba, W, H);
     const model = estimateBackground(L, W, H, P);
 
     // Detect on the matched-filtered image, measure on the raw one.
-    const D = P.detectSmoothSigma > 0 ? gaussianBlur(L, W, H, P.detectSmoothSigma) : L;
+    const D = P.detectSmoothSigma > 0 ? gaussianBlur(L, W, H, P.detectSmoothSigma, excluded) : L;
 
     // Precompute per-pixel background and threshold once - backgroundAt() is too slow to call
     // inside the flood fill.
@@ -414,7 +447,7 @@ export function detectSources(rgba, W, H, opts = {}) {
             bgPix[i] = b; sgPix[i] = s;
             // The smoothed image has reduced noise, so comparing it against the unsmoothed sigma
             // is conservative - it costs a little recall and buys a lower false-positive rate.
-            if (D[i] > b + P.threshSigma * s) mask[i] = 1;
+            if ((!excluded || !excluded[i]) && D[i] > b + P.threshSigma * s) mask[i] = 1;
         }
     }
 
@@ -429,9 +462,9 @@ export function detectSources(rgba, W, H, opts = {}) {
     // level does, and the level is already handled per-tile by the background mesh.
     const skyRGB = [0, 1, 2].map((c) => {
         const samp = [];
-        for (let i = 0; i < N; i += 17) samp.push(rgba[i * 4 + c]);
+        for (let i = 0; i < N; i += 17) if (!excluded || !excluded[i]) samp.push(rgba[i * 4 + c]);
         samp.sort((a, b) => a - b);
-        return samp[samp.length >> 1];
+        return samp[samp.length >> 1] ?? 0;
     });
     // The sky's LEVEL does vary across the frame (vignetting, light-pollution gradients), and the
     // tile mesh already measures that in luma. Scaling the global per-channel sky by the local
@@ -494,6 +527,9 @@ export function detectSources(rgba, W, H, opts = {}) {
 
         let area = 0, flux = 0, sx = 0, sy = 0, peak = 0, peakI = pixels[0];
         let satCount = 0, edge = 0;
+        const maskBoundary = !!excluded && pixels.some(i =>
+            (i % W > 0 && excluded[i - 1]) || (i % W < W - 1 && excluded[i + 1])
+            || (i >= W && excluded[i - W]) || (i < N - W && excluded[i + W]));
         // Color is accumulated only over pixels where NO channel is clipped, and only as an
         // excess over the sky.
         //
@@ -622,6 +658,7 @@ export function detectSources(rgba, W, H, opts = {}) {
             // positive green excess at all cannot be a green laser.
             green: (!colorUnknown && g > 0 && g > P.greenRatio * Math.max(r, b, 0)) || partialGreen,
             edgeTouching: !!edge,
+            maskBoundary,
             width: maxX - minX + 1, height: maxY - minY + 1,
             // The frame's pixel count rides along so rejection policy can reason about size
             // RELATIVE to the image - absolute pixel areas mean different things at 720p and
@@ -679,7 +716,7 @@ export function detectSources(rgba, W, H, opts = {}) {
                 const d2 = (x - s.x) * (x - s.x) + (y - s.y) * (y - s.y);
                 if (d2 < AIN * AIN || d2 > AOUT * AOUT) continue;
                 const i = y * W + x;
-                if (labels[i] >= 0) continue;
+                if (labels[i] >= 0 || excluded?.[i]) continue;
                 ring.push(L[i] - bgPix[i]);
             }
         }
@@ -700,6 +737,7 @@ export function detectSources(rgba, W, H, opts = {}) {
             for (let x = Math.max(0, ax0); x <= Math.min(W - 1, ax1); x++) {
                 if ((x - s.x) * (x - s.x) + (y - s.y) * (y - s.y) > AR * AR) continue;
                 const i = y * W + x;
+                if (excluded?.[i]) { complete = false; continue; }
                 const lab = labels[i];
                 if (lab >= 0 && lab !== s.component) { foreignLabelled = true; continue; }
                 apFlux += L[i] - bgPix[i] - localSky;
@@ -761,6 +799,7 @@ export function detectSources(rgba, W, H, opts = {}) {
  * Returns a reason string when the source should be rejected, or null to keep it.
  */
 export function rejectReason(s, opts = {}) {
+    if (s.maskBoundary) return "maskBoundary";
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
     if (s.area < P.minArea) return "tiny";
     // Judged on the WHOLE blob. A split source is one part of its blob, and a small bright part

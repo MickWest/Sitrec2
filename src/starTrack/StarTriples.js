@@ -22,6 +22,7 @@
 import {gnomonic, raDecToVec, rankPointSources, tangentBasis} from "./StarIdentify";
 import {fitManualPlate} from "./StarManualFit";
 import {applyTransform, invertTransform} from "./StarMatch";
+import {starIsMasked} from "./StarMask";
 
 const D2R = Math.PI / 180;
 
@@ -215,11 +216,11 @@ function candidatePool(stars, longSide, max) {
  *   A candidate is {matches: [{star, object}], rmsPx, nMatched, nMissing, codeDist, fovDeg}:
  *   plain data, so a worker can post it.
  */
-export function identifyBrightTriples({stars, objects, width, height, maxFovDeg, options = {}, onProgress = null}) {
+export function identifyBrightTriples({stars, objects, width, height, maxFovDeg, visibilityMask = null, options = {}, onProgress = null}) {
     const o = {...TRIPLE_DEFAULTS, ...options};
     const counts = {candidateStars: 0, imageStars: 0, objects: objects.length, catalogTriples: 0,
         imageTriples: 0, codeMatches: 0, fitted: 0};
-    const pool = candidatePool(stars, Math.max(width, height), o.maxCandidateStars);
+    const pool = candidatePool(stars.filter(s => !starIsMasked(visibilityMask, s.x, s.y)), Math.max(width, height), o.maxCandidateStars);
     const img = pool.slice(0, o.maxImageStars);
     counts.candidateStars = pool.length;
     counts.imageStars = img.length;
@@ -264,7 +265,7 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
                             raDeg: p.object.raDeg, decDeg: p.object.decDeg})), center, width);
                         counts.fitted++;
                         if (!fit.ok || fit.rmsPx > fitTol) continue;
-                        candidates.push({...verify(fit, pairs, pool, objs, width, height, matchTol), codeDist});
+                        candidates.push({...verify(fit, pairs, pool, objs, width, height, matchTol, visibilityMask), codeDist});
                     }
                 }
                 if (onProgress) onProgress("match", counts.imageTriples / nImageTriples);
@@ -290,7 +291,7 @@ export function identifyBrightTriples({stars, objects, width, height, maxFovDeg,
  * candidate star within matchTol, nearest pairs first, one star to one object. The three fitted
  * pairs stay as they are.
  */
-function verify(fit, pairs, stars, objs, width, height, matchTol) {
+function verify(fit, pairs, stars, objs, width, height, matchTol, visibilityMask) {
     const proj = projectObjects(fit.model, objs);
     const usedStar = new Set(pairs.map((p) => p.star.index));
     const usedObj = new Set(pairs.map((p) => p.object.label));
@@ -299,6 +300,7 @@ function verify(fit, pairs, stars, objs, width, height, matchTol) {
     objs.forEach((ob, k) => {
         const p = proj[k];
         if (!p || p[0] < 0 || p[1] < 0 || p[0] > width || p[1] > height) return;
+        if (starIsMasked(visibilityMask, p[0], p[1])) return;
         if (usedObj.has(ob.label)) return;
         inFrame++;
         for (const s of stars) {

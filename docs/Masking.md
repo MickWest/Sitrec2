@@ -61,7 +61,7 @@ removes everything, and so does importing new footage (see [Saving](#saving)).
 | --- | --- |
 | **Show Mask** | Show the red exclusion overlay without painting. It is stronger with **Enable Mask** on and dimmer with it off. |
 | **Edit Mask** | Show the mask and paint by hand. Drag to add, **Alt/Option**-drag to erase, `[` and `]` for brush size. **Shift**-drag fills a rectangle; **Alt/Option-Shift**-drag erases a rectangle. A green circle shows the brush while the pointer is over the video. |
-| **Mask Ground (auto)** | *(Auto Masking)* No clicks. Splits the frame into blocks and keeps as sky only what a large, uniform block can describe — so foliage, which forces the blocks to keep subdividing, is picked out. Best first thing to try. |
+| **Mask Ground (auto)** | *(Auto Masking)* Uses texture plus the sky's measured color and illumination gradients to exclude foliage, buildings and wires. Small colored stars are kept. Best first thing to try. |
 | **Mask Ground (click sky, then ground)** | *(Auto Masking)* Click a patch of sky, then a patch of ground. The second click lets Sitrec *measure* which of brightness or texture separates them in your particular clip rather than assuming. |
 | **Auto Mask OSD** | *(Auto Masking)* Finds pixels that do not change over a window of frames and are close to **Target Color** — burned-in text, timestamps, reticles. **Target Color** is near-white by default, so set it to match green, black or other colored text. **Color Tolerance** sets how close a pixel must be. |
 | **Auto Mask Redactions** | *(Auto Masking)* Finds flat rectangles that do not change over a window of frames — blanked-out regions in released footage. It ignores pixels brighter than **Redaction Max Bright**, so raise that slider for a white box. |
@@ -86,8 +86,17 @@ also starts with 100.
 Try **Mask Ground (auto)** first. It needs no input and it is the one that copes with a bright
 glow along the horizon, which the two-click method does not.
 
-**Mask Ground (auto)** tests texture, not brightness. Ground as smooth as the sky, such as a calm
-sea, can look like sky to it and stay unmasked with no warning.
+**Mask Ground (auto)** starts with texture, then learns the smooth color and illumination of the
+open sky in this frame. Color helps distinguish lit foliage and smooth walls from sky. It does
+not assume that sky is blue or that ground is below it. If that color model is unreliable, the
+tool keeps the texture result. Smooth ground with sky-like color and brightness, such as a calm
+sea, can still remain unmasked; inspect the overlay and correct it with the brush.
+
+The Star Tracker's **Auto mask foreground** option uses this method before analyzing a still
+image with an empty mask. It shows the result and preserves existing, restored and hand-edited
+masks. Clearing an automatically generated mask does not regenerate it on the next analysis of
+that image; use **Mask Ground (auto)** to request another proposal. This option does not generate
+or follow masks through a video.
 
 Use **Mask Ground (click sky, then ground)** when the automatic version misjudges the scene and
 you can point at unambiguous examples of each. Be aware that footage through a vignetted optic —
@@ -107,7 +116,7 @@ which analyses obey it.
 
 | Tool | Control | Effect |
 | --- | --- | --- |
-| [**Star Tracker**](StarTracker.md) | **Video → Star Tracker → Use mask** | Detections inside the mask are discarded before they can be mistaken for stars. They do not appear in **Show rejected**, so if an expected star is missing, turn on **Show Mask** and check whether it is under the mask. |
+| [**Star Tracker**](StarTracker.md) | **Video → Star Tracker → Use mask** | Excludes masked pixels from detection, background estimates and photometry. Still-image catalog verification also respects the mask. If an expected star is missing, turn on **Show Mask** and check whether it is under the mask. |
 | **Point Track** | **Video → Point Track → Use Mask** | Applies to Motion (Background) and the *Center on* methods only. Masked pixels are left out of the centring calculation, and Motion (Background) tracking also leaves them out of camera registration and the background model. The centring methods take a weighted average of the pixels inside the cursor, so bright masked ground drifting into the cursor would otherwise *pull* the tracked point towards it. |
 | **Motion Analysis** | On whenever the mask is enabled | Motion measurements skip masked points, so a fence, a treeline or an OSD does not contribute to the estimated camera motion. |
 | **Motion panorama** | **Video → Motion Analysis → Panorama → Motion Pano Options → Use Mask in Pano** | Masked pixels are written transparent instead of being stitched into the output. Works only when **Enable Mask** is on. |
