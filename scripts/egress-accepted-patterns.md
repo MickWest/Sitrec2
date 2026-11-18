@@ -176,6 +176,19 @@ entry here: an id, what the code does, where the data goes, the release, and its
   label or position in a URL parameter, a log, a request of its own, telemetry, or any send
   that the user did not start is a finding.
 
+### `gfs-archive-grids-from-ncei` — accepted 2.201.2 (contract widened)
+- **Code:** `sitrecServer/windProxy.php` and `tools/fetch_wind.py` (`build_ncei_url`,
+  `download_from_ncei`, `download_indexed_grib`). For a GFS cycle before 2021-03-22 12Z, which
+  the NOMADS and AWS sources do not hold, the server reads the GFS analysis grid from the NOAA
+  NCEI archive: first its `.grb2.inv` inventory, then byte ranges of the requested level.
+- **Data:** the date and hour of the cycle (time), in the path of a whole-globe grid file, sent
+  by the application's server to `www.ncei.noaa.gov`. The browser does not contact NCEI. No
+  position, and nothing about the user.
+- **Limits:** server-side requests for whole-globe GFS grids, only for cycles before
+  2021-03-22 12Z, under the same trigger as the other GFS sources (the user enables GFS wind,
+  or a saved sitch reloads its visible grid wind field). A position or an area in the request,
+  a request from the browser, another destination, or NCEI use for later cycles is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

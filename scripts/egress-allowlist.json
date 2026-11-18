@@ -232,8 +232,8 @@
     },
     {
       "host": "www.ncei.noaa.gov",
-      "purpose": "sounding station lists and IGRA observation archives selected by station and date",
-      "trigger": "the user selects an archived sounding; the station menu uses a bundled station list",
+      "purpose": "sounding station lists and IGRA observation archives selected by station and date; also archived NOAA GFS global wind grids fetched by the server for cycles before 2021-03-22 12Z, with no viewed position",
+      "trigger": "the user selects an archived sounding (the station menu uses a bundled station list), or enables GFS wind for a date whose cycle is before 2021-03-22 12Z",
       "mayReceive": ["identifier", "time"]
     },
     {
