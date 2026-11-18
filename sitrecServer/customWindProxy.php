@@ -29,19 +29,30 @@ sitrecAuditRequest('wind.read');
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 
-$date  = preg_replace('/[^0-9]/', '', $_GET['date'] ?? '');
-$hour  = intval($_GET['hour'] ?? 0);
-$level = preg_replace('/[^a-z0-9]/', '', $_GET['level'] ?? 'surface');
+$date = $_GET['date'] ?? '';
+$hourInput = (string)($_GET['hour'] ?? '0');
+$hour = intval($hourInput);
+$level = $_GET['level'] ?? 'surface';
 
-if (!preg_match('/^\d{8}$/', $date)) {
+if (!is_string($date) || !preg_match('/^\d{8}$/', $date)
+    || !checkdate((int)substr($date, 4, 2), (int)substr($date, 6, 2), (int)substr($date, 0, 4))) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid date format, use YYYYMMDD']);
     exit;
 }
 
-if ($hour < 0 || $hour > 23) {
+if (!preg_match('/^\d{1,2}$/', $hourInput) || $hour < 0 || $hour > 23) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid hour']);
+    exit;
+}
+
+// The pressure levels used by the client, plus its 10 m surface grid.
+$levels = ['surface', '1000', '975', '950', '925', '900', '850', '800', '700', '600',
+    '500', '400', '300', '250', '200', '150', '100', '70', '50', '30', '20', '10'];
+if (!in_array($level, $levels, true)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid level']);
     exit;
 }
 
@@ -89,7 +100,7 @@ $url = str_replace(
 // Custom files are prefixed with "custom_" to avoid colliding with GFS data
 // at the same date/hour/level.
 $cacheDir = __DIR__ . '/../data/wind/';
-$caching = (bool)getenv('CACHE_CUSTOM_WIND');
+$caching = filter_var(getenv('CACHE_CUSTOM_WIND'), FILTER_VALIDATE_BOOLEAN);
 $cacheFile = $cacheDir . "custom_wind_{$date}_{$cycleHourStr}z_{$levelStr}.json";
 
 if ($caching) {

@@ -85,6 +85,12 @@ The four IDW sources land in **`_buildGridFromSamples(samples, sourceLabel)`**; 
 
 ### GFS (the heavy path)
 
+Grid requests retain their initiating source through fetching and persistence. File IDs
+include the source key, so a custom upstream with a `GFS` label cannot collide with
+the GFS cache. A source change clears the previous display, and an obsolete fetch
+cannot replace the newly selected source. A failed fill clears its displayed grid.
+Status names only loaded cycles; a missing later cycle is not described as a blend.
+
 ```
 Browser:
   CNodeDisplayWindField._fillFromGridSource(altFt)   // shared by gfs + custom
@@ -102,6 +108,8 @@ windProxy.php:
   └ shell out: python3 ../tools/fetch_wind.py --date … --hour … --level …
 
 fetch_wind.py:
+  ├ for cycles before 2021-03-22 12Z, use NCEI analysis GRIB2 with byte-ranged .inv slicing
+  │    https://www.ncei.noaa.gov/oa/prod-model/global-forecast-system/access/grid-003-1.0-degree/analysis/YYYYMM/YYYYMMDD/gfs_3_YYYYMMDD_HH00_000.grb2
   ├ try NOMADS GRIB-filter URL (small partial download — UGRD/VGRD, and HGT on a pressure level)
   │    https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_1p00.pl?file=…&dir=/gfs.YYYYMMDD/HH/atmos
   ├ on miss, fall back to AWS S3 with byte-ranged .idx slicing
@@ -149,8 +157,17 @@ If they request data 12 hours later for the same date, the cycle walk lands on 1
 #### GFS retention
 
 - **NOMADS** keeps a rolling ~10 days of cycles. Older requests will 404.
-- **AWS S3 (noaa-gfs-bdp-pds)** is the deeper archive — years of data, but not infinite. The bucket is read-only public, no key required. The `atmos/` layout that `fetch_wind.py` reads starts with the 12Z cycle of **2021-03-22**, so `windProxy.php` refuses earlier dates with a 400.
-- For dates outside both windows, the user has to switch to one of the sounding sources.
+- **AWS S3 (noaa-gfs-bdp-pds)** is the deeper archive — years of data, but not infinite. The bucket is read-only public, no key required. Its `atmos/` layout starts with the 12Z cycle of **2021-03-22**.
+- **NCEI analysis archive** supplies earlier cycles using its `.grb2.inv` byte-offset inventories. The 1° GRIB2 archive begins on **2009-08-23**, with gaps; availability of every date or pressure level is not guaranteed. The surface and pressure grids for **2020-12-30** are available. NCEI also supports the script's optional 0.5° resolution, but not 0.25°.
+- For dates missing from the archives, use one of the sounding sources. Proxy error messages appear in the wind status row.
+
+### Custom grid proxy
+
+`customWindProxy.php` checks a real calendar date, an integer hour from 0 through
+23, and a supported pressure level or `surface` before substituting URL values.
+Custom sources have their own date coverage; the GFS archive bounds do not apply.
+`CACHE_CUSTOM_WIND` is parsed as a boolean, so `false`, `0`, `off`, or an unset
+value disable caching. `true` enables it.
 
 ### Soundings (UWYO / IGRA2 / Manual)
 
@@ -190,6 +207,9 @@ UWYO's web endpoints don't allow cross-origin requests, so the browser hits `sit
 5. Returns `X-Sounding-Cache: hit`, `miss`, `miss-hit`, or `miss-store`, which distinguishes the four cache outcomes.
 
 The browser also enforces a **client-side rate limit**: after a 429, all UWYO calls in the tab pause for 66 s (`RATE_LIMIT_DELAY_MS`) and update the status field with a countdown.
+The proxy preserves an upstream 429 with `Retry-After: 66`. Only definitive missing
+responses (404/410 or a missing-data page) enter the negative cache; other HTTP
+failures and retry pages remain transient errors.
 
 #### IGRA2
 
@@ -202,6 +222,9 @@ data-por/<station>-data.txt.zip                    (period-of-record, full histo
 ```
 
 The zip is decompressed in-browser, the requested sounding is selected from the (potentially huge) archive, and the parsed profile is added to FileManager.
+Automatic loading checks both the station's first and last year, and requires a
+launch within 12 hours of the sitch start. An archive gap skips that station and
+continues to the next one instead of substituting unrelated weather.
 
 #### Manual Soundings
 
@@ -229,6 +252,12 @@ GET ${baseUrl}?latitude=${lat}&longitude=${lon}
 ```
 
 `<L>` is every level from 1000 to 30 hPa. The reply becomes a column for each hour, `[{altM, u, v}]`, which `columnWindAt` reads at any height (u/v interpolation, the end levels held). `windAt` uses the nearest loaded column of the day within 0.25° (about 25 km); a point farther from every column asks for its own (`_requestOpenMeteoColumn`) and is `pending` until it arrives. `_fillFromOpenMeteo` loads the columns at the wind-relevant track points and seeds the [IDW grid](#idw-grid-sounding-sources--open-meteo) from them. **Refresh Wind Data** drops the columns (`_clearOpenMeteoColumns`).
+
+Sampling and loading use the requested frame's UTC date/hour. The displayed field
+refreshes when the playhead enters another hour. Failed requests become `no-data`
+during retry backoff and invalidate consumers; they do not stay `pending` with no
+request running. Provider error reasons are retained. An all-null pressure-level
+response reports unavailable data for the requested date and location.
 
 ### Track-derived winds
 
@@ -259,7 +288,7 @@ Every error reply is JSON with an `error` field.
 | Status | Meaning | `Retry-After` |
 |---|---|---|
 | 200 | The wind JSON, from the cache or from a new fetch. | — |
-| 400 | A bad request: `date` is not a real `YYYYMMDD` date, is before 2021-03-22 or is after tomorrow (UTC); `hour` is not 0–23; or `level` is not `surface` or a level in `PRESSURE_LEVELS` in `fetch_wind.py`. Python does not start. | — |
+| 400 | A bad request: `date` is not a real `YYYYMMDD` date, is before 2009-08-23 or is after tomorrow (UTC); `hour` is not an integer from 0–23; or `level` is not `surface` or a level in `PRESSURE_LEVELS` in `fetch_wind.py`. Python does not start. | — |
 | 429 | The miss budget is used up: 120 uncached requests per 10 minutes per client address. | The seconds until the budget refills. |
 | 500 | `tools/fetch_wind.py` is missing. | — |
 | 502 | No file was written for the requested cycle or an earlier cycle on the same day: upstream did not supply the data, or the fetcher could not start. `details` holds the fetcher's output (at most 32 KB). | — |
@@ -319,7 +348,8 @@ The implementation choices in `_buildGridFromSamples` (`src/nodes/CNodeDisplayWi
 ![Cache layers](wind-images/cache-layout.svg)
 
 - **Server disk cache** — `data/wind/wind_<DATE>_<HH>z_<LEVEL>.json` (no expiry on exact-cycle hits, 4 h staleness on fallback hits), `sitrec-cache/<md5>.html` (positive soundings, 24 h), and `sitrec-cache/<md5>.miss` (missing soundings, one hour or 30 days depending on age).
-- **Browser FileManager** — every successful GFS or custom level is compressed with pako and registered under a deterministic `fileId = "windGrid_${source}_${cycle}_${suffix}"` (the cycle of the data, `YYYYMMDDHH`, is in the id since 2026-11-03, because two cycles are loaded at once). The entry is marked `compressed`, `dynamicLink`, and `skipSerialization`, so the grid blob does not bloat save files. Save metadata retains the date, cycle, level, and source; reloads re-fetch those levels through the proxy and repopulate FileManager.
+- **Browser FileManager** — GFS and custom display levels are compressed with pako and registered under deterministic file IDs. The entries are marked `compressed`, `dynamicLink`, and `skipSerialization`. Server saves retain the date, cycle, level, and source; reloads re-fetch those levels through the proxy and repopulate FileManager.
+- **Local scene snapshot** — local saves embed the loaded GFS and custom grids as a compressed, base64-encoded `localWindGrids` field on the wind node. This includes both times of a blend, levels loaded for calculations, and a separate camera wind source. The scene can restore those grids without a server or companion asset files. An earlier-cycle fallback is retained as the data actually used; **Refresh Wind Data** replaces the snapshot with newly fetched data. Levels and times that were never loaded still require a fetch.
 - **In-flight node state** — `wn._levelCache["<date>_<hour>_<level>"]` holds the last-applied JSON, keyed by a composite `dateStr_hour_level` string (e.g. `"20260427_12_500"`); `wn.windU`, `wn.windV`, `wn.windCov` are the three flat arrays the shader and `sampleWind()` read from.
 
 ### Time / units
@@ -343,6 +373,8 @@ Two layers of coalescing keep things sane when the user drags the altitude slide
 2. **In `CustomManagerSetup._loadWindForCurrentSource`** — `this._windLoadInFlight` promise. Subsequent calls forward through `Promise.allSettled`, ensuring the GUI's `par.windStatus` mirror ends up reflecting the wind node's final `statusText`, not whatever the first fetch said.
 
 The combination means rapid slider drags collapse to one network round-trip per cached level, and rapid source flips don't end up showing the old source's status text.
+
+The last attempted display time is tracked separately from the displayed field. A failed fetch clears the field, but changing to another grid interval or Open-Meteo hour still starts a new fetch. Repeated updates at the failed time do not retry on every frame.
 
 ## Unsupported / deliberately missing
 

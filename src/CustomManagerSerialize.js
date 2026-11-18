@@ -487,7 +487,7 @@ export const serializeMethods = {
             }
 
             if (node.modSerialize !== undefined) {
-                const nodeMod = node.modSerialize()
+                const nodeMod = node.modSerialize(local)
 
                 // check it has rootTestRemove, and remove it if it's empty
                 // this is a test to ensure serialization of an object incorporates he parents in the hierarchy

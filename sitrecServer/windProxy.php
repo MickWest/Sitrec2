@@ -22,7 +22,8 @@ header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 
 $date  = preg_replace('/[^0-9]/', '', $_GET['date'] ?? '');
-$hour  = intval($_GET['hour'] ?? 0);
+$hourInput = (string)($_GET['hour'] ?? '0');
+$hour  = intval($hourInput);
 $level = preg_replace('/[^a-z0-9]/', '', $_GET['level'] ?? 'surface');
 
 // Validate inputs
@@ -32,20 +33,20 @@ if (!preg_match('/^\d{8}$/', $date)) {
     exit;
 }
 
-if ($hour < 0 || $hour > 23) {
+if (!preg_match('/^\d{1,2}$/', $hourInput) || $hour < 0 || $hour > 23) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid hour']);
     exit;
 }
 
-// fetch_wind.py can only fetch real days from 2021-03-22 (the AWS archive's
-// atmos/ layout, the one it builds, starts with that day's 12Z cycle) up to
-// today; one day of slack allows for a client clock ahead of the server's.
+// The NCEI 1-degree GRIB2 analysis archive starts on 2009-08-23. Older
+// cycles than AWS's atmos/ layout are fetched there. Archive gaps can occur.
+// One day of slack allows for a client clock ahead of the server's.
 // Anything else would start Python only to fail.
 if (!checkdate((int)substr($date, 4, 2), (int)substr($date, 6, 2), (int)substr($date, 0, 4))
-    || $date < '20210322' || $date > gmdate('Ymd', time() + 86400)) {
+    || $date < '20090823' || $date > gmdate('Ymd', time() + 86400)) {
     http_response_code(400);
-    echo json_encode(['error' => 'Date out of range for GFS wind data']);
+    echo json_encode(['error' => 'Date out of range for GFS wind data (2009-08-23 through tomorrow UTC; archive gaps may occur)']);
     exit;
 }
 

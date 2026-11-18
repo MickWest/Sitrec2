@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {parse} from '@babel/parser';
 import {collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry} from '../src/trackSourceUtils';
+import {CNodeDisplayWindField} from '../src/nodes/CNodeDisplayWindField';
 
 // Run the real serializer with scene/UI managers stubbed, avoiding browser-only
 // worker imports. File selection and metadata generation are production code.
@@ -12,7 +13,7 @@ const declaration = parse(source, {sourceType: 'module'}).program.body
 const method = declaration.declaration.declarations[0].init.properties
     .find(node => node.key.name === 'getCustomSitchString');
 
-function save({local = false, custom = false} = {}) {
+function save({local = false, custom = false, nodes = {}} = {}) {
     const empty = () => null;
     const manager = {serialize: empty};
     const bindings = {
@@ -25,7 +26,7 @@ function save({local = false, custom = false} = {}) {
             'overlay.png': {filename: 'overlay.png', staticURL: 'https://objects.example/overlay.png', dataType: 'groundOverlayImage'},
             'source.bin': {filename: 'source.bin', staticURL: 'https://objects.example/source.bin', skipSerialization: true},
         }},
-        NodeMan: {exists: () => false, iterate: () => {}},
+        NodeMan: {exists: () => false, iterate: fn => Object.entries(nodes).forEach(([id, node]) => fn(id, node))},
         TrackManager: {iterate: () => {}, serialize: empty, serializeBalloons: empty, serializeKites: () => [], serializeDisplayNames: () => ({})},
         Globals: {menuBar: {modSerialize: empty}},
         GlobalScene: {children: []}, par: {}, Units: {modSerialize: empty},
@@ -58,4 +59,14 @@ test('modified scenes retain working-folder asset paths in local saves', () => {
     const result = save({local: true});
     expect(result.loadedFiles['imported-model.ply']).toBe('assets/model.ply');
     expect(result.loadedFiles['source.bin']).toBeUndefined();
+});
+
+test('the scene serializer includes wind snapshots only for a local save', () => {
+    const windField = Object.assign(Object.create(CNodeDisplayWindField.prototype), {
+        id:'windField', simpleSerials:[], source:'gfs', inspectObjects:{}, inspectPoints:[], _loadedWindFiles:new Map(),
+        _levelCache:{'gfs:20201230_6_surface':{nx:2, ny:2, u:[8,8,8,8], v:[0,0,0,0]}},
+    });
+    const nodes = {windField};
+    expect(typeof save({custom:true, local:true, nodes}).mods.windField.localWindGrids).toBe('string');
+    expect(save({custom:true, nodes}).mods.windField.localWindGrids).toBeUndefined();
 });

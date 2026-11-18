@@ -119,11 +119,20 @@ $missLifetime = ($soundingTs !== false && ($now - $soundingTs) > 12 * 3600)
     ? 30 * 24 * 3600   // clearly in the past — the miss is permanent
     : 3600;            // recent — may still be processing; recheck in an hour
 if (file_exists($missFile) && ($now - filemtime($missFile)) < $missLifetime) {
-    http_response_code(404);
-    header("Content-Type: text/plain");
-    header("X-Sounding-Cache: miss-hit");
-    readfile($missFile);
-    exit();
+    $cachedMiss = file_get_contents($missFile);
+    // Older versions cached every 4xx. Discard those known transient entries
+    // now, rather than making users wait out their historical 30-day lifetime.
+    $transientMiss = preg_match('/UWYO HTTP (\d{3})/', $cachedMiss, $match)
+        && !in_array((int)$match[1], [404, 410], true);
+    if ($transientMiss) {
+        @unlink($missFile);
+    } else {
+        http_response_code(404);
+        header("Content-Type: text/plain");
+        header("X-Sounding-Cache: miss-hit");
+        echo $cachedMiss;
+        exit();
+    }
 }
 
 // ── Fetch from UWYO ─────────────────────────────────────────────────────
@@ -143,18 +152,23 @@ $result = curlGetRequest($url, [], 30);
 $data = $result['data'];
 $httpStatus = $result['http_status'];
 
+// Preserve throttling even when UWYO sends an empty response body. The
+// client understands 429 and waits before retrying this station.
+if ($httpStatus === 429) {
+    http_response_code(429);
+    header('Retry-After: 66');
+    exit('UWYO rate limit exceeded. Please retry after a minute.');
+}
+
 if ($data === false || strlen($data) === 0) {
     http_response_code(502);
     exit("Failed to fetch sounding data from UWYO.");
 }
 
 if ($httpStatus >= 400) {
-    // A 4xx from UWYO (it returns 404 for a station/date/hour with no sounding)
-    // is a definitive "missing" answer — negative-cache it so the next
-    // relocate/refresh doesn't re-hit UWYO (a cold miss can take ~16s and burns
-    // a rate-limit token). A 5xx is a transient UWYO server error: return 502
-    // and do NOT cache it.
-    if ($httpStatus < 500) {
+    // Only a missing/gone response is definitive. Throttling, authentication
+    // failures and server errors must not become a month-long cached miss.
+    if ($httpStatus === 404 || $httpStatus === 410) {
         $missMsg = "No sounding data available for station " . htmlspecialchars($station)
            . " on " . htmlspecialchars($date) . " " . htmlspecialchars($hourPad) . "Z "
            . "(UWYO HTTP " . intval($httpStatus) . "). The station may not exist or no "
@@ -170,10 +184,14 @@ if ($httpStatus >= 400) {
 }
 
 // Check for UWYO error pages
-// cgi-bin errors: "Can't get ...", "Please try again"
+// A retry page is transient, not evidence of a missing launch.
+if (strpos($data, "Please try again") !== false) {
+    http_response_code(502);
+    exit("UWYO is temporarily unavailable. Please try again.");
+}
+// cgi-bin errors: "Can't get ..."
 // WSGI errors: "Unable to retrieve the data for ..."
 if (strpos($data, "Can't get") !== false
-    || strpos($data, "Please try again") !== false
     || strpos($data, "Unable to retrieve") !== false) {
     $missMsg = "No sounding data available for station " . htmlspecialchars($station)
        . " on " . htmlspecialchars($date) . " " . htmlspecialchars($hourPad) . "Z. "

@@ -6,7 +6,7 @@
 // wind fields depending on whether its files loaded before the wind node did. And a level
 // asked for while the wind proxy is busy (503 with Retry-After) is asked for again.
 
-import {setFileManager, setNodeMan} from '../src/Globals';
+import {setFileManager, setGlobalDateTimeNode, setNodeMan} from '../src/Globals';
 import {CNodeDisplayWindField} from '../src/nodes/CNodeDisplayWindField';
 import {LoadingManager} from '../src/CLoadingManager';
 
@@ -60,6 +60,53 @@ test("the saved files are not there yet: the reload of every level is asked for"
     expect(wind._needsPostDeserializeReloadGFS).toHaveLength(1);
 });
 
+test("a failed switch from Manual to GFS does not save the manual grid as a source file", () => {
+    const add = jest.fn();
+    setFileManager({list: {}, add});
+    const wind = Object.assign(restored(), {
+        source: "gfs", _windFileIds: [], inspectPoints: [], inspectObjects: {},
+        _lastWindJSON: {...grid, source: "Manual", level: "33ft", refTime: undefined},
+    });
+    const serialized = wind.modSerialize();
+    expect(serialized.loadedWindFiles).toEqual([]);
+    expect(serialized.windFileIds).toEqual([]);
+    expect(add).not.toHaveBeenCalled();
+});
+
+test("old saves with a manual display grid reload the selected altitude, not 33ft/NaN", async () => {
+    setFileManager({list: {}});
+    const wind = restored();
+    await wind.modDeserialize({...saved, windAltFt: 33,
+        windFileIds: ["windGrid_Manual__33ft"],
+        loadedWindFiles: [{fileId: "windGrid_Manual__33ft", level: "33ft", dateStr: "",
+            hour: "", source: "Manual", sourceKey: "gfs"}],
+    });
+    expect(wind._loadedWindFiles.size).toBe(0);
+    expect(wind._needsPostDeserializeReloadGFS).toEqual([]);
+    wind._fetchLevel = jest.fn();
+    wind.fetchWindForAltitude = jest.fn();
+    await wind._reloadGFSAfterDeserialize(wind._needsPostDeserializeReloadGFS);
+    expect(wind._fetchLevel).not.toHaveBeenCalled();
+    expect(wind.fetchWindForAltitude).toHaveBeenCalledWith(33);
+});
+
+test("a saved source grid with an empty hour uses the sitch cycle", async () => {
+    setFileManager({list: {}});
+    setGlobalDateTimeNode({dateNow: new Date("2020-12-30T06:26:00Z")});
+    try {
+        const wind = restored();
+        await wind.modDeserialize({...saved,
+            loadedWindFiles: [{...saved.loadedWindFiles[0], dateStr: "", hour: ""}],
+        });
+        wind._fetchLevel = jest.fn();
+        wind.fetchWindForAltitude = jest.fn();
+        await wind._reloadGFSAfterDeserialize(wind._needsPostDeserializeReloadGFS);
+        expect(wind._fetchLevel).toHaveBeenCalledWith("200", "20201230", 6, "gfs");
+    } finally {
+        setGlobalDateTimeNode(undefined);
+    }
+});
+
 describe("a level fetched while the wind proxy is busy", () => {
     const reply = (status, headers = {}, body = grid) => ({
         status, ok: status === 200, headers: {get: name => headers[name] ?? null},
@@ -95,5 +142,16 @@ describe("a level fetched while the wind proxy is busy", () => {
         global.fetch = jest.fn().mockResolvedValue(reply(503, {"Retry-After": "0.01"}));
         await expect(fetcher()._fetchLevel("200", "20250920", 0, "gfs")).rejects.toThrow("HTTP 503");
         expect(global.fetch).toHaveBeenCalledTimes(4);
+    });
+
+    test("the proxy's explanation is shown instead of just HTTP 400", async () => {
+        global.fetch = jest.fn().mockResolvedValue(reply(400, {}, {error: "Date out of range for GFS wind data"}));
+        await expect(fetcher()._fetchLevel("surface", "19990101", 6, "gfs"))
+            .rejects.toThrow("Date out of range for GFS wind data");
+    });
+
+    test("a non-JSON proxy error still reports the HTTP status", async () => {
+        global.fetch = jest.fn().mockResolvedValue({...reply(502), json: async () => { throw new Error("HTML"); }});
+        await expect(fetcher()._fetchLevel("surface", "20201230", 6, "gfs")).rejects.toThrow("HTTP 502");
     });
 });

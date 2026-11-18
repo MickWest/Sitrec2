@@ -467,7 +467,7 @@ export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
     // Sort stations by proximity to camera, excluding inactive stations
     const targetYear = targetDate.getUTCFullYear();
     const sorted = stations
-        .filter(s => s.wmo && s.lastYear >= targetYear)
+        .filter(s => s.wmo && (s.firstYear == null || s.firstYear <= targetYear) && s.lastYear >= targetYear)
         .map(s => ({ ...s, dist: haversineKm(camLat, camLon, s.lat, s.lon) }))
         .sort((a, b) => a.dist - b.dist);
 
@@ -509,6 +509,13 @@ export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
                     const sMs = new Date(s.date + "T" + String(sHour).padStart(2, "0") + ":00:00Z").getTime();
                     const dist = Math.abs(targetMs - sMs);
                     if (dist < bestDist) { bestDist = dist; bestIdx = s.index; }
+                }
+                // Automatic wind loading uses a launch near the sitch time,
+                // as the UWYO path does. A gap in an otherwise active station's
+                // archive must not substitute weather from another day/year.
+                // Twelve hours allows the adjacent regular 00Z/12Z launch.
+                if (bestDist > 12 * 3600000) {
+                    throw new Error("No IGRA2 sounding within 12 hours of the sitch start");
                 }
 
                 const single = extractSingleSounding(text, bestIdx);

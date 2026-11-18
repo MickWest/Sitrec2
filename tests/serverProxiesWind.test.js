@@ -123,18 +123,26 @@ function utcDate(offsetDays) {
         expect(fetchCount()).toBe(0);
     });
 
+    test('refuses malformed hours rather than converting them to midnight', () => {
+        for (const hour of ['NaN', '', '6foo', '-1', '24']) {
+            expect(request({date: '20201230', hour, level: 'surface'}))
+                .toEqual({status: 400, body: {error: 'Invalid hour'}});
+        }
+        expect(fetchCount()).toBe(0);
+    });
+
     test('refuses dates outside the GFS archive, and impossible dates, without starting Python', () => {
-        for (const date of ['20210321', '19990101', '00000000', '20230231', '20231301', utcDate(2), '99991231']) {
+        for (const date of ['20090822', '19990101', '00000000', '20230231', '20231301', utcDate(2), '99991231']) {
             const result = request({date, hour: 0, level: 'surface'});
             expect(result.status).toBe(400);
             expect(result.body.error).toMatch(/Date out of range/);
         }
         expect(fetchCount()).toBe(0);
         // The first archived day, today and tomorrow (for clock skew) are all fetched.
-        for (const date of ['20210322', utcDate(0), utcDate(1)]) {
+        for (const date of ['20090823', '20201230', '20210322', utcDate(0), utcDate(1)]) {
             expect(request({date, hour: 12, level: 'surface'}, 'write').status).toBe(200);
         }
-        expect(fetchCount()).toBe(3);
+        expect(fetchCount()).toBe(5);
     });
 
     test('limits cache misses per address, but never cache hits', () => {

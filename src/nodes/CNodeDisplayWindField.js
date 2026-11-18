@@ -11,6 +11,7 @@ import {LoadingManager} from "../CLoadingManager";
 import {mouseInView, mouseToView} from "../ViewUtils";
 import {ViewMan} from "../CViewManager";
 import pako from "pako";
+import {Buffer} from "buffer";
 import * as LAYER from "../LayerMasks";
 import {InstancedInterleavedBuffer, InterleavedBufferAttribute, Vector3} from "three";
 import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
@@ -127,15 +128,18 @@ function cycleLabel(refTime) {
 const KM_PER_DEG = 111.195;
 
 function normalizeWindFileMeta(meta) {
-    let level = String(meta.level ?? "");
+    let level = String(meta?.level ?? "");
     if (level === "10m") level = "surface";
     else if (/^\d+hPa$/i.test(level)) level = level.replace(/hPa$/i, "");
-    const hourNumber = parseInt(meta.hour, 10);
+    // A displayed blend (e.g. "33ft") is not a fetchable source grid. Old
+    // saves could mislabel the previous Manual field after a failed GFS load.
+    if (level !== "surface" && !/^\d+$/.test(level)) return null;
+    const hourNumber = /^\d{1,2}$/.test(String(meta.hour)) ? Number(meta.hour) : NaN;
     // The wind source the file is from ("gfs" or "custom"). A save from before
     // 2026-11-03 has only the data's own label, which is "GFS" for GFS.
     const sourceKey = meta.sourceKey
         ?? (!meta.source || meta.source === "GFS" ? "gfs" : "custom");
-    return {...meta, level, sourceKey, hour: Number.isFinite(hourNumber) ? String(hourNumber) : meta.hour};
+    return {...meta, level, sourceKey, hour: hourNumber < 24 ? String(hourNumber) : undefined};
 }
 
 // The key of one pressure-level grid in _levelCache. The source is part of it:
@@ -276,6 +280,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // "<source>|<interval start ms>|<time weight>" of the displayed grid
         // lines (_fillFromGridSource); update() rebuilds them when it changes.
         this._displayTimeKey = null;
+        this._requestedDisplayTimeKey = null;
         this._levelCache = {};       // levelKey() → GFS json (one per pressure level)
 
         // Changes when the data that windAt() reads changes: a grid level or an
@@ -494,7 +499,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (soundingSet) {
             w = this._blendSoundingProfiles(soundingSet.profiles, lat, lon, altM);
         } else if (sourceKey === "openmeteo") {
-            w = this._sampleOpenMeteo(lat, lon, altM);
+            w = this._sampleOpenMeteo(lat, lon, altM, f);
         } else if (sourceKey === "manual") {
             // The Manual field is Target Wind, the same at every height.
             const tw = NodeMan.get("targetWind", false);
@@ -689,17 +694,20 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return best ? {column: best, distanceDeg: bestD} : null;
     }
 
-    _sampleOpenMeteo(lat, lon, altM) {
-        const date = GlobalDateTimeNode?.dateNow ?? new Date();
+    _sampleOpenMeteo(lat, lon, altM, f = playheadFrame()) {
+        const date = new Date(this._frameTimeMs(f));
         const dateStr = date.toISOString().slice(0, 10);
         const near = this._nearestOpenMeteoColumn(lat, lon, dateStr);
+        const key = this._omColumnKey(lat, lon, dateStr);
         if (!near || near.distanceDeg > OPEN_METEO_COLUMN_RADIUS_DEG) {
             this._requestOpenMeteoColumn(lat, lon, dateStr);
         }
-        if (!near) return {u: null, v: null, status: "pending"};
+        const missing = {status: this._omInFlight.has(key) ? "pending" : "no-data",
+            error: this._omErrors?.get(key)};
+        if (!near) return {u: null, v: null, ...missing};
         const w = columnWindAt(near.column.hours[date.getUTCHours()] ?? [], altM);
         if (!w) return {u: null, v: null, status: "no-data"};
-        if (near.distanceDeg > OPEN_METEO_COLUMN_RADIUS_DEG) w.status = "pending";
+        if (near.distanceDeg > OPEN_METEO_COLUMN_RADIUS_DEG) Object.assign(w, missing);
         return w;
     }
 
@@ -714,6 +722,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             .then(column => {
                 if (column) {
                     this._omColumns.set(key, column);
+                    this._failedLevels.delete(`om:${key}`);
+                    this._omErrors?.delete(key);
                     this._sourceDataVersion++;
                     this._windDataVersion = (this._windDataVersion ?? 0) + 1;
                 }
@@ -721,6 +731,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             })
             .catch(err => {
                 this._failedLevels.set(`om:${key}`, Date.now());
+                (this._omErrors ??= new Map()).set(key, err?.message ?? String(err));
+                this._sourceDataVersion++;
                 console.warn("open-meteo column failed:", err?.message ?? err);
                 return null;
             })
@@ -1562,24 +1574,29 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             // be an earlier cycle than the one asked for).
             const ms = this._frameTimeMs(playheadFrame());
             const {c0, c1, w} = gridTimesAround(ms, this.gridCadenceHours(sourceKey));
+            const displayKey = `${sourceKey}|${c0.ms}|${Math.round(w * 12) / 12}`;
+            const displayed = this._displayTimeKey === displayKey ? this._displayGridTimes : null;
             let gridDeg = null;
             const labelOf = (time) => {
-                const prefix = `${sourceKey}:${time.dateStr}_${time.hour}_`;
-                let refTime = null;
-                for (const key in this._levelCache) {
-                    if (!key.startsWith(prefix)) continue;
-                    const json = this._levelCache[key];
-                    refTime ??= json.refTime ?? null;
-                    if (gridDeg == null && Number.isFinite(json.dlon)) gridDeg = Math.abs(json.dlon);
-                }
+                // A requested cycle is not evidence that it arrived. For the
+                // displayed field use precisely the pairs that were blended;
+                // otherwise require both levels at the display altitude.
+                const {lo, hi} = bracketingLevels(this.windAltFt);
+                const pair = displayed?.find(p => p.time.ms === time.ms);
+                const json = displayed ? pair?.jsonLo
+                    : this._levelCache[levelKey(sourceKey, time.dateStr, time.hour, lo.level)];
+                const high = displayed ? pair?.jsonHi
+                    : this._levelCache[levelKey(sourceKey, time.dateStr, time.hour, hi.level)];
+                if (!json || !high) return null;
+                if (gridDeg == null && Number.isFinite(json.dlon)) gridDeg = Math.abs(json.dlon);
                 const d = time.dateStr;
-                return cycleLabel(refTime)
+                return cycleLabel(json.refTime)
                     ?? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)} ${String(time.hour).padStart(2, "0")}Z`;
             };
             const first = labelOf(c0);
             const second = w > 0 ? labelOf(c1) : null;
-            const blended = !!second && second !== first;
-            const time = !blended ? first
+            const blended = !!first && !!second && second !== first;
+            const time = !blended ? first ?? second
                 : second.slice(0, 10) === first.slice(0, 10) ? `${first}–${second.slice(11)}` : `${first}–${second}`;
             return {kind: "grid", label, time, blended, at: dataTimeText(ms)?.slice(11) ?? null, gridDeg,
                 topM: WIND_LEVEL_TABLE[WIND_LEVEL_TABLE.length - 1].ft * 0.3048};
@@ -2052,7 +2069,10 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                     if (resp.status !== 503 || !(retryAfter > 0) || attempt >= 4) break;
                     await new Promise(r => setTimeout(r, Math.min(retryAfter, 10) * 1000));
                 }
-                if (!resp.ok) throw new Error(`HTTP ${resp.status} for level ${level}`);
+                if (!resp.ok) {
+                    const error = await resp.json().catch(() => null);
+                    throw new Error(error?.error || `HTTP ${resp.status} for level ${level}`);
+                }
                 const json = await resp.json();
                 if (json.error) throw new Error(json.error);
                 if (!json.u || !json.v) throw new Error(`Missing u/v for level ${level}`);
@@ -2113,6 +2133,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // sampled at their respective altitudes (not the display altitude).
     async fetchWindForAltitude(altFt) {
         altFt = altFt ?? this.windAltFt;
+        if (this._displaySource !== this.source) this._clearDisplayedWind();
 
         // Coalesce rapid changes: if a fetch is in flight, record the latest
         // desired (altitude, source) and let the in-flight fetch pick it up
@@ -2126,6 +2147,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.fetching = true;
         this.windAltFt = altFt;
         const ranSource = this.source;
+        // Keep the attempted time even if the displayed field is cleared on
+        // failure. A later time can then retry without retrying every frame.
+        this._requestedDisplayTimeKey = this._windDisplayTimeKey();
 
         try {
             if (this.source === "gfs" || this.source === "custom") {
@@ -2144,22 +2168,27 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 throw new Error(`Unknown wind source: ${this.source}`);
             }
 
-            // Draw streamlines at the actual wind altitude (meters MSL).
-            // A small floor (10 m) keeps surface wind visible without
-            // disappearing into the sea/ocean at sea-level tiles. Terrain
-            // clipping for higher ground is an accepted artifact; the user
-            // can raise the altitude slider to clear terrain.
-            this.renderAltitude = Math.max(10, altFt * 0.3048);
+            if (this.source === ranSource) {
+                // Draw streamlines at the actual wind altitude (meters MSL).
+                // A small floor (10 m) keeps surface wind visible without
+                // disappearing into the sea/ocean at sea-level tiles. Terrain
+                // clipping for higher ground is an accepted artifact; the user
+                // can raise the altitude slider to clear terrain.
+                this.renderAltitude = Math.max(10, altFt * 0.3048);
 
-            this.rebuildStreamlines();
-            setRenderOne(true);
+                this.rebuildStreamlines();
+                setRenderOne(true);
 
-            // Propagate wind at each node's *own* altitude
-            await this.propagateToWindNodes();
-            this._showProvenance();
+                // Propagate wind at each node's *own* altitude
+                await this.propagateToWindNodes();
+                if (this.source === ranSource) this._showProvenance();
+            }
         } catch (err) {
             console.error("Wind fetch failed:", err);
-            this.setStatusMessage(`Error: ${err.message}`);
+            if (this.source === ranSource) {
+                this._clearDisplayedWind();
+                this.setStatusMessage(`Error: ${err.message}`);
+            }
         } finally {
             this.fetching = false;
         }
@@ -2175,6 +2204,36 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             if (sourceChanged) this.source = pendingSource;
             await this.fetchWindForAltitude(pendingAlt ?? altFt);
         }
+    }
+
+    _clearDisplayedWind() {
+        this.windU = this.windV = this.windCov = null;
+        this._lastWindJSON = null;
+        this._lastRefTime = null;
+        this._displaySource = null;
+        this._displayTimeKey = null;
+        this._displayGridTimes = null;
+        this._windFileIds = [];
+        this.dataSource = "";
+        if (this.linesMesh) {
+            this.group?.remove(this.linesMesh);
+            this.linesMesh.geometry?.dispose();
+            this.linesMesh = null;
+        }
+        this._windDataVersion = (this._windDataVersion ?? 0) + 1;
+        setRenderOne(true);
+    }
+
+    _windDisplayTimeKey(f = playheadFrame()) {
+        const ms = this._frameTimeMs(f);
+        if (this._isGridSource()) {
+            const {c0, w} = gridTimesAround(ms, this.gridCadenceHours());
+            return `${this.source}|${c0.ms}|${Math.round(w * 12) / 12}`;
+        }
+        if (this.source === "openmeteo") {
+            return `openmeteo|${Math.floor(ms / 3600000) * 3600000}`;
+        }
+        return null;
     }
 
     // ── Pressure-level grid sources (GFS or env-defined custom) ─────
@@ -2257,13 +2316,18 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             _timeWeight: tw,
         };
 
+        this._storeWindFiles(first.jsonLo, first.jsonHi, needTwo, first.time.dateStr, first.time.hour, false, source);
+        if (second) {
+            this._storeWindFiles(second.jsonLo, second.jsonHi, needTwo, second.time.dateStr, second.time.hour, true, source);
+        }
+        // The request still belongs to its original source even if the user
+        // changed the dropdown while it was in flight. Keep its cache, but do
+        // not replace the selected source's display.
+        if (this.source !== source) return;
         this._applyWindJSON(blended);
         this.windLevel = lo.level === hi.level ? lo.level : `${lo.level}+${hi.level}`;
         this._displayTimeKey = `${source}|${c0.ms}|${wStep}`;
-        this._storeWindFiles(first.jsonLo, first.jsonHi, needTwo, first.time.dateStr, first.time.hour);
-        if (second) {
-            this._storeWindFiles(second.jsonLo, second.jsonHi, needTwo, second.time.dateStr, second.time.hour, true);
-        }
+        this._displayGridTimes = [first, ...(second ? [second] : [])];
 
         // The Status row gives the cycles the data really is (refTime), not
         // only the date: a level can come from an earlier cycle when the
@@ -2394,6 +2458,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // heights and hours of the day; see _sampleOpenMeteo) and builds the
     // displayed grid from those columns at the display altitude.
     async _fillFromOpenMeteo(altFt) {
+        const source = this.source;
+        const frame = playheadFrame();
+        const hourMs = Math.floor(this._frameTimeMs(frame) / 3600000) * 3600000;
         this.setStatusMessage(`Fetching open-meteo at ${heightText(altFt * 0.3048, this.windHeightUnit())}...`);
 
         const points = this._windNodePositions();
@@ -2403,24 +2470,29 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
         const altM = altFt * 0.3048;
         const samples = [];
+        let failure;
         for (const pt of points) {
-            await this.loadDataFor("openmeteo", pt.lat, pt.lon, altM);
-            const w = this.windAt("openmeteo", pt.lat, pt.lon, altM);
+            await this.loadDataFor("openmeteo", pt.lat, pt.lon, altM, frame);
+            const w = this.windAt("openmeteo", pt.lat, pt.lon, altM, frame);
+            failure ??= w.error;
             if (Number.isFinite(w.u) && Number.isFinite(w.v)) {
                 samples.push({lat: pt.lat, lon: pt.lon, u: w.u, v: w.v});
             }
         }
         if (samples.length === 0) {
-            throw new Error("open-meteo returned no usable samples");
+            throw new Error(failure ?? "open-meteo returned no usable samples");
         }
 
+        if (this.source !== source) return;
         this._buildGridFromSamples(samples, "OpenMeteo");
         this.windLevel = `${Math.round(altFt)}ft`;
+        this._displayTimeKey = `openmeteo|${hourMs}`;
     }
 
     // Drop the loaded Open-Meteo columns ("Refresh Wind Data").
     _clearOpenMeteoColumns() {
         this._omColumns.clear();
+        this._omErrors?.clear();
         for (const key of [...this._failedLevels.keys()]) {
             if (key.startsWith("om:")) this._failedLevels.delete(key);
         }
@@ -2707,13 +2779,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // windAt() never waits. These wait for the data at one point (the GFS
     // levels around the height, or the Open-Meteo column), for a load that
     // should show a loaded value at once, not "pending".
-    async loadDataFor(sourceKey, lat, lon, altM) {
+    async loadDataFor(sourceKey, lat, lon, altM, f = playheadFrame()) {
         if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(altM)) return;
         if (sourceKey === "gfs" || sourceKey === "custom") {
             // The levels around the height, for each grid time that the
             // playhead's time blends (decision D5).
             const groundM = this._groundMSL(lat, lon);
-            await Promise.all(this._gridTimesFor(playheadFrame(), sourceKey).flatMap(({dateStr, hour}) => {
+            await Promise.all(this._gridTimesFor(f, sourceKey).flatMap(({dateStr, hour}) => {
                 const heights = this._columnHeights(sourceKey, dateStr, hour, lat, lon);
                 const {lo, hi} = gridColumnBracket(altM, groundM, heights);
                 const levels = lo.level === hi.level ? [lo.level] : [lo.level, hi.level];
@@ -2723,7 +2795,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
                 }));
             }));
         } else if (sourceKey === "openmeteo") {
-            const dateStr = (GlobalDateTimeNode?.dateNow ?? new Date()).toISOString().slice(0, 10);
+            const dateStr = new Date(this._frameTimeMs(f)).toISOString().slice(0, 10);
             const near = this._nearestOpenMeteoColumn(lat, lon, dateStr);
             if (!near || near.distanceDeg > OPEN_METEO_COLUMN_RADIUS_DEG) {
                 await this._requestOpenMeteoColumn(lat, lon, dateStr);
@@ -2733,9 +2805,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
 
     // {u, v} in m/s at (lat, lon, altM) from a source, after loading what it
     // needs there; null when there is no wind there.
-    async sampleAtLLA(lat, lon, altM, sourceKey = this.source) {
-        await this.loadDataFor(sourceKey, lat, lon, altM);
-        const w = this.windAt(sourceKey, lat, lon, altM);
+    async sampleAtLLA(lat, lon, altM, sourceKey = this.source, f = playheadFrame()) {
+        await this.loadDataFor(sourceKey, lat, lon, altM, f);
+        const w = this.windAt(sourceKey, lat, lon, altM, f);
         return Number.isFinite(w.u) && Number.isFinite(w.v) ? w : null;
     }
 
@@ -2842,6 +2914,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // coverage means "trust everywhere" — sampleCoverage() returns 1.0.
         this.windCov = json.cov ? new Float32Array(json.cov) : null;
         this.dataSource = json.source ?? "GFS";
+        this._displaySource = this.source;
         this._lastWindJSON = json;   // keep for serialization
         // Bump data version so the screen-grid arrow cache invalidates and
         // re-samples the new field on the next preRender.
@@ -2855,19 +2928,20 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // The current blend's IDs are tracked separately in this._windFileIds for
     // backward compat with code that reads "what did we just load".
     // append: add to the files of this fill (the second grid time), not replace.
-    _storeWindFiles(jsonLo, jsonHi, needTwo, dateStr, hour, append = false) {
+    _storeWindFiles(jsonLo, jsonHi, needTwo, dateStr, hour, append = false, sourceKey = this.source) {
         const src = (jsonLo.source ?? "GFS").replace(/[^a-zA-Z0-9]/g, "");
-        if (!append || !this._windFileIds) this._windFileIds = [];
+        const currentSource = sourceKey === this.source;
+        if (currentSource && (!append || !this._windFileIds)) this._windFileIds = [];
 
         const store = (json, suffix) => {
             // One file per grid time and level: the data's own cycle (refTime)
             // is in the id. Until 2026-11-03 the id had the level only, which
             // was right while only one cycle was loaded at a time.
             const fileCycle = (json.refTime ?? "").replace(/[-T:Z]/g, "").slice(0, 10) || `${dateStr}${hour}`;
-            const fileId = `windGrid_${src}_${fileCycle}_${suffix}`;
+            const fileId = `windGrid_${sourceKey}_${src}_${fileCycle}_${suffix}`;
             // Already stored from an earlier bracket fetch this session — reuse.
             if (FileManager.list[fileId] && this._loadedWindFiles.has(fileId)) {
-                this._windFileIds.push(fileId);
+                if (currentSource) this._windFileIds.push(fileId);
                 return;
             }
             const compressed = pako.deflate(JSON.stringify(json));
@@ -2890,13 +2964,13 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             const levelStr = json.level ?? "10m";
             entry.staticURL = `data/wind/wind_${refDate || dateStr}_${refHour || hour}z_${levelStr}.json`;
             entry.localStaticURL = entry.staticURL;
-            this._windFileIds.push(fileId);
+            if (currentSource) this._windFileIds.push(fileId);
             this._loadedWindFiles.set(fileId, normalizeWindFileMeta({
                 level: json.level ?? suffix,
                 dateStr: refDate || dateStr,
                 hour: refHour || String(hour),
                 source: src,
-                sourceKey: this._isGridSource() ? this.source : undefined,
+                sourceKey,
             }));
         };
 
@@ -2928,6 +3002,10 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // Legacy single-file store (used by _storeWindFile calls in modDeserialize)
     _storeWindFile() {
         if (!this._lastWindJSON) return;
+        // Only an original source grid can be re-fetched. Manual grids and
+        // altitude/time blends must be rebuilt from the selected source.
+        if (!cycleOfRefTime(this._lastWindJSON.refTime)
+            || !normalizeWindFileMeta(this._lastWindJSON)) return;
         this._storeWindFiles(this._lastWindJSON, this._lastWindJSON, false, "", "");
     }
 
@@ -2949,7 +3027,52 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return null;
     }
 
-    modSerialize() {
+    // Local scenes carry their source grids in the scene file, compressed so
+    // they work with a folder save or a single-file save. Include levels used
+    // by calculations, not only the levels of the displayed streamlines.
+    _serializeLocalWindGrids() {
+        const grids = {...this._levelCache};
+        for (const [fileId, meta] of this._loadedWindFiles) {
+            const entry = FileManager.list[fileId];
+            if (!entry || !meta) continue;
+            const key = levelKey(meta.sourceKey, meta.dateStr, meta.hour, meta.level);
+            if (!grids[key]) {
+                const json = CNodeDisplayWindField._parseWindEntry(entry);
+                if (json?.u && json?.v) grids[key] = json;
+            }
+        }
+        if (Object.keys(grids).length === 0) return undefined;
+        // A local snapshot retains the data actually used, including an
+        // earlier-cycle fallback. Only Refresh should replace that snapshot.
+        const snapshot = Object.fromEntries(Object.entries(grids).map(([key, json]) => {
+            const {_earlierCycle, _fetchedAt, ...data} = json;
+            return [key, data];
+        }));
+        return Buffer.from(pako.deflate(JSON.stringify(snapshot))).toString("base64");
+    }
+
+    _restoreLocalWindGrids(encoded) {
+        if (typeof encoded !== "string") return false;
+        let restored = false;
+        try {
+            const grids = JSON.parse(pako.inflate(Buffer.from(encoded, "base64"), {to: "string"}));
+            for (const [key, json] of Object.entries(grids)) {
+                if (!/^(gfs|custom):\d{8}_\d{1,2}_(surface|\d+)$/.test(key)
+                    || !Number.isInteger(json?.nx) || !Number.isInteger(json?.ny)
+                    || json.nx < 2 || json.ny < 2
+                    || !Array.isArray(json.u) || !Array.isArray(json.v)
+                    || json.u.length !== json.nx * json.ny || json.v.length !== json.u.length) continue;
+                this._levelCache[key] = json;
+                restored = true;
+            }
+            if (restored) this._sourceDataVersion++;
+        } catch (error) {
+            console.warn("Saved wind grids could not be restored:", error);
+        }
+        return restored;
+    }
+
+    modSerialize(local = false) {
         // Only grid sources (GFS / custom) write files we can rehydrate from.
         // Other sources are recomputed on load (see modDeserialize), so skip
         // the _storeWindFile path for them — it would tag the file with the
@@ -2977,6 +3100,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             windLevel: this.windLevel,
             windFileIds: isGrid ? (this._windFileIds ?? []) : [],
             loadedWindFiles,
+            localWindGrids: local ? this._serializeLocalWindGrids() : undefined,
             hasWindData: isGrid && !!this._lastWindJSON,
             // GUI / behaviour state — single source of truth for save/load.
             // These used to live in par.* and were synced post-deserialize;
@@ -3092,13 +3216,12 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (Array.isArray(v.loadedWindFiles)) {
             this._loadedWindFiles = new Map(
                 v.loadedWindFiles
+                    .map(normalizeWindFileMeta)
                     .filter(e => e?.fileId)
-                    .map(e => [e.fileId, normalizeWindFileMeta({
-                        level: e.level, dateStr: e.dateStr,
-                        hour: e.hour, source: e.source, sourceKey: e.sourceKey,
-                    })])
+                    .map(({fileId, ...meta}) => [fileId, meta])
             );
         }
+        const restoredLocalGrids = this._restoreLocalWindGrids(v.localWindGrids);
 
         // Non-grid sources don't persist file blobs — they're recomputed on
         // demand. If the saved sitch had the wind field visible, re-fetch
@@ -3124,6 +3247,14 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             return;
         }
 
+        // The local snapshot already holds the requested times and all loaded
+        // levels. Build the field after the remaining nodes are restored,
+        // without re-fetching the server-save catalog's cycles.
+        if (restoredLocalGrids) {
+            if (this.visible) this._needsPostDeserializeFetch = true;
+            return;
+        }
+
         const fileIds = v.windFileIds ?? [];
         // Backward compat: old single-file format
         if (fileIds.length === 0 && v.windFileId && FileManager.list[v.windFileId]) {
@@ -3144,7 +3275,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (jsons.length === 0) {
             if (v.hasWindData && this.visible) {
                 const savedLevels = Array.isArray(v.loadedWindFiles)
-                    ? v.loadedWindFiles.map(normalizeWindFileMeta) : [];
+                    ? v.loadedWindFiles.map(normalizeWindFileMeta).filter(Boolean) : [];
                 this.setStatusMessage(savedLevels.length > 0
                     ? `Reloading 0/${savedLevels.length} wind levels…`
                     : "Reloading wind…");
@@ -3300,13 +3431,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // interval, or to another interval. Grids far from that time are
         // dropped. Until 2026-11-03 a change of cycle dropped every grid and
         // loaded the new cycle alone.
-        if (this._displayTimeKey && !this.fetching && this._isGridSource()) {
-            const cadenceH = this.gridCadenceHours();
-            const {c0, w} = gridTimesAround(this._frameTimeMs(frame), cadenceH);
-            const key = `${this.source}|${c0.ms}|${Math.round(w * 12) / 12}`;
-            if (key !== this._displayTimeKey) {
-                this._displayTimeKey = key;
-                this._pruneGridTimes(c0.ms, cadenceH);
+        const requestedTime = this._requestedDisplayTimeKey ?? this._displayTimeKey;
+        if (requestedTime && !this.fetching) {
+            const key = this._windDisplayTimeKey(frame);
+            if (key && key !== requestedTime) {
+                if (this._isGridSource()) {
+                    const cadenceH = this.gridCadenceHours();
+                    const {c0} = gridTimesAround(this._frameTimeMs(frame), cadenceH);
+                    this._pruneGridTimes(c0.ms, cadenceH);
+                }
                 this.fetchWindForAltitude(this.windAltFt);
             }
         }
@@ -3452,8 +3585,13 @@ export async function fetchOpenMeteoColumn(lat, lon, dateStr) {
     let data;
     try {
         const resp = await fetch(url, {signal: ctrl.signal});
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) {
+            let reason;
+            try { reason = (await resp.json())?.reason; } catch { /* non-JSON error */ }
+            throw new Error(`open-meteo: ${reason || `HTTP ${resp.status}`}`);
+        }
         data = await resp.json();
+        if (data.error) throw new Error(`open-meteo: ${data.reason || "request failed"}`);
     } finally { clearTimeout(to); }
 
     const hours = [];
@@ -3463,11 +3601,14 @@ export async function fetchOpenMeteoColumn(lat, lon, dateStr) {
             const altM = data.hourly?.[`geopotential_height_${l}hPa`]?.[h];
             const speed = data.hourly?.[`wind_speed_${l}hPa`]?.[h];
             const dir = data.hourly?.[`wind_direction_${l}hPa`]?.[h];
-            if (altM == null || speed == null || dir == null) continue;
+            if (!Number.isFinite(altM) || !Number.isFinite(speed) || !Number.isFinite(dir)) continue;
             column.push({altM, ...fromDirSpeedToUV(dir, speed)});
         }
         column.sort((a, b) => a.altM - b.altM);
         hours.push(column);
+    }
+    if (!hours.some(column => column.length > 0)) {
+        throw new Error(`open-meteo has no pressure-level wind data for ${dateStr} at this location`);
     }
     return {lat, lon, dateStr, hours};
 }

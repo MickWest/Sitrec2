@@ -80,6 +80,19 @@ def build_aws_url(date, hour, resolution="1p00"):
     )
 
 
+def build_ncei_url(date, hour, resolution="1p00"):
+    """Older GFS analysis grids in NCEI's public object store."""
+    grids = {"1p00": ("003-1.0", "3"), "0p50": ("004-0.5", "4")}
+    if resolution not in grids:
+        raise ValueError("NCEI historical GFS supports 1p00 and 0p50 resolution")
+    grid, number = grids[resolution]
+    return (
+        "https://www.ncei.noaa.gov/oa/prod-model/global-forecast-system/access/"
+        f"grid-{grid}-degree/analysis/{date[:6]}/{date}/"
+        f"gfs_{number}_{date}_{hour:02d}00_000.grb2"
+    )
+
+
 def download_grib(url, output_path):
     """Download a GRIB2 file."""
     print(f"Downloading: {url}")
@@ -102,7 +115,18 @@ def download_grib(url, output_path):
 def download_from_aws_idx(date, hour, level, resolution="1p00"):
     """Download wind variables from AWS S3 using byte-range requests via the .idx index file."""
     base_url = build_aws_url(date, hour, resolution)
-    idx_url = base_url + ".idx"
+    return download_indexed_grib(base_url, ".idx", date, hour, level)
+
+
+def download_from_ncei(date, hour, level, resolution="1p00"):
+    """NCEI uses the same byte-offset inventory format, with an .inv suffix."""
+    base_url = build_ncei_url(date, hour, resolution)
+    return download_indexed_grib(base_url, ".inv", date, hour, level)
+
+
+def download_indexed_grib(base_url, index_suffix, date, hour, level):
+    """Fetch only this level's wind and height records from an indexed GRIB2."""
+    idx_url = base_url + index_suffix
 
     # Build the grep pattern for the level we want
     if level == "surface":
@@ -142,7 +166,7 @@ def download_from_aws_idx(date, hour, level, resolution="1p00"):
                 end_byte = ""  # To end of file
             ranges.append((start_byte, end_byte, var_name))
 
-    if len(ranges) < 2:
+    if not {"UGRD", "VGRD"}.issubset({var for _, _, var in ranges}):
         print(f"Could not find UGRD/VGRD for level '{level_pattern}' in index")
         return None
 
@@ -165,7 +189,7 @@ def download_from_aws_idx(date, hour, level, resolution="1p00"):
             return None
 
     # Write concatenated GRIB2 messages
-    output_path = f"/tmp/gfs_{date}_{hour:02d}z_{level}_aws.grib2"
+    output_path = f"/tmp/gfs_{date}_{hour:02d}z_{level}_indexed.grib2"
     with open(output_path, "wb") as f:
         f.write(grib_data)
     print(f"Wrote {len(grib_data)} bytes to {output_path}")
@@ -273,9 +297,16 @@ def main():
     for h in range(cycle_hour - 6, -1, -6):
         cycles_to_try.append(h)
 
-    # Download GRIB2 — try each cycle, NOMADS first then AWS S3 fallback
+    # The AWS atmos/ layout begins at 2021-03-22 12Z. Older analyses live
+    # at NCEI; skip NOMADS for those dates (its rolling archive cannot help).
     grib_path = None
     for try_hour in cycles_to_try:
+        if (args.date, try_hour) < ("20210322", 12):
+            grib_path = download_from_ncei(args.date, try_hour, args.level, args.resolution)
+            if grib_path:
+                cycle_hour = try_hour
+                break
+            continue
         candidate = f"/tmp/gfs_{args.date}_{try_hour:02d}z_{args.level}.grib2"
         url = build_nomads_url(args.date, try_hour, args.level, args.resolution)
 
