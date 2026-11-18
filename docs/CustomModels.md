@@ -286,12 +286,14 @@ Sitrec finds the lights in the imported model, turns off their illumination, and
 |---|---|
 | Light Visible | Enables the glow and permits illumination; defaults to 1 (on) |
 | Light Illuminates | Allows the actual light to illuminate scene surfaces; defaults to 0 (off) |
-| Intensity | Imported glTF intensity; also changes the glow's base size (`intensity / 100`) |
+| Intensity | Sets the modeled lamp intensity. Brighter lamps are visible farther away and have a larger glow. |
 | Color | Changes both the light and its glow |
 | Radius | Changes the glow's bright central core, not a physical lamp radius |
 | Strobe Every / Length / Offset (s) | Timing controls, present only when flashing was enabled on import |
 
-The live glow faces each view's camera, grows with viewing distance/FOV to remain visible, and is reduced by daylight. It is a display aid, not a physically exact inverse-square lamp image. A point light is omnidirectional; the code does not apply the red/green/aft angular sectors of a real navigation-light assembly.
+The live glow gets fainter with the square of the viewing distance, and the eye needs a brighter light against a daylight sky. At dusk, a bright white strobe can stand out while the steady position lights remain faint. Each frame includes the portion of a flash that occurred during its exposure. Spotlights follow the model's beam direction. Point lights shine in all directions, including models that use point lights for their red and green navigation lamps.
+
+With **Flock** enabled, each member carries the model's lamps at their mounting points. Each aircraft has a repeatable offset in its flash cycle and preserves the timing between its own lamps. With **Light Illuminates** enabled, up to eight nearby instances of each lamp also light surrounding surfaces.
 
 The figure shows the PA-28-181 at night, with the **Lights** folder open. The red glow is the left position light, the green glow is the right position light, and the white glow is the landing spotlight. **Point_1** is a strobe, so its folder has the three Strobe rows. The two strobes show no glow here because this frame is between flashes.
 
@@ -299,7 +301,7 @@ The figure shows the PA-28-181 at night, with the **Lights** folder open. The re
 
 The names `Sky_Dome`, `Light`, `Moon_Light`, `Lensflare_Source`, and `Sun_light` are explicitly ignored. This is a short, case-sensitive list, not a general studio-light detector. Avoid these names for operational lamps and exclude studio lighting from the GLB altogether. Name substrings such as "strobe" or "beacon" do **not** enable flashing; only the custom properties do that.
 
-With **HDR Point Sources** enabled, [Long Exposure/Stacking](LongExposure.md) replaces the live glows with photometric point sources. The current conversion is `effective candela = imported intensity × 0.2 × Light Brightness`, followed by inverse-square falloff and atmospheric extinction. It preserves the light color and integrates flash duty cycles, producing dashed strobe trails. `Light Visible` still gates the source; `Light Illuminates` need not be on for it to appear in the exposure.
+With **HDR Point Sources** enabled, [Long Exposure/Stacking](LongExposure.md) replaces the live glows with photometric point sources. The current conversion is `effective candela = imported intensity × 0.2 × Light Brightness`, followed by inverse-square falloff and atmospheric extinction. For a flashing lamp, Sitrec converts effective intensity to the peak of a rectangular pulse and integrates the time that pulse overlaps the exposure. Each Flock member produces its own trail. `Light Visible` still gates the source; `Light Illuminates` need not be on for it to appear in the exposure.
 
 #### Verification before delivering a model
 
@@ -319,7 +321,7 @@ For developers who check or extend this pipeline, read the current implementatio
 
 - [`CNode3DObject.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DObject.js): `lightNamesToIgnore` and `extractLightsFromModel()`.
 - [`CNode3DLight.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DLight.js): custom-property handling, phase generation, controls, flashing, and camera-facing glow placement/scaling.
-- [`LongExposure.js`](https://github.com/MickWest/Sitrec2/blob/main/src/LongExposure.js): `LIGHT_CANDELA_PER_INTENSITY`, `strobeOnFraction()`, and model-light integration.
+- The live brightness and flash model is in [ModelLightDisplay.js](https://github.com/MickWest/Sitrec2/blob/main/src/ModelLightDisplay.js). Long exposures integrate the light over each sample interval in [LongExposure.js](https://github.com/MickWest/Sitrec2/blob/main/src/LongExposure.js).
 - The installed Three.js `GLTFLoader.js`: `GLTFLightsExtension._loadLight()` and `assignExtrasToUserData()`.
 - The installed Blender glTF exporter's `blender/exp/lights.py`: property export and power conversion. Exporter behavior described here was checked against Blender 5.2.1 LTS.
 

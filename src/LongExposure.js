@@ -60,6 +60,7 @@ import {isPanoramicCamera, panoramic} from "./PanoramicCamera";
 import {panoramaFaceCamera, panoramaFaces, panoramaProject} from "./rendering/PanoramaMath";
 import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
+import {flashFraction} from "./ModelLightDisplay";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {radians} from "./mathUtils";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
@@ -422,15 +423,8 @@ export function deserializeLongExposure(data) {
 // carry the correct duty-cycle energy
 function strobeOnFraction(t0, t1, every, length, offset) {
     if (!every || !length) return 1;
-    const F = (t) => {
-        t += offset;
-        return Math.floor(t / every) * length + Math.min(((t % every) + every) % every, length);
-    };
-    if (t1 <= t0) {
-        const m = (((t0 + offset) % every) + every) % every;
-        return m < length ? 1 : 0;
-    }
-    return Math.min(1, Math.max(0, (F(t1) - F(t0)) / (t1 - t0)));
+    const end = (Math.max(t0, t1) + offset) / every;
+    return flashFraction(end - Math.floor(end), Math.min(1, length / every), Math.abs(t1 - t0) / every);
 }
 
 // clear-air extinction along a horizontal-ish slant path, magnitudes per km
@@ -440,13 +434,6 @@ const LIGHT_EXT_MAG_PER_KM = 0.015;
 // EV the result window opens at. Night trails of satellites and faint stars
 // usually need about +3 EV to show; the slider still covers -6 to +10.
 const RESULT_EV = 3;
-
-// Model-light intensity -> candela for the exposure. GLB light intensities are
-// tuned for DISPLAY visibility and run hot photometrically: the 737 models use
-// ~543 (nav/strobe) and ~1087 (beacon), vs real effective intensities of
-// ~40-100 cd (position), ~150-400 cd (beacon/strobe). 0.2 lands them in the
-// realistic range (543 -> ~109 cd) without touching the display billboards.
-const LIGHT_CANDELA_PER_INTENSITY = 0.2;
 
 // Airmass and extinction (airmassKY, extinctionRGB) are in ExposurePhotometry.js.
 
@@ -1095,7 +1082,7 @@ async function renderLongExposure(mgr) {
     // ---- offline per-frame recipe (mirrors ScriptRenderer.renderViewAt) ----
     async function updateWorld(f) {
         par.frame = f;
-        par.time = f / fps;            // strobes etc. read par.time; only the live loop sets it
+        par.time = f / fps;            // keep timeline consumers in sync with the sampled frame
         GlobalDateTimeNode?.update(f);
         for (const entry of Object.values(NodeMan.list)) {
             const n = entry.data;
@@ -1406,38 +1393,40 @@ async function renderLongExposure(mgr) {
                 }
 
                 // Aircraft/model lights: photometric, same calibration as stars.
-                // (intensity × Light Brightness) is candela; illuminance E = I/d²
-                // lux; apparent magnitude m = -14.2 - 2.5·log10(E); then the
+                // Directional peak candela times Light Brightness gives intensity I.
+                // Illuminance E = I/d² lux; apparent magnitude m = -14.2 - 2.5·log10(E); then the
                 // Pogson flux vs satMag — which simplifies to flux ∝ E. A real
                 // ~500 cd nav light at 15 km is mag ≈ 0 (Vega-bright); at 300 km
                 // it fades into the stars. Slant-path extinction (~0.015 mag/km
                 // clear air) dims the distant ones the way a camera sees them.
                 for (const ln of lightNodes) {
-                    if (!ln.light) { prevLightPos.delete(ln.id); continue; }
-                    const pos = ln.light.getWorldPosition(new Vector3());
-                    const d = Math.max(1, pos.distanceTo(camera.position));
-                    const E = (ln.light.intensity ?? 100) * LIGHT_CANDELA_PER_INTENSITY * P.lightGain / (d * d);
-                    let flux = ln.lightVisible ? E * Math.pow(10, 0.4 * (P.satMag + 14.2)) : 0;
-                    if (flux > 1e7) flux = 1e7;          // 3m-away light: don't blow up the splat loop
-                    const previous = prevLightPos.get(ln.id);
-                    // chromatic slant-path extinction, scaled by the mean
-                    // pressure altitude of the path (plane-to-plane paths at
-                    // cruise altitude run through far thinner air)
-                    const pathAltM = Math.max(0, (camAltM + altitudeHAE(pos)) / 2);
-                    const xl = LIGHT_EXT_MAG_PER_KM * Math.exp(-pathAltM / 8400) * (d / 1000);
-                    const exG = Math.pow(10, -0.4 * xl * EXT_RGB[1]);
-                    const exR = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[0]) : exG;
-                    const exB = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[2]) : exG;
-                    const c = ln.light.color ?? {r: 1, g: 1, b: 1};
-                    const rgb = [flux * c.r * exR, flux * c.g * exG, flux * c.b * exB];
-                    prevLightPos.set(ln.id, {pos, rgb});
-                    if (Math.max(...rgb, ...(previous?.rgb ?? [0, 0, 0])) < 1e-5) continue;
-                    const strobe = (ln.strobeEvery && ln.strobeLength)
-                        ? {every: ln.strobeEvery, length: ln.strobeLength, offset: ln.strobeOffset || 0,
-                            timeScale: ln.deterministicStrobe ? simSpeed : 1}
-                        : null;
-                    const src = {isDir: false, pos, prevPos: previous?.pos ?? pos, prevRGB: previous?.rgb ?? rgb};
-                    splatInterval(src, pPose, pose, t0, t, flux, c.r * exR, c.g * exG, c.b * exB, strobe);
+                    for (let member = 0; member < ln.memberCount; member++) {
+                        const key = ln.flockBillboard ? ln.id + ":" + member : ln.id;
+                        const pos = ln.memberPosition(member, new Vector3());
+                        const d = Math.max(1, pos.distanceTo(camera.position));
+                        const E = ln.candelaToward(member, camera.position, pos) * P.lightGain / (d * d);
+                        let flux = ln.lightVisible ? E * Math.pow(10, 0.4 * (P.satMag + 14.2)) : 0;
+                        if (flux > 1e7) flux = 1e7;          // 3m-away light: don't blow up the splat loop
+                        const previous = prevLightPos.get(key);
+                        // chromatic slant-path extinction, scaled by the mean
+                        // pressure altitude of the path (plane-to-plane paths at
+                        // cruise altitude run through far thinner air)
+                        const pathAltM = Math.max(0, (camAltM + altitudeHAE(pos)) / 2);
+                        const xl = LIGHT_EXT_MAG_PER_KM * Math.exp(-pathAltM / 8400) * (d / 1000);
+                        const exG = Math.pow(10, -0.4 * xl * EXT_RGB[1]);
+                        const exR = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[0]) : exG;
+                        const exB = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[2]) : exG;
+                        const c = ln.light.color ?? {r: 1, g: 1, b: 1};
+                        const rgb = [flux * c.r * exR, flux * c.g * exG, flux * c.b * exB];
+                        prevLightPos.set(key, {pos, rgb});
+                        if (Math.max(...rgb, ...(previous?.rgb ?? [0, 0, 0])) < 1e-5) continue;
+                        const strobe = (ln.strobeEvery && ln.strobeLength)
+                            ? {every: ln.strobeEvery, length: ln.strobeLength, offset: ln.memberOffset(member),
+                                timeScale: ln.deterministicStrobe ? simSpeed : 1}
+                            : null;
+                        const src = {isDir: false, pos, prevPos: previous?.pos ?? pos, prevRGB: previous?.rgb ?? rgb};
+                        splatInterval(src, pPose, pose, t0, t, flux, c.r * exR, c.g * exG, c.b * exB, strobe);
+                    }
                 }
             }
 

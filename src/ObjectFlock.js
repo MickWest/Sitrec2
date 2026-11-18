@@ -288,6 +288,17 @@ export class ObjectFlock {
                     const relative = new Matrix4().multiplyMatrices(groupInverse, child.matrixWorld);
                     this.addPart(child.geometry, child.material, relative, false, child);
                 });
+                if (this.parts.length) {
+                    for (const lamp of owner.lights ?? []) {
+                        const {geometry, material} = lamp._object;
+                        const relative = new Matrix4().multiplyMatrices(groupInverse, lamp.light.matrixWorld);
+                        const part = this.addPart(geometry, material, relative, false, lamp.light);
+                        part.lamp = lamp;
+                        part.mesh.name = lamp.light.name + "_flock";
+                        part.mesh.raycast = () => {};
+                        lamp.setFlockBillboard(part.mesh);
+                    }
+                }
             }
         } else if (owner.geometry) {
             let material = owner.material;
@@ -347,7 +358,9 @@ export class ObjectFlock {
         // sphere to cull against would cost more to keep up than it could save.
         mesh.frustumCulled = false;
         this.group.add(mesh);
-        this.parts.push({mesh, relative, ownsMaterial, mirrored, source, moments: null});
+        const part = {mesh, relative, ownsMaterial, mirrored, source, moments: null};
+        this.parts.push(part);
+        return part;
     }
 
     // Where each part of a model is, at each of the moments of its motion. A part of a model
@@ -389,6 +402,7 @@ export class ObjectFlock {
 
     disposeMeshes() {
         for (const part of this.parts) {
+            part.lamp?.setFlockBillboard(null);
             this.group.remove(part.mesh);
             part.mesh.dispose();                    // the instance buffers only
             if (part.ownsMaterial) part.mesh.material.dispose();
@@ -406,8 +420,8 @@ export class ObjectFlock {
     refreshShadowFlags() {
         const want = !!Globals.shadowsEnabled;
         for (const part of this.parts) {
-            part.mesh.castShadow = want;
-            part.mesh.receiveShadow = want;
+            part.mesh.castShadow = want && !part.lamp;
+            part.mesh.receiveShadow = want && !part.lamp;
         }
     }
 

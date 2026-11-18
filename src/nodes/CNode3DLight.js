@@ -1,11 +1,11 @@
 import {CNode3D} from "./CNode3D";
 import {assert} from "../assert";
-import {AdditiveBlending, Color, Mesh, PlaneGeometry, ShaderMaterial, Vector3} from 'three';
+import {AdditiveBlending, Color, DoubleSide, MathUtils, Matrix4, Mesh, PlaneGeometry, ShaderMaterial, Vector2, Vector3} from 'three';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {NodeMan} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {CNodeGUIColor} from "./CNodeGUIColor";
-import {par} from "../par";
+import {flashFraction, memberStrobeOffset, modelLightAdaptationLux, modelLightVertexShader, peakCandela} from "../ModelLightDisplay";
 import {Sit} from "../Globals";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {kiteLEDIntensity, sampleKiteLED} from "../../tools/vehicles/kiteLEDPattern.js";
@@ -15,10 +15,9 @@ export class CNode3DLight extends CNode3D {
         super(v);
         this.type = 'CNode3DLight';
 
-        this.light = v.light; // the light objectm required for this node
+        this.light = v.light;
         assert(this.light, "CNode3DLight requires a light object");
 
-        // Store the GUI folder if provided
         this.gui = v.gui;
 
         // Initialize visibility control variables
@@ -26,36 +25,29 @@ export class CNode3DLight extends CNode3D {
         this.lightIlluminates = false;
         this.deterministicStrobe = this.light.userData?.vehicleLight === true;
 
-        //const size = v.size || 4; // default size if not specified
+        this.relativeMatrix = new Matrix4();
+        this.lampMatrix = new Matrix4();
+        this.targetPosition = new Vector3();
+        this.beamDirection = new Vector3();
+        this.illuminators = [];
 
-        // Animated LEDs scale a unit billboard. They never replace geometry per frame.
-        const size = this.light.userData.kiteLED ? 1 : this.light.intensity / 100;
-
-// Create plane geometry
-        const geometry = new PlaneGeometry(size, size); // adjust size as needed
-
-// Shader material with HDR-style disk + falloff
+        const geometry = new PlaneGeometry(1, 1);
         const material = new ShaderMaterial({
             uniforms: {
-                ...sharedUniforms, // shared uniforms for near/far planes
-                uColor: { value: [this.light.color.r, this.light.color.g, this.light.color.b] },
-                uIntensity: { value: this.light.intensity }, // HDR "strength"
-                uRadius: { value: 0.1 },     // proportion of core radius (hard center)
-
+                ...sharedUniforms,
+                uColor: {value: this.light.color},
+                uCandela: {value: this.peakCandela},
+                uAdaptationLux: {value: 1e-8},
+                uViewHeight: {value: 1},
+                uFlash: {value: new Vector3(0, 1, 0)},
+                uDirection: {value: new Vector3(0, 0, -1)},
+                uCone: {value: new Vector2(-2, -2)},
+                uRadius: {value: 0.1},
             },
-            vertexShader: `
-        varying vec2 vUv;
-        varying float vDepth;
-        
-        void main() {
-            vUv = uv;
-            gl_Position = applyTerrestrialRefraction_clip(modelViewMatrix * vec4(position, 1.0));
-            vDepth = gl_Position.w;
-        }
-    `,
+            vertexShader: modelLightVertexShader,
             fragmentShader: `
         uniform vec3 uColor;
-        uniform float uIntensity;
+        varying float vGain;
         uniform float uRadius;
         uniform float nearPlane; // these are set in sharedUniforms
         uniform float farPlane;
@@ -67,15 +59,9 @@ export class CNode3DLight extends CNode3D {
             vec2 centered = vUv - 0.5;
             float dist = length(centered) * 2.0; // fix scaling
             
-            // Core disk
-            float core = smoothstep(uRadius, uRadius - 0.05, dist);
-            
-            // Soft outer falloff
-            float falloff = pow(clamp(1.0 - dist, 0.0, 1.0), 2.0);
-            
-            // Combine alpha
-            float alpha = core + (1.0 - core) * falloff * 0.5;
-            alpha = clamp(alpha, 0.0, 1.0);
+            if (dist > 1.0 || vGain <= 0.0) discard;
+            float r = max(0.0, dist - uRadius);
+            float alpha = exp(-8.0 * r * r);
 
             // Logarithmic depth calculation
             // requires the near and far planes to be set in the material (shared uniforms)
@@ -89,14 +75,12 @@ export class CNode3DLight extends CNode3D {
                 gl_FragDepthEXT = z * 0.5 + 0.5;
             }
 
-            // uIntensity should not be used here because it's already applied in the shader
-            // but we can still used for color
-            // if it's large, then somethng like [1,0,0.01] will come out as magenta
-            gl_FragColor = vec4(uColor, alpha);
-        
+            gl_FragColor = vec4(uColor, vGain * alpha);
         }
     `,
             transparent: true,
+            side: DoubleSide,
+            forceSinglePass: true,
             depthWrite: false,
             blending: AdditiveBlending
         });
@@ -117,18 +101,16 @@ export class CNode3DLight extends CNode3D {
         }
 
 
-// Create mesh
         const billboard = new Mesh(geometry, material);
         billboard.name = "LightBillboard";
         billboard.position.copy(this.light.position);
+        billboard.frustumCulled = false; // the halo expands to screen pixels in the vertex shader
         
         // Disable raycasting on the light billboard so it doesn't interfere with context menu picking
         billboard.raycast = () => {};
 
-// Add to scene
         v.scene.add(billboard);
 
-// Save reference
         this._object = billboard;
 
         this.scene = v.scene; // save the scene for later use
@@ -140,18 +122,11 @@ export class CNode3DLight extends CNode3D {
 
     }
 
-    // Set the light's brightness. Intensity also drives the billboard's world size
-    // (intensity/100), which is what makes a bright light read as a bigger glow rather
-    // than just a whiter pixel. Public so a script can drive it — see
-    // _resolveObjectControl, which lets `set <lightNodeId> 6000` reach here.
     setIntensity(value) {
         const v = Number(value);
         if (!isFinite(v) || v < 0) return;
         this.light.intensity = v;
-        this._object.material.uniforms.uIntensity.value = v;
-        const newSize = v / 100;
-        this._object.geometry.dispose();
-        this._object.geometry = new PlaneGeometry(newSize, newSize);
+        this._object.material.uniforms.uCandela.value = this.peakCandela;
         if (this.intensityControl) this.intensityControl.value = v;
     }
 
@@ -196,7 +171,7 @@ export class CNode3DLight extends CNode3D {
         this.intensityControl = new CNodeGUIValue({
             id: this.id + "_intensity",
             desc: "Intensity",
-            tooltip: "Brightness of the light. It also sets the size of the glow, which is Intensity / 100 meters across.",
+            tooltip: "Brightness of the lamp. Brighter lamps remain visible farther away and have a larger glow.",
             value: this.light.intensity,
             start: 0,
             end: 10000,
@@ -209,10 +184,7 @@ export class CNode3DLight extends CNode3D {
             id: this.id + "_color",
             desc: "Color",
             value: this.light.color,
-            onChange: (value) => {
-                this.light.color.copy(value);
-                this._object.material.uniforms.uColor.value = [this.light.color.r, this.light.color.g, this.light.color.b];
-            }
+            onChange: (value) => this.light.color.copy(value),
         }, this.gui);
         // CNodeGUIColor takes no tooltip option, so set it on its controller.
         this.colorControl.guiEntry?.tooltip("Color of the light and of its glow.");
@@ -276,16 +248,65 @@ export class CNode3DLight extends CNode3D {
 
     // Method to update visibility based on control variables and strobe state
     updateVisibility() {
-        // Billboard visibility is controlled by lightVisible
-        // (suppressBillboard hides just the billboard — set by the Long Exposure
-        // renderer, which splats the light's true HDR flux instead; the
-        // illumination of the scene is unaffected)
-         if (this._object) {
-            this._object.visible = this.lightVisible && !this.suppressBillboard;
+        const on = this.lightVisible && this.light.intensity > 0;
+        const singleOn = on && !this.flockBillboard && this.flashAt(0) > 1e-6;
+        if (this._object) this._object.visible = singleOn && !this.suppressBillboard;
+        this.light.visible = singleOn && this.lightIlluminates;
+        if (this.flockBillboard) this.flockBillboard.visible = on && !this.suppressBillboard;
+    }
+
+    setFlockBillboard(mesh) {
+        this.flockBillboard = mesh;
+        this.clearIlluminators();
+        if (this._object) this.updateVisibility();
+    }
+
+    clearIlluminators() {
+        for (const lamp of this.illuminators) {
+            lamp.removeFromParent();
+            lamp.target?.removeFromParent();
+            lamp.dispose?.();
         }
-        
-        // Light illumination is controlled by both lightVisible and lightIlluminates
-        this.light.visible = this.lightVisible && this.lightIlluminates;
+        this.illuminators.length = 0;
+    }
+
+    get peakCandela() {
+        return peakCandela(this.light.intensity, this.strobeEvery, this.strobeLength);
+    }
+
+    get memberCount() {
+        return this.flockBillboard ? this.flockBillboard.count : 1;
+    }
+
+    memberPosition(member, out) {
+        if (!this.flockBillboard) return this.light.getWorldPosition(out);
+        this.flockBillboard.getMatrixAt(member, this.lampMatrix);
+        return out.setFromMatrixPosition(this.lampMatrix).applyMatrix4(this.flockBillboard.matrixWorld);
+    }
+
+    candelaToward(member, observer, position) {
+        if (!this.light.isSpotLight) return this.peakCandela;
+        const mesh = this.flockBillboard;
+        if (mesh) {
+            mesh.getMatrixAt(member, this.lampMatrix);
+            this.lampMatrix.premultiply(mesh.matrixWorld);
+        } else {
+            this.lampMatrix.copy(this.light.matrixWorld);
+        }
+        const uniforms = this._object.material.uniforms;
+        this.beamDirection.copy(uniforms.uDirection.value).transformDirection(this.lampMatrix);
+        const cosine = this.beamDirection.dot(this.targetPosition.subVectors(observer, position).normalize());
+        const cone = uniforms.uCone.value;
+        return this.peakCandela * MathUtils.smoothstep(cosine, cone.x, cone.y);
+    }
+
+    memberOffset(member) {
+        return (this.strobeOffset ?? 0) + memberStrobeOffset(member, this.strobeEvery || 0);
+    }
+
+    flashAt(member) {
+        const flash = this._object.material.uniforms.uFlash.value;
+        return flashFraction(flash.x + memberStrobeOffset(member, 1), flash.y, flash.z);
     }
 
     dispose() {
@@ -299,6 +320,7 @@ export class CNode3DLight extends CNode3D {
         NodeMan.disposeRemove(this.strobeOffsetControl, true);
 
 
+        this.clearIlluminators();
         if (this._object) {
             this.scene.remove(this._object);
             this._object.geometry.dispose();
@@ -312,7 +334,20 @@ export class CNode3DLight extends CNode3D {
     // as it's only once per frame, not once per view render call
     update(f) {
         super.update(f);
-        const time = this.deterministicStrobe ? f * (Sit.simSpeed ?? 1) / (Sit.fps || 30) : par.time;
+        const frameSeconds = (this.deterministicStrobe ? (Sit.simSpeed ?? 1) : 1) / (Sit.fps || 30);
+        const time = f * frameSeconds;
+        const uniforms = this._object.material.uniforms;
+        uniforms.uCandela.value = this.peakCandela;
+        const period = this.strobeEvery;
+        if (period > 0 && this.strobeLength > 0) {
+            // Each displayed frame integrates the preceding frame interval. Compute
+            // directly from f, so pausing, skipping or seeking gives the same flash.
+            const end = (time + Math.max(0, -frameSeconds) + (this.strobeOffset ?? 0)) / period;
+            uniforms.uFlash.value.set(end - Math.floor(end), Math.min(1, this.strobeLength / period),
+                Math.abs(frameSeconds) / period);
+        } else {
+            uniforms.uFlash.value.set(0, 1, 0);
+        }
 
         const led = this.light.userData.kiteLED;
         if (led) {
@@ -321,11 +356,8 @@ export class CNode3DLight extends CNode3D {
             const intensity = kiteLEDIntensity(led.site, led.settings);
             this.light.intensity = intensity * (led.settings.overallScale ?? 1) ** 2 * state.level;
             this.light.color.copy(state.color);
-            const uniforms = this._object.material.uniforms;
-            uniforms.uColor.value[0] = state.color.r; uniforms.uColor.value[1] = state.color.g; uniforms.uColor.value[2] = state.color.b;
-            uniforms.uIntensity.value = this.light.intensity;
+            uniforms.uCandela.value = this.peakCandela;
             this.updateVisibility();
-            this._object.visible = this._object.visible && this.light.intensity > 0;
             if (this.vehicleLens?.material?.userData.vehicleLightLens === this.light.name) {
                 this.vehicleLens.material.emissive.copy(state.color);
                 this.vehicleLens.material.emissiveIntensity = this.lightVisible ? state.level * intensity / 35 * 1.8 : 0;
@@ -333,133 +365,82 @@ export class CNode3DLight extends CNode3D {
             return;
         }
 
-        let strobeOn = false;
-
-        // only need to check if both are non-zero
-        if (this.strobeEvery && this.strobeLength) {
-            const offsetTime = time + this.strobeOffset;
-            strobeOn = offsetTime % this.strobeEvery < this.strobeLength;
-
-
-
-            // if we've gone past the time to strobe then do it regardless of if it's in the flash window
-            // this ensures we don't miss any very short flashes
-            // (e.g. strobe every 1.01 seconds, but strobe length is 0.01 seconds)
-            // since 0.01 is less than a frame, it would not always fall in the window
-            if (!this.deterministicStrobe && this.lastStrobeTime !== undefined
-                && (offsetTime - this.lastStrobeTime) > this.strobeEvery) {
-                strobeOn = true;
-
-            }
-
-
-            if (strobeOn) {
-                // reset time to last time we SHOULD have strobed
-                // not the time we actually strobed
-                // this maintains more consistent timing
-                this.lastStrobeTime = offsetTime - offsetTime % this.strobeEvery
-            }
-
-
-            // Apply strobe to both billboard and light visibility
-            if (this._object) {
-                this._object.visible = this.lightVisible && strobeOn && !this.suppressBillboard;
-            }
-            this.light.visible = this.lightVisible && this.lightIlluminates && strobeOn;
-
-        }
-        else {
-            // No strobe controls - use normal visibility settings
-            this.updateVisibility();
-        }
+        this.updateVisibility();
         const lensMaterial = this.vehicleLens?.material;
         if (lensMaterial?.userData.vehicleLightLens === this.light.name) {
-            const on = this.lightVisible && (!(this.strobeEvery && this.strobeLength) || strobeOn);
+            const on = this.lightVisible && (!this.flockBillboard || !this.strobeEvery) && this.flashAt(0) > 1e-6;
             lensMaterial.emissiveIntensity = on ? 1.8 : 0;
             lensMaterial.emissive.copy(this.light.color);
         }
     }
 
-    preRender(view) {
-        const camera = view.camera;
-
-        // Tail lamps live on animated joints; the billboard lives on the object group.
-        // Copy the current transformed position for every view, after posing the tail.
-        if (this.light.userData.kiteLED?.site.tail) {
-            this.light.getWorldPosition(this._object.position);
-            this._object.parent?.worldToLocal(this._object.position);
+    // Three.js scene illumination is optional and considerably more expensive than
+    // drawing glows. All members have visible lamps; the nearest eight of each
+    // type can also cast light on surrounding geometry when that control is on.
+    updateFlockIllumination(camera) {
+        const mesh = this.flockBillboard;
+        if (!mesh || !this.lightVisible || !this.lightIlluminates || this.light.intensity <= 0) {
+            if (this.illuminators.length) this.clearIlluminators();
+            return;
         }
-
-        // make the billboard face the camera
-        if (this._object) {
-            this._object.lookAt(camera.position);
+        const maxIlluminators = 8;
+        const nearest = [];
+        for (let i = 0; i < mesh.count; i++) {
+            const d = this.memberPosition(i, this.targetPosition).distanceToSquared(camera.position);
+            if (nearest.length === maxIlluminators && d >= nearest[maxIlluminators - 1].d) continue;
+            nearest.push({i, d});
+            nearest.sort((a, b) => a.d - b.d);
+            if (nearest.length > maxIlluminators) nearest.pop();
         }
-
-
-
-        // const distance = this._object.position.distanceTo(view.camera.position);
-        //
-        // // Scale the billboard up a bit based on distance
-        // const fovScale =  (distance ** 1.5)  / 10000 ; // adjust as needed
-        //
-        //
-        // console.log("Scaling billboard for light: " + this.light.name + " with distance: " + distance + " and scale: " + fovScale);
-        //
-        // this._object.scale.set(fovScale, fovScale, 1); // scale uniformly in X and Y
-
-
-        const camPos = camera.position;
-
-        // get the world position of the light, which will be a child of some other object like a jet or a ship
-        const objPos = this.light.getWorldPosition(new Vector3());
-
-        const distance = camPos.distanceTo(objPos);
-        const fovRadians = camera.fov * (Math.PI / 180);
-
-
-        // boostScale function to adjust the size so that there's a minimum angular size
-        function boostScale(S0, W, D, F, boost = 0.01) {
-            const base = (S0 * W) / (2 * D);
-            const addedAngle = boost * F / 2;
-            const newS = (2 * D / W) * Math.tan(Math.atan(base) + addedAngle);
-            return newS;
+        const uniforms = this._object.material.uniforms;
+        for (let slot = 0; slot < nearest.length; slot++) {
+            const member = nearest[slot].i;
+            let lamp = this.illuminators[slot];
+            if (!lamp) {
+                lamp = this.light.clone(false);
+                this.illuminators.push(lamp);
+                mesh.parent.add(lamp);
+                if (lamp.target) mesh.parent.add(lamp.target);
+            }
+            mesh.getMatrixAt(member, this.lampMatrix);
+            this.lampMatrix.premultiply(mesh.matrix);
+            lamp.position.setFromMatrixPosition(this.lampMatrix);
+            lamp.color.copy(this.light.color);
+            lamp.layers.mask = mesh.layers.mask;
+            lamp.intensity = this.light.intensity * this.flashAt(member);
+            lamp.visible = lamp.intensity > 1e-6;
+            if (lamp.target) {
+                lamp.target.position.copy(uniforms.uDirection.value).applyMatrix4(this.lampMatrix);
+                lamp.target.updateMatrixWorld();
+            }
+            lamp.updateMatrixWorld();
         }
-
-        let newSize = boostScale(0.5, 5, distance, fovRadians, 0.01);
-
-        // how daylight is it? get the sky color from the scene
-        const sunNode = NodeMan.get("theSun", true);
-        if (sunNode !== undefined) {
-            const skyOpacity = sunNode.calculateSkyOpacity(camera.position);
-            newSize *= (1.0 - skyOpacity); // scale down the size based on the sky opacity
-        }
-
-        // Compensate for parent group's scale (e.g. objectScale * objectSize)
-        // so the billboard's world-space size is just newSize * geometrySize,
-        // regardless of the parent's scale transform.
-        const parentWorldScale = this._object.parent ? this._object.parent.getWorldScale(new Vector3()).x : 1;
-        this._object.scale.setScalar(newSize / parentWorldScale * (this.light.userData.kiteLED ? this.light.intensity / 100 : 1));
-
-        // CRITICAL: Force immediate matrix world update after changing scale
-        //
-        // When rendering multiple views with different cameras, each view's preRender() sets
-        // a different scale based on camera distance. However, modifying an object's scale
-        // does NOT automatically set the matrixWorldNeedsUpdate flag in Three.js. Without
-        // this explicit updateMatrixWorld() call, the object's world matrix remains stale.
-        //
-        // This causes issues in multi-view rendering where whichever view renders second
-        // experiences incorrect billboard behavior (disappearing at wrong distances). The
-        // exact mechanism is unclear - it could be related to frustum culling using stale
-        // bounding spheres, or other matrix-dependent calculations.
-        //
-        // Calling updateMatrixWorld() immediately after changing the scale ensures the
-        // world matrix is current before the renderer processes this object.
-        this._object.updateMatrixWorld();
-
-        // AND - why is moveing camera with C not working right in:
-        // - locked mode
-        // - when frame > 0
-
+        for (let i = nearest.length; i < this.illuminators.length; i++) this.illuminators[i].visible = false;
     }
 
+    preRender(view) {
+        const billboard = this._object;
+        const uniforms = billboard.material.uniforms;
+        const camera = view.camera;
+        // Include the entire glTF transform chain (and animated joints).
+        this.light.updateWorldMatrix(true, false);
+        this.scene.updateWorldMatrix(true, false);
+        this.relativeMatrix.copy(this.scene.matrixWorld).invert().multiply(this.light.matrixWorld);
+        this.relativeMatrix.decompose(billboard.position, billboard.quaternion, billboard.scale);
+        billboard.updateMatrixWorld();
+        if (this.light.isSpotLight) {
+            this.light.target.getWorldPosition(this.targetPosition);
+            this.light.worldToLocal(this.targetPosition);
+            uniforms.uDirection.value.copy(this.targetPosition).normalize();
+            const outer = Math.cos(this.light.angle);
+            uniforms.uCone.value.set(outer, Math.max(outer + 1e-5, Math.cos(this.light.angle * (1 - this.light.penumbra))));
+        }
+        const sky = NodeMan.get("theSun", true)?.calculateSkyBrightness(camera.position) ?? 0;
+        // Display adaptation, not a measured camera response. At full daylight a
+        // source needs much more illuminance for the same contrast than at dusk.
+        uniforms.uAdaptationLux.value = modelLightAdaptationLux(sky);
+        uniforms.uViewHeight.value = Math.max(1, view.heightPx || 1);
+        this.updateVisibility();
+        this.updateFlockIllumination(camera);
+    }
 }
