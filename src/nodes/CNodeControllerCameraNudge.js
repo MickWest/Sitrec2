@@ -135,20 +135,20 @@ export class CNodeControllerCameraNudge extends CNodeController {
         if (this._postQuat && camera.quaternion.equals(this._postQuat)) {
             camera.quaternion.copy(this._preQuat);
         }
-        this._postQuat = null;
+        if (!objectNode.isCameraSample) this._postQuat = null;
 
         const t = f / Sit.fps;
         const a = nudgeOffsetAngles(t, this.params);
         const roll = rotateOffsetRoll(t, this.params);
         if (!a && !roll) return;
 
-        this._preQuat = camera.quaternion.clone();
+        if (!objectNode.isCameraSample) this._preQuat = camera.quaternion.clone();
         if (a) {
             camera.rotateY(a.yaw);
             camera.rotateX(a.pitch);
         }
         if (roll) camera.rotateZ(roll);          // smooth roll about the view axis
         camera.updateMatrix();
-        this._postQuat = camera.quaternion.clone();
+        if (!objectNode.isCameraSample) this._postQuat = camera.quaternion.clone();
     }
 }

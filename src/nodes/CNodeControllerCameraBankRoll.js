@@ -112,7 +112,7 @@ export class CNodeControllerCameraBankRoll extends CNodeController {
         // would leave the slot holding bank-for-some-other-frame, which then
         // pollutes the live render until the next live-frame apply rewrites it.
         // Skip non-live calls so this controller stays a no-op for queries.
-        if (f !== par.frame) return;
+        if (objectNode?.isCameraSample || f !== par.frame) return;
 
         const ptz = NodeMan.list.ptzAngles?.data;
         if (!ptz || ptz.roll === undefined) return;

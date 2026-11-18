@@ -84,6 +84,24 @@ test("Satellite Mode holds the orientation too", () => {
     expect(ptz.satellite).toBe(true);
 });
 
+test.each([false, true])("a sampled lens and forward lock leave the live controls alone (satellite %s)", satellite => {
+    Object.assign(ptz, {satellite, _satQuatDirty: true});
+    const pose = applyAt(P1);
+    const lock = ptz._lock;
+    const angles = ptz.lockAngles();
+    const sample = camera.clone();
+    sample.position.copy(P2);
+    NodeMan.get.mockImplementation(id => id === "fovSwitch" ? {getValue: () => 11} : undefined);
+    ptz.apply(0, {camera: sample, isCameraSample: true});
+    expect(sample.quaternion.toArray()).toEqual(pose.toArray());
+    expect(sample.fov).toBe(11);
+    expect(ptz.fov).toBe(camera.fov);
+    expect(ptz.lockAngles()).toEqual(angles);
+    expect(ptz._lock).toBe(lock);
+    expect(lock.pos).toEqual(P1);
+    expect(ptz._objectNode).toBe(objectNode);
+});
+
 test("off, or with Relative Heading, the angles stay and the orientation turns with the ground", () => {
     ptz.lockForward = false;
     const q1 = applyAt(P1);

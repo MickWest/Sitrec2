@@ -12,6 +12,7 @@ import {ECEFToLLAVD, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {saveAs} from "file-saver";
 import {turnToGeometricAim} from "../atmosphere/refractionAim";
 import {analysisNodeEnabled} from "../AnalysisDependencies";
+import {createCameraPoseSample} from "../CameraPoseSample";
 
 export class CNodeLOSFromCamera extends CNodeLOS {
     constructor(v) {
@@ -52,33 +53,14 @@ export class CNodeLOSFromCamera extends CNodeLOS {
 
     getValueFrame(f) {
 
-        // swap in a dummy camera and update the camera node
-        // this seems imperfect, as it does not account for state changes in
-        // a camera node that might affect the camera's position
-        // I don't think we have any examples of that yet
-        // cameras are controlled by controllers
         const cameraNode = this.in.cameraNode
         assert(cameraNode !== undefined, "CNodeLOSFromCamera missing cameraNode input");
-        const oldCamera = cameraNode.camera;
-        // Controllers may have changed since the previous sample. Only a
-        // controller actually applied on this pass may supply size evidence.
-        this.dummyCamera.userData.angularSize = null;
-        // The same rule for the refraction aim: only a controller applied on this
-        // pass may say that the camera is aimed off the geometric direction.
-        this.dummyCamera.userData.geometricAim = null;
-        cameraNode._object = this.dummyCamera; // _object is the camera object
-        // patch so this does not count as a controller update (recursion check)
-        // applyControllersCount will be incremented by the cameraNode.update call
-        // (in applyControllers), so will be unchanged after this call
-        cameraNode.applyControllersCount--;
-        cameraNode.update(f);
-        const camera = cameraNode.camera;
-
-        // restore the original camera
-        cameraNode._object = oldCamera;
+        const sample = createCameraPoseSample(cameraNode, this.dummyCamera);
+        sample.update(f);
+        const camera = sample.camera;
 
         if (this.useRecorded) {
-            return cameraNode.recordedLOS;
+            return sample.recordedLOS;
         }
 
         // then extract the position and heading from the dummy camera

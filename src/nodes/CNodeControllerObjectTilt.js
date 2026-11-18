@@ -251,6 +251,18 @@ export class CNodeControllerObjectTilt extends CNodeController {
     }
 
     apply(f, objectNode) {
+        if (objectNode.isCameraSample) {
+            // A sample starts with the live pose, including its previous lean.
+            // Its banking and lean history must never replace the live history.
+            const sample = Object.create(this);
+            sample._swayRotation = this._swayRotation?.clone();
+            sample._savedQuaternion = this._savedQuaternion?.clone();
+            return sample.applyTilt(f, objectNode);
+        }
+        this.applyTilt(f, objectNode);
+    }
+
+    applyTilt(f, objectNode) {
         const object = objectNode._object;
         // Remove last frame's lean first: some banking paths keep or restore the previous orientation.
         if (object !== undefined && this._swayRotation) {

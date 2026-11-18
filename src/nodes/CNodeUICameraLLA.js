@@ -21,8 +21,10 @@ export class CNodeControllerUIPositionLLA extends CNodeController {
     apply(f, cameraNode) {
         
         const camera = cameraNode.camera;
-        Sit.originECEF = RLLAToECEF_radii(radians(Sit.lat),radians(Sit.lon),0)
-        assert(!Number.isNaN(Sit.originECEF.x),"Sit.originECEF NaN")
+        if (!cameraNode.isCameraSample) {
+            Sit.originECEF = RLLAToECEF_radii(radians(Sit.lat),radians(Sit.lon),0)
+            assert(!Number.isNaN(Sit.originECEF.x),"Sit.originECEF NaN")
+        }
 
         var from;
 
@@ -45,7 +47,7 @@ export class CNodeControllerUIPositionLLA extends CNodeController {
         // propogate any changes to the camera to output nodes
         // but disabling controller applications
 
-        if (changed) {
+        if (changed && !cameraNode.isCameraSample) {
             cameraNode.recalculateCascade(f, true);
         }
 

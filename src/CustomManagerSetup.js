@@ -470,7 +470,8 @@ export const setupMethods = {
                     // Skip the sync while bank-roll is on so our write persists.
                     const bankRollOn = NodeMan.list.lookCameraBankRoll?.data?.value;
                     if (bankRollOn) return;
-                    ptzController.syncFromCamera(lookCamera.camera);
+                    const targetRoll = NodeMan.get("CameraLOSController", false)?.choice === "To Target";
+                    ptzController.syncFromCamera(lookCamera.camera, targetRoll);
                 }
             };
 

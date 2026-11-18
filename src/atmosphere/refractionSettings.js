@@ -194,8 +194,8 @@ export function currentTerrestrialLiftContext(observerECEF, camera, options) {
     if (Sit.refraction === false || Sit.refractionTerrain === false) return null;
     const rayView = Sit.raytracedRefraction?.enabled
         ? NodeMan?.get(Sit.raytracedRefraction.view, false) : null;
-    if (camera && rayView?.camera === camera) {
-        if (camera.position.distanceToSquared(observerECEF) >= 0.0004) return null;
+    if (camera && rayView?.camera === (camera.sampleSource ?? camera)) {
+        if (rayView.camera.position.distanceToSquared(observerECEF) >= 0.0004) return null;
         return rayView.raytracedRefraction?.geometryContext(options) ?? null;
     }
     return terrestrialLiftContext(observerECEF, terrestrialOptsFrom(Sit, Globals));

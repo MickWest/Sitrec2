@@ -54,7 +54,7 @@ export class CNodeControllerAzElZoom extends CNodeController {
     }
 
 
-    apply(f, objectNode ) {
+    apply(f, objectNode, fov = this.fov) {
 
         // Since we are in ECEF, the origin is at Earth's center
         // we need to get the LOCAL up
@@ -110,7 +110,7 @@ export class CNodeControllerAzElZoom extends CNodeController {
 
         fwd.applyAxisAngle(right,radians(el))
         fwd.applyAxisAngle(up,-radians(az))
-        camera.fov = extractFOV(this.fov);
+        camera.fov = extractFOV(fov);
         assert(!Number.isNaN(camera.fov), "CNodeControllerPTZUI: camera.fov is NaN");
         assert(camera.fov !== undefined && camera.fov>0 && camera.fov <= 180, `bad fov ${camera.fov}` )
         fwd.add(camera.position);
@@ -658,24 +658,27 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         // and if set to somthing other than userFOV
         // if so, we use that
 
-        const fovSwitch = NodeMan.get("fovSwitch",false)
-        if (fovSwitch) {
-            this.fov = extractFOV(fovSwitch.getValue(f));
-        }
-
         const camera = objectNode.camera;
-        const held = this.holdLockedForward(camera);
+        const fov = this.frameFOV(f);
+        const sample = objectNode.isCameraSample;
+        const held = sample
+            ? this.lockForwardActive() && this._lock && this.lockAnglesUnchanged(this._lock)
+            : this.holdLockedForward(camera);
 
-        if (this.satellite) {
-            this.applySatellite(objectNode);
+        if (sample && held) {
+            camera.quaternion.copy(this._lock.quat);
+            camera.fov = fov;
+        } else if (this.satellite) {
+            this.applySatellite(objectNode, fov);
         } else {
-            super.apply(f, objectNode);
+            super.apply(f, objectNode, fov);
         }
-
-        this.recordLockedForward(camera, held);
 
         camera.near = this.nearPlane;
         camera.updateProjectionMatrix();
+        if (sample) return;
+        this.fov = fov;
+        this.recordLockedForward(camera, held);
 
         // Which camera node this is, so liveAspect can find the pane it renders into. Recorded
         // here rather than in the constructor because the controller is attached to the camera
@@ -692,10 +695,12 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // so a track-driven FOV keeps showing its live value while the camera is flown by
     // hand. Nothing here touches the camera.
     applyFOVOnly(f, objectNode) {
-        const fovSwitch = NodeMan.get("fovSwitch", false)
-        if (fovSwitch) {
-            this.fov = extractFOV(fovSwitch.getValue(f));
-        }
+        if (!objectNode?.isCameraSample) this.fov = this.frameFOV(f);
+    }
+
+    frameFOV(f) {
+        const source = NodeMan.get("fovSwitch", false);
+        return source ? extractFOV(source.getValue(f)) : this.fov;
     }
 
     // "Lock Forward Vector". While the camera moves, it keeps looking in the same direction in
@@ -802,18 +807,23 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // Euler order ZXY: Z=roll, X=pitch(90+el), Y=yaw(-az),
     // then a final Z rotation for screen-space spin around the look axis.
     // Baking rotation into satQuat ensures mouse drags stay screen-aligned.
-    buildSatQuatFromAngles() {
+    satelliteQuaternionFromAngles(target) {
         const euler = new Euler(
             radians(90 + this.el),   // X: pitch from nadir (0 at nadir, 90 at horizon)
             radians(-this.az),       // Y: yaw
             radians(this.roll),      // Z: roll / heading
             'ZXY'
         );
-        this.satQuat.setFromEuler(euler);
+        target.setFromEuler(euler);
         if (this.rotation !== 0) {
             const spin = new Quaternion().setFromAxisAngle(_zAxis, radians(this.rotation));
-            this.satQuat.multiply(spin);
+            target.multiply(spin);
         }
+        return target;
+    }
+
+    buildSatQuatFromAngles() {
+        this.satelliteQuaternionFromAngles(this.satQuat);
         this._satQuatDirty = false;
     }
 
@@ -862,20 +872,21 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         if (cascade) this.recalculateCascade();
     }
 
-    applySatellite(objectNode) {
+    applySatellite(objectNode, fov = this.fov) {
         const camera = objectNode.camera;
-
+        let quaternion = this.satQuat;
         if (this._satQuatDirty) {
-            this.buildSatQuatFromAngles();
+            if (objectNode.isCameraSample) quaternion = this.satelliteQuaternionFromAngles(new Quaternion());
+            else this.buildSatQuatFromAngles();
         }
 
         // Final camera orientation = nadirFrame * satQuat
         // (rotation is already baked into satQuat)
         const nadirQuat = this._buildNadirQuat(camera.position);
-        camera.quaternion.copy(nadirQuat).multiply(this.satQuat);
+        camera.quaternion.copy(nadirQuat).multiply(quaternion);
 
         // Apply FOV
-        camera.fov = extractFOV(this.fov);
+        camera.fov = extractFOV(fov);
         assert(!Number.isNaN(camera.fov), "applySatellite: camera.fov is NaN");
         assert(camera.fov > 0 && camera.fov <= 180, `applySatellite: bad fov ${camera.fov}`);
     }
@@ -992,7 +1003,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // Extract az/el/roll from the camera's current orientation and update this controller's values.
     // Called when another controller (e.g. a track) is driving the camera,
     // so switching back to Manual PTZ preserves the current view.
-    syncFromCamera(camera) {
+    syncFromCamera(camera, targetRoll = false) {
         camera.updateMatrixWorld();
 
         // Tracking noise belongs to the rendered pose, not the PTZ settings
@@ -1017,6 +1028,17 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         const dotUpFwd = fwd.dot(localUp);
 
         if (Math.abs(dotUpFwd) > 1 - 1e-6) {
+            // To Target consumes roll as a screen rotation even directly overhead.
+            // A satellite heading written here would become the next draw's roll.
+            // Switching to Manual does a separate, full orientation sync.
+            if (targetRoll) {
+                this.satellite = false;
+                this.updateSatelliteSliderRanges();
+                this.updateSatelliteSliderVisibility();
+                this.az = 0;
+                this.el = dotUpFwd > 0 ? 90 : -90;
+                return;
+            }
             // Near-vertical (nadir/zenith): normal az/el has gimbal lock.
             // Switch to satellite mode where roll=heading, az=horizontal pan, el=vertical pan.
             this.satellite = true;
@@ -1068,7 +1090,12 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                     // (~1e-13°) instead of 0, which then shows in — and saves
                     // from — the Roll slider. Below a micro-degree IS zero.
                     if (Math.abs(roll) < 1e-6) roll = 0;
-                    this.roll = roll;
+                    // To Target feeds this value straight back into rotateZ.
+                    // Rewriting an equal angle with round-off accumulates drift
+                    // on every redraw. Still mirror a real change (e.g. turret roll).
+                    if (!targetRoll || Math.abs(normalizeAzSigned(roll - this.roll)) >= 1e-6) {
+                        this.roll = roll;
+                    }
                 }
             }
         }
@@ -1128,9 +1155,10 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
 
 
     apply(f, objectNode ) {
-        if (this.relative !== this.fallback.relative) {
-            this.relative = this.fallback.relative;
-            this.recalculateCascade();
+        const angles = objectNode.isCameraSample ? Object.create(this) : this;
+        if (angles.relative !== this.fallback.relative) {
+            angles.relative = this.fallback.relative;
+            if (!objectNode.isCameraSample) this.recalculateCascade();
         }
 
         if (this.fallback) {
@@ -1138,25 +1166,25 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
             // camera, so its apply() no longer refreshes its fov from fovSwitch.
             // Refresh it here, or a track-driven FOV (an imported fov column)
             // latches at whatever value it had when the source was last switched.
-            this.fallback.applyFOVOnly?.(f, objectNode);
-            this.az = this.fallback.az;
-            this.el = this.fallback.el;
-            this.fov = this.fallback.fov;
+            angles.fov = this.fallback.frameFOV?.(f) ?? this.fallback.fov;
+            if (!objectNode.isCameraSample) this.fallback.fov = angles.fov;
+            angles.az = this.fallback.az;
+            angles.el = this.fallback.el;
         }
 
         // f is fractional during playback, so floor it (as TrackingWobble does) and keep it
         // inside the per-frame arrays, or the lookup is undefined and the camera goes NaN
         if (this.azArray) {
-            this.az = this.azArray[Math.max(0, Math.min(this.azArray.length - 1, Math.floor(f)))];
+            angles.az = this.azArray[Math.max(0, Math.min(this.azArray.length - 1, Math.floor(f)))];
         }
 
         if (this.elArray) {
-            this.el = this.elArray[Math.max(0, Math.min(this.elArray.length - 1, Math.floor(f)))];
+            angles.el = this.elArray[Math.max(0, Math.min(this.elArray.length - 1, Math.floor(f)))];
         }
 
 
 
-        super.apply(f, objectNode);
+        super.apply.call(angles, f, objectNode);
 
     }
 

@@ -6,6 +6,8 @@ import {ensureGeoidLoaded, meanSeaLevelOffset} from "./EGM96Geoid";
 import {encodeMISBLocalSet, MISB_TRUTH_MISSION} from "./MISBEncoder";
 import {getCameraKMLPose} from "./ExportCameraKML";
 import {raycastGroundElevationFast} from "./raycastGround";
+import {PerspectiveCamera} from "three";
+import {createCameraPoseSample} from "./CameraPoseSample";
 const wrap = degrees => (degrees % 360 + 360) % 360;
 
 function location(position) {
@@ -67,12 +69,14 @@ export async function createMISBExportSampler({view = null, sourceVideo = false}
     }
     const target = NodeMan.get("targetTrackSwitch", false);
     const truth = resolveTruthTrack();
+    const scratchCamera = sourceVideo ? new PerspectiveCamera() : null;
     return () => {
         const frame = par.frame;
-        // Source-video rendering does not run the 3-D view's update loop.
-        if (sourceVideo) cameraNode.update(frame);
-        const pose = getCameraKMLPose(cameraNode, sourceVideo ? null : view);
-        const camera = cameraNode.camera;
+        // Source-video rendering needs the pose without running the live controls.
+        const poseNode = sourceVideo ? createCameraPoseSample(cameraNode, scratchCamera) : cameraNode;
+        if (sourceVideo) poseNode.update(frame);
+        const pose = getCameraKMLPose(poseNode, sourceVideo ? null : view);
+        const camera = poseNode.camera;
         return buildMISBExportRecords({
             timestamp: Math.round(GlobalDateTimeNode.frameToMS(frame) * 1000),
             pose,

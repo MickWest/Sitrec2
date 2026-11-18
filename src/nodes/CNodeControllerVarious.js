@@ -35,7 +35,7 @@ export class CNodeControllerTrackToTrack extends CNodeController {
 
         // create "Stop At" menu item (also called a controller)
         // this lets us specify a frame to stop the camera movement,
-        if (guiMenus.target) {
+        if (!objectNode.isCameraSample && guiMenus.target) {
             let stopAtController = guiMenus.target.controllers.find(c => c.property === 'trackToTrackStopAt');
             if (!stopAtController) {
                 stopAtController = guiMenus.target.add(par, 'trackToTrackStopAt', 0, 1000, 1)
@@ -260,6 +260,13 @@ export class CNodeControllerManualPosition extends CNodeController {
 
     apply(f, objectNode) {
 
+        if (objectNode.isCameraSample) {
+            // Keep the height constraint. Keyboard navigation and undo belong to the live view.
+            if (this.aboveGround !== undefined) {
+                objectNode.camera.position.copy(adjustHeightAboveGround(objectNode.camera.position.clone(), this.aboveGround));
+            }
+            return;
+        }
         if (this.applying) {
             this.applying = false;
             return;
@@ -551,7 +558,7 @@ export class CNodeControllerATFLIRCamera extends CNodeController {
         // first get the look view
         const lookView = NodeMan.get("lookView")
         if (lookView.effectsEnabled && NodeMan.exists("digitalZoomGUI")) {
-            NodeMan.get("digitalZoomGUI").value = 100 * zoom;
+            if (!objectNode.isCameraSample) NodeMan.get("digitalZoomGUI").value = 100 * zoom;
         } else {
             if (zoom === 2) {
                 vFOV /= 2

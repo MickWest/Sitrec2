@@ -78,16 +78,16 @@ export class MQ9TrackingSimulation {
         this.applyPose(record);
     }
 
-    applyPose(record) {
-        this.camera.position.fromArray(record.position);
-        this.camera.quaternion.fromArray(record.quaternion);
-        this.camera.fov = record.fov; this.camera.aspect = 4 / 3;
-        this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld(true);
+    applyPose(record, camera = this.camera) {
+        camera.position.fromArray(record.position);
+        camera.quaternion.fromArray(record.quaternion);
+        camera.fov = record.fov; camera.aspect = 4 / 3;
+        camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
     }
 
-    applyCachedFrame(frame) {
+    applyCachedFrame(frame, camera = this.camera) {
         const record = this.cache.get(Math.floor(frame));
-        if (record) this.applyPose(record);
+        if (record) this.applyPose(record, camera);
     }
 
     applyFrame(frame) {

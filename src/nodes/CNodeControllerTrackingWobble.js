@@ -120,7 +120,7 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         // re-applies on deserialize, etc.). If the camera quaternion is exactly
         // what we left it at, nothing reset the pose since our last apply —
         // un-apply the previous offset first so it can never accumulate.
-        const unperturbed = this.getUnperturbedQuaternion(camera);
+        const unperturbed = this.getUnperturbedQuaternion(camera, camera.sampleSource ?? camera);
         if (unperturbed) {
             camera.quaternion.copy(unperturbed);
             camera.updateMatrix();
@@ -154,8 +154,8 @@ export class CNodeControllerTrackingWobble extends CNodeController {
     // the perturbed roll back into TrackToTrack's input creates a feedback loop
     // even while paused. Only use the saved pose while the camera still has
     // our output, so a later interactive camera movement remains authoritative.
-    getUnperturbedQuaternion(camera) {
-        const pose = this.cameraPoses.get(camera);
+    getUnperturbedQuaternion(camera, source = camera) {
+        const pose = this.cameraPoses.get(source);
         return pose && camera.quaternion.equals(pose.after) ? pose.before : undefined;
     }
 

@@ -16,6 +16,7 @@ import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../Celestia
 import {applyRefractionToDirection} from "../atmosphere/refraction";
 import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {lookAtDrawnPosition, turnToGeometricAim} from "../atmosphere/refractionAim";
+import {createCameraPoseSample} from "../CameraPoseSample";
 import {t} from "../i18n";
 import {raycastLocalGround} from "../raycastGround";
 import {ViewMan} from "../CViewManager";
@@ -819,7 +820,7 @@ export class CNodeCamera extends CNode3D {
         // Free Look restored from a save reaches the setter before this camera has a
         // view to wire — see wireFreeLookView(). Retry until it lands; one boolean test
         // a frame afterwards.
-        if (this._freeLook && !this._freeLookWired) this.wireFreeLookView();
+        if (!this.isCameraSample && this._freeLook && !this._freeLookWired) this.wireFreeLookView();
 
         // The pose writers below are suspended by Free Look for the same reason the
         // controllers are. altAdjust in particular: it RAISES the current position
@@ -837,7 +838,7 @@ export class CNodeCamera extends CNode3D {
         // or camera.lookAt(), because CNodeLOSFromCamera calls cameraNode.update()
         // from within getValueFrame(), causing infinite recursion if we modify the
         // camera or trigger any node evaluation from here.
-        if (poseIsComputed && this.celestialLock) {
+        if (!this.isCameraSample && poseIsComputed && this.celestialLock) {
             let dir = null;
             if (this.celestialLock.type === "named") {
                 dir = getCelestialDirection(this.celestialLock.object, GlobalDateTimeNode.dateNow);
@@ -874,7 +875,7 @@ export class CNodeCamera extends CNode3D {
 
         // The frame-range refresh is GUI-only, so it runs either way; the aim itself
         // is a pose write, so Free Look suspends it.
-        this.updateGroundTrackSwitchFrameRange();
+        if (!this.isCameraSample) this.updateGroundTrackSwitchFrameRange();
         if (poseIsComputed) this.applyGroundTrackSwitch(f);
 
         // Maintain the per-camera near plane (main camera owns it; the look camera's
@@ -886,12 +887,12 @@ export class CNodeCamera extends CNode3D {
             this.camera.near = this.nearPlane;
             if (!this.orthographic) this.camera.updateProjectionMatrix();
         }
-        if (this.orthographic) {
+        if (!this.isCameraSample && this.orthographic) {
             this._refreshOrthoProjection();
         }
         // Replay an already simulated sensor pose for graph consumers. State
         // advances in the view after ordinary camera controls have finished.
-        this.mq9Tracking?.applyCachedFrame(f);
+        this.mq9Tracking?.applyCachedFrame(f, this.camera);
     }
 
     updateGroundTrackSwitchFrameRange() {
@@ -939,22 +940,17 @@ export class CNodeCamera extends CNode3D {
             return this._groundTrackSwitchCachedTarget?.clone() ?? null;
         }
 
-        const camera = this.camera;
-        const savedPosition = camera.position.clone();
-        const savedQuaternion = camera.quaternion.clone();
-        const savedUp = camera.up.clone();
-        const savedFov = camera.fov;
-        const savedNear = camera.near;
-        const savedFar = camera.far;
+        const sample = createCameraPoseSample(this);
+        const camera = sample.camera;
 
         this._groundTrackSwitchComputing = true;
         // Pose PROBE: this controller pass only measures where the clean
         // boresight meets the ground. Noise controllers (Tracking Wobble)
         // check this flag and skip, so the locked ground point — cached by
         // switchFrame alone — is independent of wobble params/seed.
-        this._poseProbe = true;
+        sample._poseProbe = true;
         try {
-            this.applyControllers(switchFrame);
+            sample.applyControllers(switchFrame);
             if (this.in.altAdjust !== undefined) {
                 camera.position.copy(raisePoint(camera.position, f2m(this.in.altAdjust.v())));
             }
@@ -979,18 +975,7 @@ export class CNodeCamera extends CNode3D {
             this._groundTrackSwitchCachedTarget = hit?.point.clone() ?? null;
             return this._groundTrackSwitchCachedTarget?.clone() ?? null;
         } finally {
-            camera.position.copy(savedPosition);
-            camera.quaternion.copy(savedQuaternion);
-            camera.up.copy(savedUp);
-            camera.fov = savedFov;
-            camera.near = savedNear;
-            camera.far = savedFar;
-            camera.updateProjectionMatrix();
-            camera.updateMatrix();
-            camera.updateMatrixWorld(true);
-            this.syncUIPosition();
             this._groundTrackSwitchComputing = false;
-            this._poseProbe = false;
         }
     }
 
@@ -1062,6 +1047,7 @@ export class CNodeCamera extends CNode3D {
 
 
     syncUIPosition() {
+        if (this.isCameraSample) return;
         // propogate the camera position values value to the camera position UI (if there is one)
         // and then recalculate dependent nodes
         if (NodeMan.exists("cameraLat")) {

@@ -66,6 +66,18 @@ test("paused To Target updates never feed tracking wobble into the Roll setting"
     expectSamePose(camera.quaternion, pose);
 });
 
+test("an overhead target keeps its screen roll on redraw and Manual can still adopt the vertical pose", () => {
+    track.in.targetTrack.p = () => new Vector3(6382000, 0.05, 0.02);
+    for (let i = 0; i < 10; i++) {
+        track.apply(0, objectNode);
+        ptz.syncFromCamera(camera, true);
+        expect(ptz.roll).toBe(12);
+        expect(ptz.satellite).toBe(false);
+    }
+    ptz.syncFromCamera(camera);
+    expect(ptz.satellite).toBe(true);
+});
+
 test("scrubbing changes the wobble and returning to a frame reproduces its pose", () => {
     const pose = update(580);
     const other = update(710);

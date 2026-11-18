@@ -17,6 +17,19 @@ function simulation(overrides = {}) {
         }, ...overrides});
 }
 
+test("sampling a cached sensor frame moves only the requested camera", () => {
+    const tracker = simulation();
+    tracker.applyFrame(20);
+    const livePosition = tracker.camera.position.clone();
+    const liveQuaternion = tracker.camera.quaternion.clone();
+    const sample = new PerspectiveCamera();
+    tracker.applyCachedFrame(0, sample);
+    expect(sample.position.toArray()).toEqual(tracker.cache.get(0).position);
+    expect(sample.position.equals(livePosition)).toBe(false);
+    expect(tracker.camera.position).toEqual(livePosition);
+    expect(tracker.camera.quaternion.toArray()).toEqual(liveQuaternion.toArray());
+});
+
 test("camera slews relative to the tracked object and coasts on accepted motion only", () => {
     const s = simulation(); s.applyFrame(160);
     expect(s.current.state).toBe("tracking"); expect(s.current.targetPixel.x).toBeCloseTo(300, 3);

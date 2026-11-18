@@ -136,6 +136,21 @@ test("the locked ground point is where the geometric line of sight meets the gro
     expect(locked.distanceTo(TARGET)).toBeLessThan(0.5);
 });
 
+test("a ground intersection query leaves the displayed camera and its refraction correction untouched", () => {
+    const camera = node.camera;
+    camera.lookAt(TARGET);
+    const q = camera.quaternion.clone();
+    const correction = q.clone().identity();
+    camera.userData.geometricAim = correction;
+    node.controllers.push({apply: (_frame, sample) => {
+        expect(sample.camera).not.toBe(camera);
+        expect(node.camera).toBe(camera);
+    }});
+    expect(node.getGroundTrackSwitchTarget(SWITCH_FRAME)).not.toBeNull();
+    expect(camera.quaternion.toArray()).toEqual(q.toArray());
+    expect(camera.userData.geometricAim).toBe(correction);
+});
+
 test("after the switch the line of sight passes through the locked point", () => {
     for (const f of [SWITCH_FRAME, SWITCH_FRAME + 50]) {
         update(f);
