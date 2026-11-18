@@ -25,6 +25,7 @@ import {isMetabunkThreadURL, resolveMetabunkThreadVideoURL} from "./MetabunkThre
 import {showError, showConfirm, showChoice} from "./showError";
 import {applyGoToString} from "./GoTo";
 import {parseMapURL} from "./CoordinateParser";
+import {removeTemplateIntro} from "./SitchTemplateInstructions";
 
 // Image file extensions. Shared with the file picker and the URL gate — see DroppableTypes.
 // 'tif'/'tiff' are excluded HERE only: a TIFF may be a GeoTIFF, which becomes a ground
@@ -654,6 +655,11 @@ class CDragDropHandler {
             console.log("Import cancelled, name already used: " + droppedFile.name);
             return;
         }
+
+        // File > Import and scripted imports do not dispatch a DOM drop event.
+        // Once a file is handed to the importer, the startup prompts are done.
+        this.clearPersistentDropZoneText();
+        removeTemplateIntro();
 
         try {
             FileManager.loadedFilesMetadata ??= {};

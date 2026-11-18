@@ -11,7 +11,7 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 ## Quickstart
 
 1. Load a video of the night sky and open **Video → Star Tracker**.
-2. **Auto mask foreground** generates an editable mask for a still, or a separate mask for every analyzed video frame to follow camera pans and zooms. Check the overlay; paint fixed exclusions such as burned-in text if needed. See [Masking out the ground](#masking-out-the-ground).
+2. **Auto mask still images** proposes an editable mask for a still. Video masking is separate: **Auto mask video (experimental)** is off by default. Check the overlay before relying on it; paint fixed exclusions such as burned-in text if needed. See [Masking out the ground](#masking-out-the-ground).
 3. Set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
 4. Click **Star Tracker Analysis**.
 5. Wait. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, and with the resolution and busyness of the footage. Press **Enough (solve what we have)** at any point to stop scanning and solve what has been measured so far.
@@ -227,7 +227,8 @@ The Star Tracker folder lives under **Video**.
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
 | **Use mask** | Exclude the enabled video mask from detection, background estimation and photometry. On still images, identification also excludes hidden catalog stars and accounts for the remaining sky area. On by default — see [Masking out the ground](#masking-out-the-ground) |
-| **Auto mask foreground** | Generate foreground masks using color and texture. On video, recompute for each analyzed frame to follow pans and zooms; **Show Mask** previews those frames. On a still, propose an editable mask when none exists. Keeps painted masks as separate fixed exclusions. On by default |
+| **Auto mask still images** | Propose an editable foreground mask when a still has none. On by default |
+| **Auto mask video (experimental)** | Recompute foreground for each analyzed frame to follow pans and zooms. Off by default: costs processing time and can exclude sky. Near-black frames decline automatic exclusion; painted masks still apply |
 | **Apply adjustments** | Analyse the frame as you see it, with **Video → Video Adjustments** applied — levels, curves, sharpen, blur, brightness and the rest. On by default, and does nothing unless you have set some adjustments. Turn it off to analyse the raw decoded frame instead, which can find stars that are not visible on screen, or miss ones that only the adjustments bring out |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. It needs a lens: the Fisheye render, or a successful **Fit lens from stars**. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
@@ -346,7 +347,7 @@ Four things worth knowing:
 
 ## Masking out the ground
 
-Leave **Auto mask foreground** on to exclude trees, rooftops and other foreground during analysis. Lit foliage is exactly what the detector is looking for — small, bright and
+On still images, leave **Auto mask still images** on to exclude trees, rooftops and other foreground during analysis. Lit foliage is exactly what the detector is looking for — small, bright and
 stationary — and it is detected in quantity.
 
 Measured on a wide night photograph with a treeline: without a mask it detected about a thousand
@@ -354,12 +355,12 @@ Measured on a wide night photograph with a treeline: without a mask it detected 
 and failed. With the ground masked it kept 423 detections, none in the trees, and identified
 **221 stars**.
 
-1. Leave **Use mask** and **Auto mask foreground** on, then run **Star Tracker Analysis**.
+1. Leave **Use mask** on. For still images, leave **Auto mask still images** on. For video, explicitly enable **Auto mask video (experimental)** if needed, then run **Star Tracker Analysis**.
 2. Turn on **Video → Masking → Show Mask** and inspect analyzed frames. Video masks are recomputed
    for each frame, so trees and buildings move with the camera. Ambiguous frames can decline
    automatic exclusion rather than mask sparse stars as foreground.
 3. Use **Edit Mask** for additional fixed exclusions. On video these brush marks stay fixed;
-   disable **Auto mask foreground** if you want to use only the painted mask. On a still, the
+   disable **Auto mask video (experimental)** if you want to use only the painted mask. On a still, the
    automatically proposed mask itself is editable.
 
 Masked pixels are excluded from background and noise estimates, detection smoothing, color
@@ -372,6 +373,7 @@ For a still image, the catalog verifier also ignores stars predicted behind the 
 the unmasked image area when estimating chance matches. Video identification works on a stitched
 reference chart, so it does not apply a single frame mask to that chart. Video detection and
 calibration use each frame's automatic foreground mask combined with the enabled painted mask.
+The automatic preview hides after a successful solve; **Show Mask** brings it back.
 Generated video masks are not saved with the sitch; rerun analysis after loading to regenerate them.
 
 See [Masking](Masking.md) for the other ways to build a mask — including masking a burned-in
@@ -636,3 +638,5 @@ reference to find, and the search will under-credit adjustments that genuinely r
 - [Long Exposure/Stacking](LongExposure.md) — stacking frames, which pairs naturally with star work
 - [Investigating Starlink Flares With Sitrec](Starlink.md) — Starlink satellites in Sitrec. The Star Tracker does not name moving objects
 - [Tracks](Tracks.md) — loading and filtering track data
+
+If camera tracking fails on more than half the frame pairs, analysis stops before building a star map or fitting a lens. Try a shorter In/Out range with clear stars and check the detection settings. Short dropouts can use a recent stable motion estimate to find matches; prediction alone never counts as a measurement.

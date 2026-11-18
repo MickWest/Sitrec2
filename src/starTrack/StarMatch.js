@@ -92,6 +92,11 @@ export const STAR_MATCH_DEFAULTS = {
     bridgeAnchorPool: 8,
     bridgeAnchorTries: 4,
 
+    // A short outage may keep the last measured rate as a search hint. It never
+    // supplies a measurement for a missing frame. The UI scales this duration
+    // from the reference 30 fps to the recording's frame rate.
+    predictionMaxGap: 8,
+
     // Camera-fixed artifact removal (hot pixels, dust, reticle).
     excludeCameraFixed: true,
     fixedRadius: 2.0,           // px: how close across frames counts as the same fixed position
@@ -854,10 +859,12 @@ function solveChainOnce(usable, O, onProgress = () => {}) {
     const reacquired = [];
     const failed = [];
     const weakFrames = [];
-    if (n === 0) return {steps, cumulative, reacquired, failed, weakFrames};
+    const predictedBridges = [];
+    if (n === 0) return {steps, cumulative, reacquired, failed, weakFrames, predictedBridges};
 
     cumulative[0] = IDENTITY;
     let prediction = null;
+    let rate = null, rateFrame = -1, previousRate = null;
     // The most recent frame whose position in the reference frame we actually trust. Bridging back
     // to it is what stops a dropout from permanently losing the motion across the gap.
     let lastGood = 0;
@@ -957,6 +964,23 @@ function solveChainOnce(usable, O, onProgress = () => {}) {
                 // Neither weakness nor strength of the prediction match is grounds to skip the
                 // re-acquisition matchers - a decoy cluster can hand it either.
                 let m = matchByPrediction(usable[a], cur, null, O);
+                // Retain a recent, independently corroborated rate through a
+                // blank/blurred frame. Compose the rotation AND translation at
+                // each elapsed frame; multiplying B alone is wrong during roll.
+                // Predictions only seed measured correspondences and expire.
+                if (rate && rateFrame === lastGood && f - lastGood <= O.predictionMaxGap) {
+                    let future = cumulative[lastGood];
+                    for (let t = lastGood; t < f; t++) future = composeTransform(rate, future);
+                    const inv = invertTransform(cumulative[a]);
+                    const hint = inv && composeTransform(future, inv);
+                    const guided = hint && matchByPrediction(usable[a], cur, hint, O);
+                    if (guided?.fit.converged
+                        && motionMagnitude(composeTransform(guided.transform,
+                            invertTransform(hint)), extent.W, extent.H) <= O.gateInitial) {
+                        guided.fromPrediction = true;
+                        m = best(m, guided);
+                    }
+                }
                 m = best(m, matchByInvariants(usable[a], cur, O));
                 m = best(m, matchByOffsetVote(usable[a], cur, O));
                 if (!m) continue;
@@ -1004,7 +1028,20 @@ function solveChainOnce(usable, O, onProgress = () => {}) {
         step.base = base;
         steps[f] = step;
         cumulative[f] = composeTransform(step.transform, cumulative[base]);
+        if (step.fromPrediction) predictedBridges.push(f);
         prediction = base === f - 1 ? step.transform : null;
+        // Two consecutive strong, consistent rates are needed. Do not learn
+        // velocity from a contested fit, a weak recovery, or across an outage.
+        const stable = base === f - 1 && strong(step.fit, usable[base], cur) && !contested;
+        if (stable) {
+            const agrees = previousRate && motionMagnitude(composeTransform(step.transform,
+                invertTransform(previousRate)), extent.W, extent.H) <= O.gateRefined;
+            rate = agrees ? step.transform : null;
+            rateFrame = agrees ? f : -1;
+            previousRate = step.transform;
+        } else {
+            rate = null; rateFrame = -1; previousRate = null;
+        }
         lastGood = f;
 
         // Only strongly-fitted frames join the bridge-anchor pool: a weak frame may be trusted
@@ -1016,7 +1053,7 @@ function solveChainOnce(usable, O, onProgress = () => {}) {
     }
     onProgress(1);
 
-    return {steps, cumulative, reacquired, failed, weakFrames};
+    return {steps, cumulative, reacquired, failed, weakFrames, predictedBridges};
 }
 
 /**
@@ -1026,7 +1063,7 @@ function solveChainOnce(usable, O, onProgress = () => {}) {
 export function solveFrameChain(perFrame, opts = {}, onProgress = () => {}) {
     const O = {...STAR_MATCH_DEFAULTS, ...opts};
     const empty = {
-        steps: [], cumulative: [], reacquired: [], failed: [], weakFrames: [],
+        steps: [], cumulative: [], reacquired: [], failed: [], weakFrames: [], predictedBridges: [],
         cameraFixed: {fixed: [], clusters: [], applied: false},
     };
     if (!perFrame || perFrame.length === 0) return empty;

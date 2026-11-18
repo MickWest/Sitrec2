@@ -28,6 +28,26 @@ import {buildScene, mulberry32, renderFrame} from "../src/starTrack/StarSyntheti
 
 const W = 320, H = 192;
 
+test("a measured stable rate bridges brief sparse dropouts, then expires", () => {
+    const rng = mulberry32(23);
+    const stars = Array.from({length: 9}, () => ({x: 30 + rng() * 250, y: 20 + rng() * 150, flux: 100 + rng() * 900}));
+    const rate = {A: [Math.cos(.002), Math.sin(.002)], B: [9, 2]};
+    const poses = [IDENTITY];
+    for (let f = 1; f < 9; f++) poses.push(composeTransform(rate, poses[f - 1]));
+    const frames = poses.map((T, f) => [4, 5].includes(f) ? [] : stars.slice(0, f === 6 ? 3 : 9).map(s => {
+        const [x, y] = applyTransform(T, s.x, s.y); return {...s, x, y};
+    }));
+    const control = solveFrameChain(frames, {excludeCameraFixed: false, predictionMaxGap: 0});
+    expect(control.failed).toContain(6);
+    const result = solveFrameChain(frames, {excludeCameraFixed: false});
+    expect(result.failed).toEqual([4, 5]);
+    expect(result.predictedBridges).toContain(6);
+    expect(result.weakFrames).toContain(6); // Three stars are still weak evidence.
+    expect(cornerDisagreement(result.cumulative[6], poses[6])).toBeLessThan(1e-6);
+    const expired = solveFrameChain(frames, {excludeCameraFixed: false, predictionMaxGap: 2});
+    expect(expired.failed).toContain(6);
+});
+
 // Star density matched to the real target clip, which yields 28-38 usable detections per frame.
 // This matters: at the generator's defaults a 320x192 frame holds only ~10 detections, and after
 // camera-fixed artifacts are removed 4-6 stars remain. The chain still tracks, but drift over
@@ -503,6 +523,7 @@ describe("StarMatch guards against inventing motion", () => {
 
         const r = solveFrameChain(perFrame, {
             excludeCameraFixed: false,
+            predictionMaxGap: 0,        // disable rate-guided bridges for this failure fixture
             invariantMinInliers: 1e9,     // no invariant re-acquisition, so no bridge can form
         });
 
@@ -519,6 +540,9 @@ describe("StarMatch guards against inventing motion", () => {
         for (let f = 1; f < perFrame.length; f++) {
             if (r.steps[f]) expect(failedSet.has(r.steps[f].base)).toBe(false);
         }
+        const guided = solveFrameChain(perFrame, {excludeCameraFixed: false, invariantMinInliers: 1e9});
+        expect(guided.steps[6].base).toBe(4);
+        expect(cornerDisagreement(guided.cumulative[6], rigid(0, 6 * step, 3 * step))).toBeLessThan(1e-6);
     });
 
     test("a re-acquisition that is then discarded is not reported as one", () => {

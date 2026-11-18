@@ -14,7 +14,7 @@ The mask is **shared**. There is one mask per sitch, so you paint the ground out
 It is saved with the sitch and comes back when you reload.
 
 The painted mask is one fixed shape for the whole clip. The Star Tracker can also generate a
-separate foreground mask for each analyzed video frame with **Auto mask foreground**. That
+separate foreground mask for each analyzed video frame with **Auto mask video (experimental)**. That
 layer follows trees and buildings through camera pans and zooms; painted exclusions remain fixed.
 
 ## Why it matters
@@ -93,12 +93,13 @@ not assume that sky is blue or that ground is below it. If that color model is u
 tool keeps the texture result. Smooth ground with sky-like color and brightness, such as a calm
 sea, can still remain unmasked; inspect the overlay and correct it with the brush.
 
-The Star Tracker's **Auto mask foreground** option uses this method before analyzing a still
+The Star Tracker's **Auto mask still images** option uses this method before analyzing a still
 image with an empty mask. It shows the result and preserves existing, restored and hand-edited
 masks. Clearing an automatically generated mask does not regenerate it on the next analysis of
 that image; use **Mask Ground (auto)** to request another proposal.
 
-On video, **Auto mask foreground** recomputes foreground from each analyzed exposure. New trees
+On video, **Auto mask video (experimental)** recomputes foreground from each analyzed exposure.
+It is off by default: processing is slower and low-contrast sky can be mistaken for foreground. New trees
 and buildings entering during a pan or zoom are detected, and foreground leaving the frame does
 not leave a mask behind. The generated layer is combined with the fixed painted mask for star
 detection and measurement. It is specific to the Star Tracker, not a moving mask for other tools.
@@ -109,9 +110,11 @@ The preview cache is bounded, so very long runs can evict older previews without
 detections. Generated video masks are analysis results and are not saved with the sitch; rerun
 analysis to regenerate them.
 
-If a video frame has too little reliable sky information, automatic exclusion is declined for
+After a successful solve the automatic preview hides; **Show Mask** displays it again.
+
+If a video frame is near black or has too little reliable sky information, automatic exclusion is declined for
 that frame. The painted mask still applies. Paint additional fixed exclusions as needed, or turn
-off **Auto mask foreground** to use only your painted mask. Erasing the painted mask does not
+off **Auto mask video (experimental)** to use only your painted mask. Erasing the painted mask does not
 erase the separate generated layer.
 
 Use **Mask Ground (click sky, then ground)** when the automatic version misjudges the scene and

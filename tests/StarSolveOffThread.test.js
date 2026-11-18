@@ -23,6 +23,21 @@ jest.setTimeout(120000);
 // The options the Star Tracker passes for a multi-frame clip.
 const OPTS = {minObservations: 8, driftSignificance: 5, driftMinSigmas: 12, trackMaxGap: 10};
 
+test("tracking loss cannot become a star map from held camera poses", async () => {
+    const frames = Array.from({length: 12}, (_, f) => [
+        {x: 20 + f * 17, y: 30 + f * 9, flux: 100},
+        {x: 40 + f * 11, y: 50 - f * 3, flux: 80},
+    ]);
+    const progress = jest.fn();
+    await expect(solveAfterDetection(frames, OPTS, {onProgress: progress}))
+        .rejects.toThrow("camera tracking lost on 11/11 frame pairs");
+    expect(progress.mock.calls.some(([stage]) => stage === "field")).toBe(false);
+    const messages = [];
+    await handleStarSolveMessage({type: "solve", perFrame: frames, opts: OPTS}, m => messages.push(m));
+    expect(messages.at(-1)).toMatchObject({type: "error"});
+    expect(messages.some(m => m.type === "done")).toBe(false);
+});
+
 /**
  * Per-frame detections for a panning, slowly rotating camera: stars that flicker, one that
  * vanishes for longer than the gap allowance (so its pieces are MERGED, and merged tracks share

@@ -2,6 +2,33 @@ import {combineForegroundMask, detectFrameSources, foregroundMaskForFrame, Foreg
 import {detectSources, rejectReason} from "../src/starTrack/StarDetect";
 
 const W = 256, H = 192;
+
+test("compressed near-black open sky is declined without hiding detections", () => {
+    const rgba = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const block = ((x >> 3) + (y >> 3)) % 3;
+        const star = 180 * Math.exp(-((x - 100) ** 2 + (y - 80) ** 2) / 8);
+        rgba.set([block + star, 2 * block + star, block + star, 255], 4 * (y * W + x));
+    }
+    const masked = detectFrameSources(rgba, W, H, {autoMaskForeground: true});
+    expect(masked.foregroundMask.reliable).toBe(false);
+    expect(masked.foregroundMask.data.some(Boolean)).toBe(false);
+    expect(masked.sources).toEqual(detectSources(rgba, W, H).sources);
+    const fixed = new Uint8Array(W * H); fixed[0] = 1;
+    expect(combineForegroundMask(masked.foregroundMask, fixed, W, H)).toBe(fixed);
+});
+
+test("portrait masking bounds the long edge and a busy exposure cannot abort detection", () => {
+    const w = 540, h = 960, rgba = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const v = ((x >> 2) + (y >> 2)) % 2 ? 240 : 20;
+        rgba.set([v, v, v, 255], 4 * (y * w + x));
+    }
+    const mask = foregroundMaskForFrame(rgba, w, h);
+    expect(mask.width).toBe(288);
+    expect(mask.height).toBe(512);
+    expect(mask.reliable).toBe(false);
+});
 function exposure(pan = 0, zoom = 1) {
     const rgba = new Uint8ClampedArray(W * H * 4);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {

@@ -51,14 +51,23 @@ export function throttleProgress(onProgress, intervalMs = PROGRESS_INTERVAL_MS, 
  * made, with progress.
  *
  * @param {Array<Array>} perFrame - accepted detections per analysed frame
- * @param {object} opts - solveStarField's options (solveFrameChain runs on its defaults)
+ * @param {object} opts - solveStarField's options, plus frameRate for prediction expiry
  * @param {object} hooks
  *   `onProgress(stage, fraction)` - stage "chain" then "field"; fraction is of the WHOLE solve
  *   `onYield()` - awaited between the two halves, so a caller on the UI thread can repaint
  * @returns {Promise<{chain: object, solved: object}>}
  */
 export async function solveAfterDetection(perFrame, opts = {}, {onProgress = () => {}, onYield = null} = {}) {
-    const chain = solveFrameChain(perFrame, {}, (f) => onProgress("chain", CHAIN_SHARE * f));
+    const frameRate = Number.isFinite(opts.frameRate) && opts.frameRate > 0 ? opts.frameRate : 30;
+    const chain = solveFrameChain(perFrame, {predictionMaxGap: Math.max(1, Math.round(8 * frameRate / 30))},
+        (f) => onProgress("chain", CHAIN_SHARE * f));
+    // Held poses mark tracking loss; they are not measured camera positions.
+    // Refining a map from a mostly lost chain makes unrelated detections look
+    // like stationary stars and then spends time fitting a lens to that map.
+    if (perFrame.length > 1 && chain.failed.length > (perFrame.length - 1) / 2) {
+        throw new Error(`camera tracking lost on ${chain.failed.length}/${perFrame.length - 1} frame pairs; `
+            + "try a shorter In/Out range with clear stars and check detection settings");
+    }
     onProgress("field", CHAIN_SHARE);
     if (onYield) await onYield();
     const solved = solveStarField(perFrame, chain.cumulative, opts,

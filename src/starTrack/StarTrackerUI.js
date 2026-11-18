@@ -170,6 +170,7 @@ let calibrationPending = false;
 
 const params = {
     autoMaskForeground: true,
+    autoMaskVideo: false,
     // Detection
     threshSigma: STAR_DETECT_DEFAULTS.threshSigma,
     // Resolve threshSigma from the footage before each run (chooseDetectionSigma over a few
@@ -640,7 +641,7 @@ function clearForegroundPreview() {
 }
 
 function videoForegroundMaskEnabled(view) {
-    return params.autoMaskForeground && params.useMask && !(view.videoData instanceof CVideoImageData)
+    return params.autoMaskVideo && params.useMask && !(view.videoData instanceof CVideoImageData)
         && NodeMan.get("videoMask", false)?.maskEnabled !== false;
 }
 
@@ -650,7 +651,7 @@ function startForegroundPreview(view, enabled) {
     if (!enabled || !node) return null;
     const videoData = view.videoData, sequence = new ForegroundMaskSequence();
     const provider = frame => {
-        if (view.videoData !== videoData || !params.useMask || !params.autoMaskForeground) return null;
+        if (view.videoData !== videoData || !params.useMask || !params.autoMaskVideo) return null;
         const sourceFrame = view.lockToInFrame ? Math.max(0, Math.round(frame) - (Sit.aFrame ?? 0)) : Math.round(frame);
         return sequence.get(sourceFrame);
     };
@@ -3120,6 +3121,7 @@ async function runStarTrackerAtResolution(opts) {
                 driftSignificance: ctx.driftSignificance,
                 driftMinSigmas: ctx.driftMinSigmas,
                 ...ctx.calSolve,
+                frameRate: Sit.fps,
             }, {
                 onProgress: showSolveProgress,
                 shouldAbort: () => ctx.stale(),
@@ -3129,6 +3131,10 @@ async function runStarTrackerAtResolution(opts) {
             // The solve threw, or its worker failed to load or crashed. Reported like any failed
             // run: the finally below takes the overlay down and releases playback.
             console.warn("[StarTrack] solve failed", e);
+            if (ctx.stale()) return null;
+            detachStarTrackCamera();
+            result = null;
+            Globals.starTrackerResult = undefined;
             params.status = `solve failed: ${e?.message ?? e}`;
             return null;
         }
@@ -3435,6 +3441,9 @@ async function runStarTrackerAtResolution(opts) {
                 // them with a full pass needs to know that without going back to the console.
                 + (result.stoppedEarly ? ` (stopped early, ${analysedLast - frame0 + 1}/${total} frames)` : "");
         ensureOverlay();
+        if (autoVideoMask || (still && params.autoMaskForeground)) {
+            NodeMan.get("videoMask", false)?.setShowMaskPreview(false);
+        }
         completed = true;
         return result;
     } finally {
@@ -5410,10 +5419,13 @@ export function setupStarTrackerMenu() {
         .tooltip("Exclude the enabled Video > Masking mask from star detection, background "
             + "measurement and photometry. On still images, identification also excludes "
             + "catalog stars hidden by the mask. Use Mask Ground (auto) to mask foreground.");
-    folder.add(params, "autoMaskForeground").name("Auto mask foreground")
-        .tooltip("Mask foreground using color and texture. On video, recompute it for every "
-            + "analyzed frame so it follows pans and zooms. Show Mask previews analyzed frames. "
-            + "Painted masks remain separate, fixed exclusions. Turn this off to use only those masks.");
+    folder.add(params, "autoMaskForeground").name("Auto mask still images")
+        .tooltip("Mask foreground in still images using color and texture.");
+    folder.add(params, "autoMaskVideo").name("Auto mask video (experimental)")
+        .tooltip("Off by default. Recompute foreground for each analyzed video frame to follow pans "
+            + "and zooms. Adds processing time and can exclude sky. Near-black frames are left "
+            + "unmasked. Inspect Show Mask before relying on it. Painted masks remain separate.")
+        .onChange(() => { clearForegroundPreview(); setRenderOne(); });
     folder.add(params, "applyAdjustments").name("Apply adjustments")
         .tooltip("Analyze the frame as you SEE it, with the Video Adjustments applied - levels, "
             + "curves, sharpen, blur, brightness and the rest. Off analyzes the raw decoded "

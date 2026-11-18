@@ -39,8 +39,11 @@ function boundaryForeground(mask, W, H) {
 
 /** Segment this exposure, independently of earlier frames or the camera's motion. */
 export function foregroundMaskForFrame(rgba, W, H) {
-    const width = Math.min(SKY_MASK_DEFAULTS.workWidth, W);
-    const height = Math.max(1, Math.round(H * width / W));
+    // Bound both axes: a portrait clip must not cost several times a landscape
+    // clip just because the old limit was applied to its short edge.
+    const scale = Math.min(1, SKY_MASK_DEFAULTS.workWidth / Math.max(W, H));
+    const width = Math.max(1, Math.round(W * scale));
+    const height = Math.max(1, Math.round(H * scale));
     // Area reduction retains scene colour without aliasing stars into texture.
     // This pure implementation also runs in detection workers and test probes.
     const small = new Uint8ClampedArray(width * height * 4);
@@ -57,9 +60,22 @@ export function foregroundMaskForFrame(rgba, W, H) {
     }
     // Compressed night video often quantizes open sky to near-black. That is not
     // evidence for an optical surround; texture/colour must justify exclusion.
+    const decline = () => ({data: new Uint8Array(width * height), width, height, reliable: false});
+    const surround = hasDarkSurround(small, width, height);
+    const levels = [];
+    for (let p = 0; p < small.length; p += 16) {
+        levels.push(.2126 * small[p] + .7152 * small[p + 1] + .0722 * small[p + 2]);
+    }
+    levels.sort((a, b) => a - b);
+    // Near black, quantization and compression blocks dominate colour/texture.
+    // A numerically successful model is not evidence of foreground there. An
+    // illuminated optical field with a black surround is handled separately.
+    if (!surround && levels[Math.floor(levels.length * .75)] < 8) return decline();
     const out = quadTreeGroundMask(small, width, height,
-        {deadLuma: hasDarkSurround(small, width, height) ? SKY_MASK_DEFAULTS.deadLuma : -1});
-    if (out.error) throw new Error(out.error);
+        {deadLuma: surround ? SKY_MASK_DEFAULTS.deadLuma : -1});
+    // Segmentation refusal is normal on difficult footage, not a failed video
+    // analysis. Retain the user's fixed mask and let source detection continue.
+    if (out.error) return decline();
     // Sparse, grainy video can make texture-only blocks surround the very stars
     // we need. If the sky model cannot support the split, keep the fixed user
     // mask and decline an automatic exclusion for this exposure.
@@ -72,7 +88,7 @@ export function foregroundMaskForFrame(rgba, W, H) {
 
 /** Compose the moving foreground with a fixed user mask, without changing either. */
 export function combineForegroundMask(foreground, fixed, W, H) {
-    if (!foreground) return fixed ?? null;
+    if (!foreground || foreground.reliable === false) return fixed ?? null;
     const out = fixed ? new Uint8Array(fixed) : new Uint8Array(W * H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const mx = Math.min(foreground.width - 1, Math.floor((x + .5) * foreground.width / W));
