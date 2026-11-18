@@ -12,7 +12,7 @@ The **Wind** folder in the **Physics** menu sets the wind at the camera platform
 
 1. Set the sitch date, time and camera position first. Sitrec fetches wind for that date, and soundings near that position.
 2. Open the **Physics** menu in the top menubar, then expand the **Wind** folder.
-3. From **Wind Source**, pick **GFS (NOAA)** for any date from 22 March 2021 to today, or **UWYO Soundings** / **IGRA2 Soundings** for earlier dates.
+3. From **Wind Source**, pick **GFS (NOAA)** for any date from 23 August 2009 to today, or **UWYO Soundings** / **IGRA2 Soundings** for earlier dates. GFS data before 22 March 2021 comes from an older archive that has gaps.
 4. Set **Altitude** to the height where you want to see the wind. It sets the level of the streamlines and arrows. Target Wind and Local Wind do not use this slider: they read the source on every frame, at the position and height of the target and the camera.
 5. **Show Wind Lines** is auto-toggled on the first time you pick one of the sources in step 3 — the streamlines appear once the data has loaded (allow up to a minute the first time; after that it's cached). [**Status**](#status) then says where the wind comes from, for example `GFS 2023-06-15 18Z, 1° grid. Heights 33 ft above the ground to 101,000 ft.`
 6. To read the wind at the target or the camera, use [**Show Wind at**](#show-wind-at). **Target Wind From** and **Target Wind Speed** show the same value at the target.
@@ -143,7 +143,7 @@ Available sources:
 
 | Source | What it is | When to use it |
 |---|---|---|
-| **GFS (NOAA)** | Global atmospheric grid from the NOAA Global Forecast System. Whole-Earth coverage, 6-hour cycles. | Any date from 22 March 2021 to today. Good when you need wind at altitudes other than the ground. |
+| **GFS (NOAA)** | Global atmospheric grid from the NOAA Global Forecast System. Whole-Earth coverage, 6-hour cycles. | Any date from 23 August 2009 to today. The archive before 22 March 2021 has gaps. Good when you need wind at altitudes other than the ground. |
 | **UWYO Soundings** | Radiosonde profiles from University of Wyoming. Auto-fetches the nearest stations and IDW-blends them. | Historical dates, good vertical resolution near launch sites. |
 | **IGRA2 Soundings** | NOAA NCEI's Integrated Global Radiosonde Archive. Same idea as UWYO but a different upstream archive. | A different archive from UWYO. Can have dates or stations that UWYO does not. |
 | **Manual Soundings** | Every loaded sounding, blended together: files you dragged in (a UWYO `.csv`/`.txt`, an IGRA2 `.txt`, or an XML wind profile) and any fetched earlier. | When you want curated profiles instead of automatic nearest-station fetches. |
@@ -293,7 +293,7 @@ If UWYO has nothing for that station and date, Sitrec tries the next 4 nearest s
 
 ### Real wind for a known date/place
 1. Set the sitch date, time and camera position.
-2. Pick **GFS (NOAA)** (any date from 22 March 2021 to today).
+2. Pick **GFS (NOAA)** (any date from 23 August 2009 to today).
 3. Set **Altitude** to the height where you want to see the wind.
 4. Optionally lock altitude to the camera or target track.
 5. Turn on **Show Wind at** to read the wind at the target and the camera. To try a different wind at the target, turn on **Override Target Wind** and set the sliders.
@@ -340,7 +340,7 @@ Sitrec reads one position and one profile from a file. Wind direction is taken a
 
 ### Date-related
 
-- **GFS dates.** Sitrec reads GFS for any date from 22 March 2021 to today: NOMADS keeps about the last 10 days, and older dates come from the AWS archive. For an earlier date, **Status** shows `Error: HTTP 400 for level ...`. Use soundings for those dates.
+- **GFS dates.** Sitrec reads GFS for any date from 23 August 2009 to today. NOMADS keeps about the last 10 days, dates from 22 March 2021 come from the AWS archive, and older dates come from the NOAA NCEI analysis archive. The NCEI archive has gaps, so a date or a level can fail to load. For a date before 23 August 2009, **Status** shows `Error: Date out of range for GFS wind data (2009-08-23 through tomorrow UTC; archive gaps may occur)`. Use soundings for those dates.
 - **Cycle latency.** A GFS cycle (00Z, 06Z, 12Z, 18Z) takes ~3.5–4 hours to publish. If you ask for an hour that hasn't been processed yet, Sitrec falls back to the previous cycle on the same day, and for a time after the last published cycle it uses that cycle alone.
 - **Wind and the sitch's date/time.** GFS follows the sitch time: each frame blends the two cycles around its time, and Sitrec loads the cycles that it needs by itself. UWYO and IGRA2 soundings do not, and **Refresh Wind Data** keeps the old launches. Set the date (Time menu) before you load soundings. After a date change, delete the old sounding tracks in the **Contents** menu, pick another source, then pick the sounding source again.
 

@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.201.2 (2026-11-18)
+
+### Improvements
+- **Wind in a local save** (File → Local → *Save Local* and *Save Local As...*): a sitch that you save as a local file now holds the GFS wind data that it loaded, and also the data of a custom wind source. When you open the file again, it shows the same wind without a load from the server. To load new data, click *Refresh Wind Data* (Physics → Wind).
+- **GFS wind for earlier dates** (Physics → Wind → *Wind Source* → *GFS (NOAA)*): GFS wind is now available for dates back to 23 August 2009. For a date before 22 March 2021, Sitrec uses an older NOAA archive, which has gaps. When a wind load fails, *Status* now gives the reason from the server, for example a date that is out of range. Before, it gave only an HTTP error number.
+- **Lights on objects** (Objects → the object → *Lights*): the glow of a light now depends on its *Intensity*, its distance and the brightness of the sky. At dusk, a bright white strobe now stands out, and the steady position lights stay faint. Before, a glow became smaller as the sky became brighter.
+  - Each frame shows the part of a flash that falls in that frame, so a flash shorter than a frame is not missed. A frame shows the same flash each time you play or scrub to it.
+  - The glow of a spotlight, for example a landing light, shows only in its beam.
+  - This also applies to the LEDs of a kite.
+  - With *Flock* on, each member of the flock now has the lights of the model, and each member flashes at its own time. With *Light Illuminates* on, each light also lights the scene from the eight members nearest to the camera.
+  - In *Long Exposure/Stacking* with *HDR Point Sources*, each flock member makes its own trail. A strobe now uses the peak brightness of its short flash, so its trail is brighter. A spotlight makes a trail only when the camera is in its beam.
+
+### Bug Fixes
+- Fixed the wind lines (Physics → Wind), which could still show the previous source after you changed *Wind Source*, or after a wind load failed. Also, *Status* no longer says that it blends two times of GFS data when only one of them loaded.
+- Fixed the *open-meteo* wind source. It used the wind of the playhead's hour for all frames, it did not update the wind lines when the playhead went into another hour, and it could stay at *pending* after a failed request. *Status* now gives the reason when open-meteo has no data.
+- Fixed *UWYO Soundings*. When UWYO limited the rate of requests or asked Sitrec to try again, Sitrec could record that the station had no sounding, and keep that record for up to 30 days.
+- Fixed *IGRA2 Soundings*, which could load a sounding from a different day or year. Sitrec now uses only a launch within 12 hours of the sitch start. When a station has no such launch, Sitrec goes to the next station.
+- Fixed a sitch saved after a failed change from *Manual* to GFS wind. When you opened it again, it asked for a wind level that does not exist. It now loads the wind at the selected altitude.
+- Fixed the look view, which could turn or roll while playback was paused, when Sitrec calculated the line of sight for other frames. With Camera → Heading → *Camera Heading* set to *To Target*, the roll also no longer drifts. It also no longer changes when the target is directly above or below the camera.
+- Fixed the timeline. The In and Out lines, the markers and the keyframes now line up with the playhead along the whole timeline. A press on the playhead now moves the playhead even where an In or Out line is under it. Where the In and Out lines are near each other, a drag takes the nearer line.
+- Fixed colors that the AI Assistant or a script changes, for example the color of a track. Sitrec now changes the color that is already in use, and does not put a value of a different type in its place. A color that is not valid is now refused. Also, the AI Assistant can no longer put a value in place of a menu button, which stopped the button from working.
+- Fixed *Save* and *Save As* (File → *Server*), which showed no message when the save to the server failed. An error message now gives the cause. A cancelled save still shows no message.
+
 ## Version 2.201.1 (2026-11-17)
 
 ### New Features

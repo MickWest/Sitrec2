@@ -2378,7 +2378,7 @@ const en = {
             targetSource: { tooltip: "Where the wind data comes from, for Target Wind and the wind lines and arrows:" },
             localSource: { tooltip: "Where the wind data for Local Wind (the camera platform) comes from.\nOnly a telemetry Track entry gives Local Wind data of its own. See Separate Wind Sources.\nThe sources:" },
             sources: {
-                gfs: "weather model on a 1° grid, for dates from 22 March 2021 to today",
+                gfs: "weather model on a 1° grid, for dates from 23 August 2009 to today",
                 uwyo: "weather balloon soundings from the University of Wyoming, from the nearest stations",
                 igra2: "weather balloon soundings from the NOAA IGRA2 archive, from the nearest stations",
                 "manual-soundings": "a blend of all the soundings that are loaded",
