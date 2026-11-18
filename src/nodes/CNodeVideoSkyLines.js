@@ -1,3 +1,5 @@
+import {applyAffine, viewStabilizationMatrix} from "../CVideoData";
+import {lensToRay} from "../CameraLens";
 // Celestial lines drawn over the video picture: the V boxes of the night sky's Lines folder.
 //
 // The main and look views draw these lines in 3D. The video view is a 2D canvas, so here each
@@ -16,9 +18,9 @@ import {Matrix4, Vector3} from "three";
 import {directionToVideoPixel} from "../VideoPixelRay";
 import {applyRefractionECI, prepareObserverRefraction, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
 import {horizonCompassFrame} from "../HorizonCompassRibbon";
-import {fisheyeViewToNDC, isFisheyeCamera} from "../FisheyeProjection";
-import {isPanoramicCamera, panoramic} from "../PanoramicCamera";
-import {panoramaFrame, panoramaProject} from "../rendering/PanoramaMath";
+import {fisheyeStarLens, fisheyeViewToNDC, isFisheyeCamera} from "../FisheyeProjection";
+import {getPanoramaFrame, isPanoramicCamera, panoramic} from "../PanoramicCamera";
+import {panoramaDirection, panoramaFrame, panoramaProject} from "../rendering/PanoramaMath";
 import {withDisplayedCamera} from "../ViewUtils";
 import {getFlowAlignRotation} from "../FlowAlignment";
 
@@ -89,7 +91,7 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         const sets = this.lineSets();
         const video = this.overlayView;
         const lookView = NodeMan.get("lookView", false);
-        if (sets.length === 0 || !lookView?.camera) return;
+        if ((!sets.length && !this.nightSky.showRidgelineVideo) || !lookView?.camera) return;
         const pictureWidth = video.videoWidth, pictureHeight = video.videoHeight;
         if (!(pictureWidth > 0) || !(pictureHeight > 0)) return;
 
@@ -119,6 +121,7 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
         const {sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight} = video;
         if (!(sWidth > 0) || !(sHeight > 0) || !(dWidth > 0) || !(dHeight > 0)) return;
         const scaleX = dWidth / sWidth, scaleY = dHeight / sHeight;
+        const stabilization = viewStabilizationMatrix(video, frame, pictureWidth, pictureHeight);
 
         const aspect = pictureWidth / pictureHeight;
         const pinhole = lens === "pinhole";
@@ -161,6 +164,7 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
                 pixel.x = (view.x + 1) * 0.5 * pictureWidth;
                 pixel.y = (1 - view.y) * 0.5 * pictureHeight;
             }
+            if (stabilization) [pixel.x, pixel.y] = applyAffine(stabilization, pixel.x, pixel.y);
             out.x = (pixel.x - sx) * scaleX + dx;
             out.y = (pixel.y - sy) * scaleY + dy;
             return Number.isFinite(out.x) && Number.isFinite(out.y);
@@ -257,6 +261,42 @@ export class CNodeVideoSkyLines extends CNodeViewUI {
             ctx.moveTo(faded[i], faded[i + 1]);
             ctx.lineTo(faded[i + 2], faded[i + 3]);
             ctx.stroke();
+        }
+        if (this.nightSky.showRidgelineVideo && lookView.ridgelinePass?.ready) {
+            const outline = lookView.ridgelinePass.getVideoOutline(lookView.renderer);
+            if (outline) {
+                const sourceLens = lens === "fisheye" ? fisheyeStarLens([outline.width, outline.height]) : null;
+                const sourcePanorama = lens === "panorama" ? {hfov: panoramic.hfov, vfov: getPanoramaFrame(lookView).vfov} : null;
+                const sourceCamera = sourcePanorama ? withDisplayedCamera(lookView, camera => camera.clone()) : outline.camera;
+                const ray = new Vector3(), projectedA = {}, projectedB = {};
+                const project = (point, out) => {
+                    const x = point[0] / outline.width * 2 - 1;
+                    const y = point[1] / outline.height * 2 - 1;
+                    if (sourcePanorama) {
+                        panoramaDirection(x, y, sourcePanorama.hfov, sourcePanorama.vfov, ray);
+                        ray.transformDirection(sourceCamera.matrixWorld);
+                    } else if (sourceLens) {
+                        const d = lensToRay(sourceLens, point[0], outline.height - point[1], [outline.width, outline.height]);
+                        if (!d) return false;
+                        ray.set(d[0], -d[1], -d[2]).transformDirection(sourceCamera.matrixWorld);
+                    } else {
+                        ray.set(x, y, 0.5).unproject(sourceCamera).sub(sourceCamera.position).normalize();
+                    }
+                    ray.transformDirection(this.viewMatrix);
+                    return toCanvas(ray, out);
+                };
+                ctx.globalAlpha = 1;
+                ctx.strokeStyle = "#999999";
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                for (const [a, b] of outline.segments) {
+                    if (!project(a, projectedA) || !project(b, projectedB)
+                        || Math.abs(projectedA.x - projectedB.x) > maxStep) continue;
+                    ctx.moveTo(projectedA.x, projectedA.y);
+                    ctx.lineTo(projectedB.x, projectedB.y);
+                }
+                ctx.stroke();
+            }
         }
         ctx.restore();
     }

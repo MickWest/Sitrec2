@@ -1,3 +1,5 @@
+import {canUseSharedStarLabels} from "./StarChartPolicy";
+import {findNightView} from "./StarNightView";
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
@@ -70,6 +72,8 @@ let overlay = null;
 let overlayCtx = null;
 let result = null;          // the last completed solve
 let running = false;
+let trackerHasWork = false;
+let autoAnalysisTicket = 0;
 let aborted = false;
 // "Enough": stop scanning frames and solve what has already been measured. Deliberately NOT
 // part of ctx.stale() - staleness means the run's answer is worthless and must be discarded,
@@ -590,6 +594,7 @@ function dropCalibrationForOtherVideo(videoData) {
  * swapped in AFTER clicking.
  */
 export async function detectStarSize(opts = {}) {
+    trackerHasWork = true;
     const session = beginVideoAnalysis(videoView()?.videoData);
     try { return await detectStarSizeAtResolution(opts, session); }
     finally { session.end(); }
@@ -1500,6 +1505,9 @@ class CNodeControllerStarTrack extends CNodeController {
         super(v);
         // The BAKED pose track: four numbers per analysed frame - the sky position of the
         // frame's centre, and of a point above it - starting at frame0. See bakeFrom().
+        this.autoAnalyzeImages = v.autoAnalyzeImages ?? (Sit.templateSource?.name?.trim().toLowerCase() === "star tracker");
+        this.allowNightViewDateChange = v.allowNightViewDateChange ?? false;
+        this.addSimpleSerials(["autoAnalyzeImages", "allowNightViewDateChange"]);
         this.frame0 = v.frame0 ?? 0;
         this.poseTrack = Array.isArray(v.poseTrack) ? v.poseTrack : null;
         this.vfovDeg = Number.isFinite(v.vfovDeg) ? v.vfovDeg : null;
@@ -1908,6 +1916,8 @@ export function syncCameraToStarTrack() {
         params.status = "no look camera to sync in this sitch";
         return;
     }
+
+    enableSharedStarLabels();
 
     // Partial identify still syncs - the camera follows the calibrated stretches exactly and
     // the bridged frames approximately - but say which is which.
@@ -2466,6 +2476,7 @@ export async function identifyStars(opts = {}) {
  * ten times would take the user's own Abort button away from them.
  */
 export async function runStarTracker(opts = {}) {
+    trackerHasWork = true;
     const session = beginVideoAnalysis(videoView()?.videoData, () => { aborted = true; });
     try { return await runStarTrackerAtResolution(opts); }
     finally { session.end(); }
@@ -4690,7 +4701,7 @@ export function drawStarTrackerOverlay() {
         // the stage sets the flag, because it IS part of the result the fade is revealing.
         const keptLabel = properlyNamed || (identifiedStar && fadeKeptHip.has(c.index));
         const labelFade = keptLabel ? 1 : (params.showHipNumbers ? fade.hip : 0);
-        if (params.showStarNames && identifiedStar && labelFade > 0) {
+        if (params.showStarNames && !sharedStarLabelsActive() && identifiedStar && labelFade > 0) {
             // Where the name sits, relative to its star. With a marker drawn it clears the
             // circle; with none it takes the offset the night sky gives star names. The fade
             // interpolates between the two AS THE CIRCLE SHRINKS, so the name reaches the sky
@@ -4927,6 +4938,8 @@ export function resetStarTracker() {
  * video view's div and goes with it.
  */
 export function disposeStarTracker() {
+    trackerHasWork = false;
+    autoAnalysisTicket++;
     resetStarTracker();
     folder = null;
     overlay = null;
@@ -4954,6 +4967,87 @@ export function disposeStarTracker() {
 /** The last solve, for callers that want the star map or the classification. */
 export function getStarTrackerResult() {
     return result;
+}
+
+export function autoAnalyzeStarImage({videoData, viewId}) {
+    if (viewId !== "video" || !videoData?._autoStarAnalysis) return;
+    delete videoData._autoStarAnalysis;
+    if (trackerHasWork || minAreaChosen || running || result || calibrationPending) return;
+    const generation = Globals.loadGeneration, ticket = ++autoAnalysisTicket;
+    // Let image metadata, timeline setup and the import's synchronous UI finish first.
+    setTimeout(() => {
+        if (ticket !== autoAnalysisTicket || generation !== Globals.loadGeneration
+            || videoView()?.videoData !== videoData || trackerHasWork || minAreaChosen || running || result) return;
+        runFullStarTracker().catch(error => { params.status = `star analysis failed: ${error.message}`; setRenderOne(); });
+    }, 0);
+}
+
+function sharedStarLabelsActive() {
+    return canUseSharedStarLabels(result, NodeMan.get("CameraLOSController", false)?.choice,
+        NodeMan.get("fovSwitch", false)?.choice);
+}
+
+function enableSharedStarLabels() {
+    if (!sharedStarLabelsActive()) return;
+    const overlay = NodeMan.get("video_NightSkyOverlay", false);
+    const sky = NodeMan.get("NightSkyNode", false);
+    if (!overlay || !sky) return;
+    overlay.showStarNames = true;
+    overlay.onlyLabelPlanets = false;
+    overlay.onlyPlanetsController?.enable(true);
+    sky.showConstellationNamesVideo = true;
+    sky.showConstellationsVideo = true;
+    sky.showDeepSkyObjectsVideo = true;
+    sky.updateVideoSkyLines();
+}
+
+export function moveToNightView() {
+    const controller = NodeMan.get("starTrackCameraController", false);
+    const pose = controller?.posesAt(par.frame);
+    if (!pose) { params.status = "identify and sync the star field first"; return; }
+    const toVector = rd => new Vector3(...raDecToVec(rd.raDeg * Math.PI / 180, rd.decDeg * Math.PI / 180));
+    const center = toVector(pose.centre), above = toVector(pose.above);
+    const up = above.addScaledVector(center, -above.dot(center)).normalize();
+    const right = new Vector3().crossVectors(center, up).normalize();
+    const video = videoView();
+    const vfov = controller.vfovTrack?.[Math.max(0, Math.min(controller.vfovTrack.length - 1, par.frame - controller.frame0))]
+        ?? controller.vfovDeg ?? NodeMan.get("lookCamera").camera.fov;
+    const halfY = Math.tan(Math.min(160, vfov) * Math.PI / 360);
+    const halfX = halfY * (video?.videoWidth / video?.videoHeight || 1);
+    const directions = [center];
+    for (const x of [-1, 1]) for (const y of [-1, 1]) {
+        directions.push(center.clone().addScaledVector(right, x * halfX).addScaledVector(up, y * halfY).normalize());
+    }
+    const choice = findNightView(directions, GlobalDateTimeNode.dateNow, controller.allowNightViewDateChange);
+    if (!choice || choice.minAltitude < 5) {
+        params.status = "no clear nighttime view on this date; enable Allow Date Change and try again";
+        return;
+    }
+    const position = NodeMan.get("fixedCameraPosition", false);
+    if (!position) return;
+    const camera = NodeMan.get("lookCamera");
+    const before = {lla: [...position._LLA], agl: position.agl, date: new Date(GlobalDateTimeNode.dateNow),
+        positionChoice: NodeMan.get("cameraTrackSwitch").choice, forceAboveSurface: camera.forceAboveSurface,
+        headingChoice: NodeMan.get("CameraLOSController").choice, fovChoice: NodeMan.get("fovSwitch").choice,
+        fixedPose: controller.fixedPose};
+    const after = {lla: [choice.latitude, choice.longitude, 10000], agl: false, date: choice.date,
+        headingChoice: "Star Track", fovChoice: controller.vfovDeg || controller.vfovTrack ? "Star Track" : before.fovChoice,
+        positionChoice: "fixedCamera", forceAboveSurface: false, fixedPose: null};
+    const apply = state => {
+        controller.fixedPose = state.fixedPose;
+        camera.forceAboveSurface = state.forceAboveSurface;
+        NodeMan.get("cameraTrackSwitch").selectOption(state.positionChoice);
+        position.gotoLLA(...state.lla, state.agl);
+        GlobalDateTimeNode.setNowDateTime(state.date);
+        NodeMan.get("CameraLOSController").selectOption(state.headingChoice);
+        NodeMan.get("fovSwitch").selectOption(state.fovChoice);
+        setRenderOne();
+    };
+    apply(after);
+    UndoManager.add({description: "Find Nighttime Viewpoint", undo: () => apply(before), redo: () => apply(after)});
+    params.status = `viewing location ${choice.latitude.toFixed(2)}, ${choice.longitude.toFixed(2)}; `
+        + `field above ${choice.minAltitude.toFixed(0)}°, Sun ${choice.sunAltitude.toFixed(0)}°; `
+        + `${choice.date.toISOString().slice(0, 10)} (not the photo location)`;
 }
 
 /**
@@ -4999,6 +5093,8 @@ export function setupStarTrackerMenu() {
     // is evaluated (the same reason StarAdjustOptimize installs its hook late).
     if (isLocal && typeof window !== "undefined") {
         window.__starTracker = {result: () => result, setStarLabel, addStarAt, applyManualLabels,
+            runFullStarTracker, moveToNightView, enableSharedStarLabels, sharedStarLabelsActive,
+            status: () => ({running, trackerHasWork, status: params.status}),
             router: () => getInteractionRouter()};
     }
 
@@ -5014,6 +5110,15 @@ export function setupStarTrackerMenu() {
             + "to the Out frame, then Identify Stars (catalog).\n"
             + "With Sync Camera to Star Field on, a successful identification also points the look camera. "
             + "The first identification downloads a 2.5 MB star catalog.");
+    const starController = NodeMan.get("starTrackCameraController", false);
+    if (starController) {
+        folder.add(starController, "autoAnalyzeImages").name("Analyze New Images").listen()
+            .tooltip("Automatically analyze an imported image in a fresh scene, before a search, camera setup or earlier analysis. On by default in the Star Tracker template.");
+        folder.add({move: moveToNightView}, "move").name("Find Nighttime Viewpoint")
+            .tooltip("Move to a dark viewing location with the fitted star field above the horizon. This is a viewing aid, not a measurement of where the photograph was taken. Undo restores the previous location and time.");
+        folder.add(starController, "allowNightViewDateChange").name("Allow Date Change").listen()
+            .tooltip("Let Find Nighttime Viewpoint choose a nearby date if this field cannot be seen clearly at night on the current date.");
+    }
     addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
     // The separate steps of Star Tracker Analysis, and the chart export, in the main folder so they
     // are next to the button that runs them all. Detect Star Size stays in Tweaks with the sliders
@@ -5164,8 +5269,8 @@ export function setupStarTrackerMenu() {
             + "circle you added. When three circles have names, the camera is fitted to them.\n"
             + "Ctrl-click (Cmd-click on a Mac) the video to add a circle where none was found.");
     display.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
-        .tooltip("Label each identified star with its catalog name. Works whether or not the "
-            + "star markers are drawn.");
+        .tooltip("Label identified stars when the camera is not well registered. After a good camera sync, "
+            + "use Show > Celestial > Labels > Star/Planet Names in Video instead. Star markers have their own switch.");
     display.add(params, "showHipNumbers").name("Show HIP star numbers").onChange(setRenderOne)
         .listen()
         .tooltip("Include the stars whose catalog entry has no proper name - Bayer designations "

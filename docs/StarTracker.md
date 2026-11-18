@@ -24,6 +24,10 @@ The sigma figure is the clip's position noise, and it is the one to sanity-check
 
 **Star Tracker Analysis** runs three steps: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. Each step also has its own button, to run it alone. **Find Candidate Stars** and **Identify Stars (catalog)** are below **Star Tracker Analysis**, and **Detect Star Size (current frame)** is in [Star Tracker Tweaks](#star-tracker-tweaks). When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
 
+In a fresh **Star Tracker** template, dropping or importing an image starts this analysis automatically. **Analyze New Images** controls this behavior. Loading a saved scene, adding a second image, or importing after a search, camera setup or earlier analysis does not start another run.
+
+A good fit with the camera synced enables the normal celestial overlays in Video: star/planet names, constellation lines and names, and deep-sky markers. Their controls are under **Show → Celestial**, and their label size matches Look. The separate analysis names are suppressed while this registration is active. Unsynced, partial, mirrored or poor fits retain the analysis labels.
+
 ## Where the answer is
 
 After a successful **Star Tracker Analysis**:
@@ -34,7 +38,7 @@ After a successful **Star Tracker Analysis**:
 | Camera direction and roll | The look camera. With **Sync Camera to Star Field** ticked, **Camera → Heading → Camera Heading** and **Camera → FOV (Zoom) → Camera FOV** read **Star Track**, and the look view shows the solved direction, roll and field of view. The sync gives a direction and roll for each analysed frame, so the camera follows a hand-held clip frame by frame. Frames outside the analysed range keep the nearest solved direction and roll. The greyed **Pan (Az)**, **Tilt (El)** and **Roll** rows in **Camera → Heading** follow the solved camera on every frame, so they give its azimuth, elevation and roll. The compass on the look view also gives the azimuth, and **Show → Show Compass Elevation** adds the elevation |
 | The lens | The **Lens** row, and the full fit in **Camera → Lens** |
 
-To check the match, compare the stars in the look view with the stars in the video. The look view draws no stars until the sun is about 9 degrees below the horizon at the camera position, and the ground hides stars below the horizon. A new custom sitch starts in daylight. If the video did not set the Start Time, set a night time when that part of the sky is above the horizon: see [Time, Frames and Syncing](TimeAndSync.md).
+To check the match, compare the stars in the look view with the stars in the video. The look view draws no stars until the sun is about 9 degrees below the horizon at the camera position, and the ground hides stars below the horizon. A new custom sitch starts in daylight. **Find Nighttime Viewpoint** moves to a dark viewing location where the fitted field is above the horizon, keeping its sky registration. It keeps the date by default; **Allow Date Change** lets it choose a nearby date if necessary. The camera is placed 10 km above sea level to clear ordinary terrain. This is a viewing aid, not a measurement of the photograph's location or time. **Undo** restores the previous position and time. For a known observing site, set its real location and time: see [Time, Frames and Syncing](TimeAndSync.md).
 
 ![The video above the look view, with the same bright stars at the same places in both](star-images/startracker-lookview-check.jpg)
 
@@ -63,7 +67,7 @@ To check the match, compare the stars in the look view with the stars in the vid
 
 ## Reading the results
 
-With **Fade at completion** on (the default), a successful identification removes most of the annotation after about three seconds: first the quad lines, then the circles shrink into their stars, then the HIP-number labels, one second each. Their switches in [Star Tracker Display](#star-tracker-display) (**Show quad lines**, **Show star markers**, **Show HIP star numbers**) turn off as each layer goes. What stays is the named stars over your footage, and any red and orange markers. If fewer than 12 stars have proper names, the brightest HIP-numbered stars stay too, up to 12 labels. To see or toggle stars again, tick **Show star markers** back on in **Star Tracker Display**; to keep the full annotation, untick **Fade at completion** before you run. A failed run never fades.
+With **Fade at completion** on (the default), a successful identification removes most of the annotation after about three seconds: first the quad lines, then the circles shrink into their stars, then the HIP-number labels, one second each. Their switches in [Star Tracker Display](#star-tracker-display) (**Show quad lines**, **Show star markers**, **Show HIP star numbers**) turn off as each layer goes. What stays is the named stars over your footage, and any red and orange markers. For an unsynced result, if fewer than 12 stars have proper names, the brightest HIP-numbered stars stay too, up to 12 labels. A well registered result uses the shared celestial labels instead. To see or toggle stars again, tick **Show star markers** back on in **Star Tracker Display**; to keep the full annotation, untick **Fade at completion** before you run. A failed run never fades.
 
 Before the fade, the video view is annotated like this:
 

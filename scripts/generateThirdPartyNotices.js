@@ -396,12 +396,12 @@ The tutorial code has been substantially modified for use as a FLIR
 
 const DATA_FILES = [
     {
-        name: "d3-celestial constellations data",
+        name: "d3-celestial constellation and deep-sky data",
         version: "n/a",
         license: "BSD-3-Clause",
         copyright: "Copyright (c) 2015, Olaf Frohn",
         repository: "https://github.com/ofrohn/d3-celestial",
-        notes: "Constellation line and metadata GeoJSON (data/nightsky/constellations.lines.json, data/nightsky/constellations.json).",
+        notes: "Constellation line and metadata GeoJSON (data/nightsky/constellations.lines.json, data/nightsky/constellations.json), and the magnitude-limited deep-sky catalog (data/nightsky/deep-sky.json).",
     },
     {
         name: "Astrometry.net asterism lines",

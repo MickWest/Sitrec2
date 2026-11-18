@@ -350,10 +350,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.extraViewsGUI = this.celestialGUI.addFolder("Extra Celestial Views").close();
 
         this.restoreCelestialViewVisibility(v, true);
+        for (const key of ["showConstellationNamesVideo", "showHorizonCompassRibbonVideo", "showRidgelineVideo", "showStarsVideo",
+            "showDeepSkyObjectsMain", "showDeepSkyObjectsLook", "showDeepSkyObjectsVideo"]) {
+            this[key] = v[key] ?? false;
+            this.addSimpleSerial(key);
+        }
+        this.groupPleiades = v.groupPleiades ?? true;
+        this.celestialLabelSize = v.celestialLabelSize ?? 12;
+        this.deepSkyMagnitude = v.deepSkyMagnitude ?? 10.5;
+        for (const category of ["Galaxies", "Clusters", "Nebulae"]) {
+            this[`deepSky${category}`] = v[`deepSky${category}`] ?? true;
+            this.addSimpleSerial(`deepSky${category}`);
+        }
+        this.addSimpleSerials(["groupPleiades", "celestialLabelSize", "deepSkyMagnitude"]);
         const horizonVisibility = this.addCelestialViewPair(this.horizonCompassGUI,
             "showHorizonCompassRibbon", "Horizon Compass", "horizonCompass",
             "Show true compass bearings and degree ticks along the sea-level horizon. Distant terrain can rise above the ribbon.",
-            () => setRenderOne(true));
+            () => setRenderOne(true), "showHorizonCompassRibbonVideo");
         horizonVisibility.main.asFolderToggle({paired: true});
         this.showHorizonCompassCardinals = v.showHorizonCompassCardinals ?? true;
         this.showHorizonCompassHeadings = v.showHorizonCompassHeadings ?? true;
@@ -815,6 +828,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             "showEquatorialGridVideo");
         this.setupVideoLinesCheckbox(equatorialGrid.video, t("nightSky.equatorialGridVideo.label"),
             t("nightSky.equatorialGridVideo.tooltip"));
+        equatorialGrid.video.shareAs(viewMenuKey("video", "equatorialGrid"));
         equatorialGrid.main.onChange(() => {
             setRenderOne(true);
             this.updateVis()
@@ -843,6 +857,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             "showAzimuthalGridVideo");
         this.setupVideoLinesCheckbox(azimuthalGrid.video, t("nightSky.azimuthalGridVideo.label"),
             t("nightSky.azimuthalGridVideo.tooltip"));
+        azimuthalGrid.video.shareAs(viewMenuKey("video", "azimuthalGrid"));
         for (const [controller, view] of [[azimuthalGrid.main, "mainView"], [azimuthalGrid.look, "lookView"]]) {
             controller.onChange(() => {
                 this.updateVis();
@@ -853,8 +868,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSimpleSerials(["showAzimuthalGridMain", "showAzimuthalGridLook"]);
 
         this.addCelestialViewPair(this.linesGUI, "showRidgeline", "Ridgeline", "ridgeline",
-            "Trace the visible terrain skyline with a 0.5-pixel line. Disabled views do no ridgeline rendering.",
-            () => setRenderOne(true));
+            "Trace the visible terrain skyline with a 0.5-pixel line. Keep Look visible to update the video ridgeline.",
+            () => { this.updateVideoSkyLines(); setRenderOne(true); }, "showRidgelineVideo");
 
         this.linesGUI.add(this, "celestialGridSpacing", 5, 45, 5).name("Grid Spacing").listen()
             .tooltip("Angular spacing in degrees for both the equatorial and azimuthal grids.")
@@ -871,7 +886,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             t("nightSky.constellationLinesVideo.tooltip"));
         this.addCelestialViewPair(this.labelsGUI, "showConstellationNames", "Constellation Names",
             "constellationNames", "Show constellation names in this view, independently of Constellation Lines.",
-            () => setRenderOne(true));
+            () => setRenderOne(true), "showConstellationNamesVideo");
 
         // Asterism style: which dataset draws the constellation lines.
         // Values map to FileManager keys registered in ExtraFiles.js.
@@ -905,6 +920,26 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.updateVis()
         }).name(t("nightSky.renderStars.label")).tooltip(t("nightSky.renderStars.tooltip")).asFolderToggle();
         this.addSimpleSerial("showStars")
+        const videoStars = this.starsAndPlanetsGUI.add(this, "showStarsVideo").listen().name("Stars and Planets in Video")
+            .asViewCheckbox("video", "Stars and Planets").shareAs(viewMenuKey("video", "starsAndPlanets"))
+            .tooltip("Overlay catalog star and planet positions on the video using the look camera.")
+            .onChange(() => setRenderOne(true));
+        if (!Sit.isCustom) videoStars.hide();
+
+        const deepSkyGUI = this.celestialGUI.addFolder("Deep-Sky Objects").close();
+        const deepSkyVisibility = this.addCelestialViewPair(deepSkyGUI, "showDeepSkyObjects", "Deep-Sky Objects",
+            "deepSkyObjects", "Mark galaxies, star clusters and nebulae at their catalog positions, independently of star tracking.",
+            () => setRenderOne(true), "showDeepSkyObjectsVideo");
+        deepSkyVisibility.main.asFolderToggle({paired: true});
+        for (const [category, label] of [["Galaxies", "Galaxies"], ["Clusters", "Star Clusters"], ["Nebulae", "Nebulae"]]) {
+            deepSkyGUI.add(this, `deepSky${category}`).listen().name(label).onChange(() => setRenderOne(true));
+        }
+        deepSkyGUI.add(this, "deepSkyMagnitude", 0, 10.5, 0.1).listen().name("Magnitude Limit")
+            .tooltip("Catalog magnitude limit for deep-sky markers. These mark positions, not a detection in the photograph.")
+            .onChange(() => setRenderOne(true));
+        this.labelsGUI.add(this, "groupPleiades").listen().name("Group Pleiades")
+            .tooltip("Use one Pleiades label and circle when the cluster is smaller than 180 display pixels. Zoom in to see individual star names.")
+            .onChange(() => setRenderOne(true));
 
         // Constellation names are drawn by CNodeDisplaySkyOverlay at a fixed pixel size.
         // Their data file is fetched with the line sets by rebuildConstellationLines.
@@ -1214,6 +1249,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     // videoProperty adds a V box to the row; setupVideoLinesCheckbox gives it its behavior.
     addCelestialViewPair(gui, key, label, slot, tooltip, onChange, videoProperty) {
         const pair = gui.addCheckboxPair(this, `${key}Main`, `${key}Look`, label, videoProperty);
+        if (pair.video) {
+            pair.video.tooltip(tooltip).onChange(onChange);
+            if (slot) pair.video.shareAs(viewMenuKey("video", slot));
+            if (!Sit.isCustom) pair.video.hide();
+        }
         for (const [controller, view] of [[pair.main, "mainView"], [pair.look, "lookView"]]) {
             controller.tooltip(tooltip).onChange(onChange);
             if (slot) controller.shareAs(viewMenuKey(view, slot));
@@ -1372,7 +1412,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     // The lines over the video are drawn by an overlay of the video view. It is made the
     // first time a V box is on and the video view is there, and hidden while all are off.
     updateVideoSkyLines() {
-        const wanted = !!(this.showEquatorialGridVideo || this.showAzimuthalGridVideo || this.showConstellationsVideo);
+        const wanted = !!(this.showEquatorialGridVideo || this.showAzimuthalGridVideo || this.showConstellationsVideo || this.showRidgelineVideo);
         if (wanted && !this.videoSkyLines && NodeMan.exists("video")) {
             this.videoSkyLines = new CNodeVideoSkyLines({id: "videoSkyLines", overlayView: "video", nightSky: this});
         }
@@ -2420,6 +2460,12 @@ export function addNightSky(def) {
         .name(t("nightSky.labelList.label"))
         .tooltip(t("nightSky.labelList.tooltip"));
 
+    if (Sit.isCustom && NodeMan.exists("video")) {
+        new CNodeDisplaySkyOverlay({id: "video_NightSkyOverlay", overlayView: "video", nightSky, gui: nightSky.labelsGUI});
+    }
+    nightSky.labelsGUI.add(nightSky, "celestialLabelSize", 6, 32, 1).listen().name("Label Size")
+        .tooltip("Celestial label size in display pixels, shared by Main, Look and Video.")
+        .onChange(() => setRenderOne(true));
     nightSky.addLabelOpacityControls();
 
     // Atmospheric optics (halos, arcs, sun dogs) drawn on the daytime sky,

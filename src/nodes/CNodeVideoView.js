@@ -1,3 +1,4 @@
+import {shouldAnalyzeImportedStarImage} from "../starTrack/StarChartPolicy";
 import {wheelZoomFactor} from "../GestureActions";
 /**
  * Video view node for displaying and interacting with video content
@@ -2206,6 +2207,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             NodeMan.get("videoMask", false)?.clearMask();
         }
 
+        const starTracker = NodeMan.get("starTrackCameraController", false);
+        const autoStarAnalysis = shouldAnalyzeImportedStarImage({
+            template: Sit.templateSource?.name,
+            automatic: starTracker?.autoAnalyzeImages,
+            established: Globals.sitchEstablished, restoring: Globals.deserializing || restoreIndex !== undefined || !!this.pendingVideoRestore,
+            primary: this.id === "video", hasWork: !!this.videoData
+                || (starTracker?.autoImageTimeSerial !== undefined
+                    && starTracker.autoImageTimeSerial !== GlobalDateTimeNode.timeSetSerial),
+        });
         this.fileName = filename;
         setFilenameOverlaySource(this.fileName);
         this.imageFileID = imageFileID ?? null;
@@ -2219,6 +2229,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             importMetadata: importMetadata,
         },
             this.loadedCallback.bind(this), this.errorCallback.bind(this))
+
+        this.videoData._autoStarAnalysis = autoStarAnalysis;
 
         // Tag restore-originated loads so the completion (CVideoImageData queues
         // loadedCallback as a microtask, after this assignment) lands in its own

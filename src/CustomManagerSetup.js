@@ -28,7 +28,7 @@ import {importADSBTraceDialog} from "./ADSBTraceFetch";
 import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
 import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
-import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
+import {autoAnalyzeStarImage, makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
 import {setupFisheye} from "./FisheyeProjection";
 import {setupPanoramicCamera} from "./PanoramicCamera";
@@ -2445,6 +2445,8 @@ export const setupMethods = {
                 }
             }
         });
+
+        EventManager.addEventListener("videoTimelineReady", autoAnalyzeStarImage);
 
         EventManager.addEventListener("videoLoaded", (data) => {
             let width, height;

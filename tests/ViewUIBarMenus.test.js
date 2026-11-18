@@ -111,11 +111,22 @@ function collectRegistrations() {
                 const literalView = m[1].startsWith('"') ? m[1].slice(1, -1) : null;
                 calls.push({file, view: literalView, slot: m[2], shared: false});
             }
-            // The celestial pair helper publishes its fourth argument to both
-            // views. Its runtime registration is also covered by the visibility tests.
+            // The celestial pair helper publishes its fourth argument to Main/Look,
+            // and to Video when its optional final property is present.
             const pairs = /\.addCelestialViewPair\(\s*[^,]+,\s*"[^"]+",\s*(?:"[^"]+"|t\("[^"]+"\)),\s*"(\w+)"/g;
             while ((m = pairs.exec(text)) !== null) {
-                for (const view of ["mainView", "lookView"]) {
+                let depth = 1, end = pairs.lastIndex, quote = null;
+                for (; end < text.length && depth; end++) {
+                    const c = text[end];
+                    if (quote) {
+                        if (c === "\\") end++;
+                        else if (c === quote) quote = null;
+                    } else if (c === '"' || c === "'" || c === "`") quote = c;
+                    else if (c === "(") depth++;
+                    else if (c === ")") depth--;
+                }
+                const hasVideo = /,\s*"show\w+Video"\s*\)$/.test(text.slice(pairs.lastIndex, end));
+                for (const view of ["mainView", "lookView", ...(hasVideo ? ["video"] : [])]) {
                     calls.push({file: path.relative(SRC_DIR, full), view, slot: m[1], shared: false});
                 }
             }

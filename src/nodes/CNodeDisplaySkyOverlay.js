@@ -1,3 +1,5 @@
+import {videoSkyProjection, projectSkyPoint} from "../VideoSkyProjection";
+import {DEEP_SKY_OBJECTS, PLEIADES, PLEIADES_STARS, deepSkyCategory, groupPleiades} from "../DeepSkyObjects";
 import {SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
@@ -25,6 +27,7 @@ import {isMeasurementOccluded} from "../MeasurementGeometry";
 // otherwise the camera's own (pinhole) projection. Mutates and returns pos,
 // like Vector3.project, so labels land on the rendered dots in both modes.
 function projectForCamera(pos, camera) {
+    if (projectSkyPoint(pos, camera)) return pos;
     if (!panoramicProjectVector(pos, camera) && !fisheyeProjectVector(pos, camera)) pos.project(camera);
     return pos;
 }
@@ -89,6 +92,10 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         this.addInput("startTime", GlobalDateTimeNode)
 
         this.nightSky = v.nightSky;
+        this.isVideo = this.overlayView.id === "video";
+        // A template can start with Video hidden. Parent visibility is handled
+        // by ViewMan; the overlay must be ready when the first image reveals it.
+        if (this.isVideo) this.visible = true;
 
         this.showStarNames = false;
         this.onlyLabelPlanets = false;
@@ -135,7 +142,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     // projection would then disagree with the Earth-occlusion tests below, which
     // read the camera POSITION through this same handle.
     get camera() {
-        return this.overlayView.camera;
+        return this.isVideo ? NodeMan.get("lookView", false)?.camera : this.overlayView.camera;
     }
 
     // A projection-only copy of the camera the host view was actually RENDERED with.
@@ -160,8 +167,9 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         // camera; a clone would silently fail it and put every label back on
         // the pinhole projection while the dots render fisheye. Tag the copy
         // so isFisheyeCamera can unwrap it.
-        camera._fisheyeProxyFor = live;
-        camera._panoramaProxyFor = live;
+        camera._panoramaProxyFor = live._panoramaProxyFor ?? live;
+        camera._fisheyeProxyFor = live._fisheyeProxyFor ?? live;
+        camera._videoSky = live._videoSky;
         if (atOrigin) {
             camera.position.set(0, 0, 0);
             camera.updateMatrix();
@@ -180,6 +188,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     // videoAspect/viewAspect — measured at 1.1626, up to 56 px out at the edges.
     // Same mapping as projectToCanvas() in FitSurfacePick.js.
     labelXY(ndc) {
+        if (this._videoProjection) return this._videoProjection.labelXY(ndc);
         const r = this._renderedRect;
         return [r.x + (ndc.x + 1) * 0.5 * r.w, r.y + (1 - ndc.y) * 0.5 * r.h];
     }
@@ -197,11 +206,13 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
     // Shared by the 3D views, independently of the constellation line switch.
     get showConstellationNames() {
+        if (this.isVideo) return !!this.nightSky.showConstellationNamesVideo;
         return !!(this.camera.layers.mask & perViewLayerMask(
             this.nightSky?.showConstellationNamesMain, this.nightSky?.showConstellationNamesLook));
     }
 
     get showHorizonCompassRibbon() {
+        if (this.isVideo) return !!this.nightSky.showHorizonCompassRibbonVideo;
         return !!(this.camera.layers.mask & perViewLayerMask(
             this.nightSky?.showHorizonCompassRibbonMain, this.nightSky?.showHorizonCompassRibbonLook));
     }
@@ -239,92 +250,135 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         return this._constellationLabels;
     }
 
+    get showDeepSkyObjects() {
+        const suffix = this.isVideo ? "Video" : this.overlayView.id === "mainView" ? "Main" : "Look";
+        return !!this.nightSky[`showDeepSkyObjects${suffix}`];
+    }
+
     renderCanvas(frame) {
         super.renderCanvas(frame);
-
-        const showSatelliteNames = this.showSatelliteNames;
-        const showConstellationNames = this.showConstellationNames;
         const showStarNames = this.showStarNames && this.nightSky.showStars !== false;
-        const anyLabels = registeredLabels.size > 0 || showStarNames || showSatelliteNames
-            || showConstellationNames || this.showHorizonCompassRibbon;
-        if (!anyLabels) return;
+        const showPoints = this.isVideo && this.nightSky.showStarsVideo && this.nightSky.showStars !== false;
+        if (!(showStarNames || showPoints || this.showDeepSkyObjects || this.showSatelliteNames
+            || this.showConstellationNames || this.showHorizonCompassRibbon
+            || (!this.isVideo && registeredLabels.size))) return;
 
-        // Measured once per frame: renderedRect() does two getBoundingClientRect()
-        // calls, and the satellite pass walks ~11,000 entries behind it.
-        this._renderedRect = renderedRect(this.overlayView, this.widthPx, this.heightPx);
+        this._videoProjection = this.isVideo ? videoSkyProjection(this.overlayView, frame) : null;
+        if (this.isVideo && !this._videoProjection) return;
+        this._renderedRect = this._videoProjection?.rect ?? renderedRect(this.overlayView, this.widthPx, this.heightPx);
+        const draw = live => {
+            if (this.showHorizonCompassRibbon) this.renderHorizonCompassRibbon(live);
+            if (!this.isVideo) this.renderLabels3D(frame, this.displayedCamera(live));
+            // A photo can be registered correctly at an unknown place/time. Its annotations
+            // describe the photographed sky, independently of the simulated ground/daylight.
+            const earthSphere = this.isVideo ? null : new Sphere(V3(0, 0, 0), wgs84.POLAR_RADIUS);
+            const actualCameraPosition = live.position;
+            const date = this.in.startTime.dateNow;
+            const sun = NodeMan.get("theSun", false);
+            const starAlpha = this.isVideo || !sun ? 1
+                : Math.max(0, 1 - sun.calculateSkyBrightness(actualCameraPosition, date));
+            const skyOpacity = this.isVideo || !sun ? 0 : sun.calculateSkyOpacity(actualCameraPosition, date);
+            const camera = this.displayedCamera(live, true);
+            this.drawAtCelestialLabelOpacity(() => {
+                if (this.showConstellationNames && skyOpacity < 1) {
+                    this.renderConstellationNames(camera, earthSphere, actualCameraPosition, date);
+                }
+                this.ctx.font = `${this.nightSky.celestialLabelSize ?? 12}px Arial`;
+                this.ctx.textAlign = "left";
+                this.ctx.fillStyle = "#ffffff";
+                this._groupPleiades = false;
+                if (skyOpacity < 1 && (this.showDeepSkyObjects || (showStarNames && !this.onlyLabelPlanets))) {
+                    this.renderDeepSkyObjects(camera, earthSphere, actualCameraPosition, date, showStarNames, starAlpha);
+                }
+                if (showStarNames) this.renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha);
+                if (showPoints) this.renderVideoPoints(camera, date);
+                if (this.showSatelliteNames) this.renderSatelliteNames(this.displayedCamera(live), earthSphere, starAlpha);
+            });
+        };
+        if (this._videoProjection) {
+            this._videoProjection.begin(this.ctx, this.widthPx, this.heightPx);
+            try { draw(this._videoProjection.camera); } finally { this.ctx.restore(); }
+        } else withDisplayedCamera(this.overlayView, draw);
+    }
 
-        // Everything that projects runs inside ONE prepared-camera window, so the
-        // labels are placed with the projection the view was rendered with instead
-        // of a hand-rebuilt approximation of it. This replaces what used to be three
-        // separate camera clones, a hand-mirrored copy of the render's pan patch, and
-        // a `* this.zoom` NDC multiply — prepareCameraForLOD() applies the full video
-        // zoom itself (the pixel-match cap is made up by the shader magnifying the
-        // smaller render target into the same CSS box, so full zoom is what reaches
-        // the screen), and it applies the camera-tweak offset, so applying either
-        // again here would double-count it.
-        withDisplayedCamera(this.overlayView, (live) => {
+    projectCatalogPosition(ra, dec, camera, earthSphere, observer, date) {
+        const pos = applyAnnualAberration(raDec2Celestial(ra, dec, 100), date);
+        if (refractionUniforms.uRefractionEnabled.value > 0.5) {
+            applyRefractionECI(pos, refractionUniforms.uZenithECI.value, refractionOptsFromUniforms());
+        }
+        pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
+        if (earthSphere && intersectSphere2(new Ray(observer, pos.clone().normalize()), earthSphere, V3(), V3())) return null;
+        projectForCamera(pos, camera);
+        if (!(pos.z > -1 && pos.z < 1) || !Number.isFinite(pos.x + pos.y)) return null;
+        return {ndc: pos, xy: this.labelXY(pos)};
+    }
 
-            if (this.showHorizonCompassRibbon) {
-                this.renderHorizonCompassRibbon(live);
-            }
+    renderDeepSkyObjects(camera, earthSphere, observer, date, showStarNames, alpha) {
+        const sky = this.nightSky, ctx = this.ctx;
+        const radians = Math.PI / 180;
+        const project = (ra, dec) => this.projectCatalogPosition(ra * radians, dec * radians, camera, earthSphere, observer, date);
+        const marker = object => {
+            const center = project(object.ra, object.dec);
+            if (!center || Math.abs(center.ndc.x) > 1 || Math.abs(center.ndc.y) > 1) return null;
+            const radiusDeg = object === PLEIADES ? 1.1 : Math.max(0.02, parseFloat(object.size) / 120);
+            const edge = project(object.ra, Math.min(89.99, object.dec + radiusDeg));
+            const radius = edge ? Math.hypot(edge.xy[0] - center.xy[0], edge.xy[1] - center.xy[1]) : 4;
+            return {x: center.xy[0], y: center.xy[1], radius: Math.max(4, radius)};
+        };
+        const pleiadesMarker = marker(PLEIADES);
+        this._groupPleiades = !!(showStarNames && !this.onlyLabelPlanets && pleiadesMarker
+            && groupPleiades(pleiadesMarker.radius * 2, sky.groupPleiades !== false)
+            && (!sky.labelListPrefixes || sky.labelPassesAny(["Pleiades", "M45", "M 45"])));
+        const boxes = [];
+        ctx.save();
+        ctx.globalAlpha *= alpha;
+        for (const object of DEEP_SKY_OBJECTS) {
+            const grouped = object === PLEIADES && this._groupPleiades;
+            const category = deepSkyCategory(object);
+            if (!grouped && (!this.showDeepSkyObjects || sky[`deepSky${category}`] === false
+                || object.mag > (sky.deepSkyMagnitude ?? 10.5))) continue;
+            const name = object === PLEIADES ? "Pleiades" : object.name;
+            if (!grouped && sky.labelListPrefixes && !sky.labelPassesAny([name, object.id, object.name])) continue;
+            const point = object === PLEIADES ? pleiadesMarker : marker(object);
+            if (!point) continue;
+            const {x, y, radius} = point;
+            const labelX = x + radius + 5, labelY = y + 4;
+            const width = ctx.measureText(name).width, height = sky.celestialLabelSize ?? 12;
+            const box = [labelX, labelY - height, labelX + width, labelY + 2];
+            if (!grouped && boxes.some(b => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+            boxes.push(box);
+            ctx.strokeStyle = ctx.fillStyle = category === "Galaxies" ? "#efaa99" : category === "Clusters" ? "#e7d28c" : "#9fd4ca";
+            ctx.lineWidth = 0.7;
+            ctx.setLineDash(category === "Clusters" ? [2, 3] : []);
+            ctx.beginPath();
+            ctx.ellipse(x, y, radius, category === "Galaxies" ? Math.max(3, radius * 0.55) : radius, 0, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.fillText(name, labelX, labelY);
+        }
+        ctx.restore();
+    }
 
-            this.renderLabels3D(frame, this.displayedCamera(live));
-
-            if (!showStarNames && !showSatelliteNames && !showConstellationNames) return;
-
-            const earthSphere = new Sphere(V3(0, 0, 0), wgs84.POLAR_RADIUS)
-            const actualCameraPosition = this.camera.position
-            const date = this.in.startTime.dateNow
-
-            // Compute sky-brightness alpha so labels fade at dusk/dawn like the stars
-            let starAlpha = 1;
-            // ... and the opacity of the daylight sky IN FRONT of them, which is what decides
-            // whether the celestial sphere is drawn at all. Read from the same camera position
-            // the view uses, so this agrees with the view's own decision rather than
-            // approximating it.
-            let skyOpacity = 0;
-            const sunNode = NodeMan.get("theSun", true);
-            if (sunNode) {
-                const skyBrightness = sunNode.calculateSkyBrightness(actualCameraPosition, date);
-                starAlpha = Math.max(0, 1 - skyBrightness);
-                skyOpacity = sunNode.calculateSkyOpacity(actualCameraPosition, date);
-            }
-
-            // Constellations first: a star name landing on a constellation name is the more
-            // precise label of the two, so it is the one that should be readable on top.
-            // renderConstellationNames restores the text alignment it changed, because this
-            // context is the view's own and CNodeViewUI draws on it too.
-            // The gate is the one CNodeView3D applies to the night sky itself - "only draw the
-            // night sky if it will be visible", skyOpacity < 1, which calculateSkyOpacity
-            // (min(1, skyBrightness * 2)) reaches at a sky brightness of 0.5. Past that the
-            // whole GlobalNightSkyScene render is SKIPPED, asterism lines included, so a name
-            // drawn here would sit on an empty daylit sky with no figure under it. The lines do
-            // not fade on the way there, so neither does the name: they appear and go together.
-            if (showConstellationNames && skyOpacity < 1) {
-                // Camera at the origin, as for the stars: same celestial sphere.
-                this.drawAtCelestialLabelOpacity(() => this.renderConstellationNames(
-                    this.displayedCamera(live, true), earthSphere, actualCameraPosition, date));
-            }
-
-            const font_h = 9
-            this.ctx.font = Math.floor(font_h) + 'px' + " " + 'Arial'
-            this.ctx.fillStyle = "#ffffff";
-            this.ctx.strokeStyle = '#ffffff';
-            this.ctx.textAlign = 'left';
-
-            if (showStarNames) {
-                // Camera at the origin: the celestial sphere holds directions on a
-                // huge radius and is rendered that way in GlobalNightSkyScene.
-                this.drawAtCelestialLabelOpacity(() => this.renderStarNames(
-                    this.displayedCamera(live, true), earthSphere, actualCameraPosition, date, starAlpha));
-            }
-
-            if (showSatelliteNames) {
-                // Satellites live in GlobalScene, at the camera's real position.
-                this.drawAtCelestialLabelOpacity(() => this.renderSatelliteNames(
-                    this.displayedCamera(live), earthSphere, starAlpha));
-            }
-        });
+    renderVideoPoints(camera, date) {
+        const field = this.nightSky.starField, ctx = this.ctx;
+        ctx.save();
+        ctx.fillStyle = "#ffffff";
+        for (let i = 0; i < field.getStarCount(); i++) {
+            const magnitude = field.getStarMagnitude(i);
+            if (magnitude > Sit.starLimit) continue;
+            const point = this.projectCatalogPosition(field.getStarRA(i), field.getStarDEC(i), camera, null, camera.position, date);
+            if (!point || Math.abs(point.ndc.x) > 1 || Math.abs(point.ndc.y) > 1) continue;
+            ctx.beginPath();
+            ctx.arc(...point.xy, Math.max(0.5, (5 - magnitude) * 0.3), 0, 2 * Math.PI);
+            ctx.fill();
+        }
+        for (const planet of Object.values(this.nightSky.planets.planetSprites)) {
+            const pos = planet.equatorial.clone().applyMatrix4(this.nightSky.celestialSphere.matrix);
+            projectForCamera(pos, camera);
+            if (pos.z < -1 || pos.z > 1 || Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1) continue;
+            ctx.fillStyle = planet.color;
+            ctx.beginPath(); ctx.arc(...this.labelXY(pos), 2, 0, 2 * Math.PI); ctx.fill();
+        }
+        ctx.restore();
     }
 
     // Run a draw of the constellation, star, planet or satellite names at Show > Celestial >
@@ -336,7 +390,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     // satellite arrows read that.
     drawAtCelestialLabelOpacity(draw) {
         const alphaBefore = this.ctx.globalAlpha;
-        this.ctx.globalAlpha = alphaBefore * this.nightSky.celestialLabelOpacity;
+        this.ctx.globalAlpha = alphaBefore * (this.nightSky.celestialLabelOpacity ?? 1);
         draw();
         this.ctx.globalAlpha = alphaBefore;
     }
@@ -390,7 +444,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         // Bigger than the 9px point labels, and centred on the position rather than offset from
         // it, because this names a REGION: there is no dot here for the text to sit beside.
-        this.ctx.font = '16px Arial';
+        this.ctx.font = `${(this.nightSky.celestialLabelSize ?? 12) * 4 / 3}px Arial`;
         this.ctx.textAlign = 'center';
         // The grey of the asterism lines (0x808080), lifted enough to hold up as text, so a name
         // reads as belonging to the figure it sits in and stays quieter than the white star
@@ -429,7 +483,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 ? pos.clone().applyMatrix4(this.nightSky.celestialSphere.matrix).normalize()
                 : getStarDirectionECEF(c.ra, c.dec, date);
             const ray = new Ray(actualCameraPosition, direction);
-            if (intersectSphere2(ray, earthSphere, target0, target1)) continue;
+            if (earthSphere && intersectSphere2(ray, earthSphere, target0, target1)) continue;
 
             pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
             projectForCamera(pos, camera);
@@ -458,6 +512,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 const n = HR - 1
 
                 const starName = this.nightSky.starField.commonNames[HR]
+                if (this._groupPleiades && PLEIADES_STARS.has(starName)) continue;
                 if (labelList && !this.nightSky.labelPasses(starName)) {
                     continue
                 }
@@ -485,7 +540,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 const ray = new Ray(actualCameraPosition, starDirection)
                 const target0 = V3()
                 const target1 = V3()
-                if (intersectSphere2(ray, earthSphere, target0, target1)) {
+                if (earthSphere && intersectSphere2(ray, earthSphere, target0, target1)) {
                     continue
                 }
                 pos.applyMatrix4(this.nightSky.celestialSphere.matrix)

@@ -4755,6 +4755,8 @@ const en = {
         azimuthalGrid: "Azimuthal Grid",
         constellationLines: "Constellation Lines",
         constellationNames: "Constellation Names",
+        deepSkyObjects: "Deep-Sky Objects",
+        starsAndPlanets: "Stars and Planets",
         horizonCompass: "Horizon Compass",
         ridgeline: "Ridgeline",
         latLonGrid: "Lat/Lon Grid",

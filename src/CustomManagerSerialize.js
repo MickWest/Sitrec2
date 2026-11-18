@@ -2073,6 +2073,15 @@ export const serializeMethods = {
         this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
+        // This template is an empty starting point for an imported star photo.
+        // Restoring its display settings must not count as a user camera setup.
+        const starTracker = NodeMan.get("starTrackCameraController", false);
+        if (Sit.templateSource?.name?.trim().toLowerCase() === "star tracker"
+            && starTracker?.autoAnalyzeImages && !starTracker.poseTrack?.length
+            && !NodeMan.get("video", false)?.videoData) {
+            setSitchEstablished(false);
+            starTracker.autoImageTimeSerial = GlobalDateTimeNode.timeSetSerial;
+        }
         // Every track, object and selector has its saved state now. The changes of the load
         // itself asked for nothing (TrackObjectLinks.js).
         scheduleTrackObjectLinksRefresh();

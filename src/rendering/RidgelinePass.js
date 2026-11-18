@@ -4,11 +4,13 @@ import {GlobalScene} from "../LocalFrame";
 import {createSceneRenderTarget} from "../ViewRenderTargets";
 import {installTerrestrialRefractionOnMaterial} from "../atmosphere/terrestrialRefraction";
 import {installFisheyeOnMaterial} from "../FisheyeProjection";
+import {ridgelineContours} from "./RidgelineContours";
 
 export function ridgelineEnabled(view) {
     const property = view.id === "mainView" ? "showRidgelineMain"
         : view.id === "lookView" ? "showRidgelineLook" : null;
-    return property !== null && !!NodeMan.get("NightSkyNode", false)?.[property];
+    const sky = NodeMan.get("NightSkyNode", false);
+    return property !== null && !!(sky?.[property] || (view.id === "lookView" && sky?.showRidgelineVideo));
 }
 
 // Called with the world draw's exact projection, observer and tile visibility.
@@ -26,6 +28,11 @@ export function captureRidgeline(view) {
 
 export function renderRidgeline(view, mask = view.ridgelinePass?.target) {
     if (!ridgelineEnabled(view) || !view.ridgelinePass?.ready || !mask) return;
+    const sky = NodeMan.get("NightSkyNode", false);
+    if (view.id === "lookView" && sky?.showRidgelineVideo) {
+        view.ridgelinePass.publishVideoMask(view, mask);
+        if (!sky.showRidgelineLook) return;
+    }
     view.ridgelinePass.render(view, mask);
 }
 
@@ -105,6 +112,7 @@ export class RidgelinePass {
             renderer.clear(true, true, true);
             renderer.render(GlobalScene, camera);
             this.target = target;
+            this.captureCamera = camera.clone();
             this.ready = true;
         } finally {
             for (const child of hidden) child.visible = true;
@@ -150,6 +158,24 @@ export class RidgelinePass {
         }
     }
 
+    publishVideoMask(view, mask) {
+        this.videoMask = mask;
+        this.videoMaskVersion = (this.videoMaskVersion ?? 0) + 1;
+    }
+
+    getVideoOutline(renderer) {
+        const mask = this.videoMask;
+        if (!this.ready || !mask) return null;
+        if (this.videoOutlineVersion === this.videoMaskVersion) return this.videoOutline;
+        const count = mask.width * mask.height * 4;
+        if (this.videoPixels?.length !== count) this.videoPixels = new Uint8Array(count);
+        renderer.readRenderTargetPixels(mask, 0, 0, mask.width, mask.height, this.videoPixels);
+        this.videoOutline = {segments: ridgelineContours(this.videoPixels, mask.width, mask.height),
+            width: mask.width, height: mask.height, camera: this.captureCamera};
+        this.videoOutlineVersion = this.videoMaskVersion;
+        return this.videoOutline;
+    }
+
     dispose() {
         for (const target of this.targets.values()) target.dispose();
         this.targets.clear();
@@ -157,5 +183,7 @@ export class RidgelinePass {
         this.material.dispose();
         this.target = null;
         this.ready = false;
+        this.videoPixels = null;
+        this.videoOutline = null;
     }
 }
