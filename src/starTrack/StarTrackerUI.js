@@ -70,6 +70,8 @@ import {
 let folder = null;
 let overlay = null;
 let overlayCtx = null;
+let statusDismissButton = null;
+let dismissedOverlayStatus = null;
 let result = null;          // the last completed solve
 let running = false;
 let trackerHasWork = false;
@@ -594,6 +596,7 @@ function dropCalibrationForOtherVideo(videoData) {
  * swapped in AFTER clicking.
  */
 export async function detectStarSize(opts = {}) {
+    dismissedOverlayStatus = null;
     trackerHasWork = true;
     const session = beginVideoAnalysis(videoView()?.videoData);
     try { return await detectStarSizeAtResolution(opts, session); }
@@ -2099,6 +2102,7 @@ async function ensureCandidateStars() {
 }
 
 export async function identifyStars(opts = {}) {
+    dismissedOverlayStatus = null;
     // opts.scoring marks a run whose ONLY purpose is to produce a number for a search. It still
     // identifies - that is the number - but it must not steer the user's camera while doing it.
     const scoring = !!opts.scoring;
@@ -2476,6 +2480,7 @@ export async function identifyStars(opts = {}) {
  * ten times would take the user's own Abort button away from them.
  */
 export async function runStarTracker(opts = {}) {
+    dismissedOverlayStatus = null;
     trackerHasWork = true;
     const session = beginVideoAnalysis(videoView()?.videoData, () => { aborted = true; });
     try { return await runStarTrackerAtResolution(opts); }
@@ -3537,6 +3542,7 @@ function applyManualLabels() {
  * and the triples are not tried. opts.quadFailure: that failure, kept at the start of the status.
  */
 export async function identifyByBrightTriples(opts = {}) {
+    dismissedOverlayStatus = null;
     if (!await ensureCandidateStars()) return false;
     const r = result;
     if (!r) {
@@ -3916,6 +3922,28 @@ function ensureOverlay() {
             "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100";
         view.div.appendChild(overlay);
         overlayCtx = overlay.getContext("2d");
+
+        statusDismissButton?.remove();
+        statusDismissButton = document.createElement("button");
+        statusDismissButton.type = "button";
+        statusDismissButton.dataset.starTrackerDismiss = "";
+        statusDismissButton.textContent = "×";
+        statusDismissButton.title = "Dismiss star tracker results";
+        statusDismissButton.setAttribute("aria-label", "Dismiss star tracker results");
+        statusDismissButton.style.cssText = "position:absolute;bottom:8px;right:8px;width:22px;height:22px;"
+            + "padding:0;border:0;border-radius:3px;background:rgba(0,0,0,0.65);color:#e6e6e6;"
+            + "font:18px sans-serif;cursor:pointer;z-index:101;pointer-events:auto";
+        statusDismissButton.hidden = true;
+        for (const type of ["pointerdown", "pointerup", "dblclick"]) {
+            statusDismissButton.addEventListener(type, event => event.stopPropagation());
+        }
+        statusDismissButton.addEventListener("click", event => {
+            event.stopPropagation();
+            dismissedOverlayStatus = params.status;
+            statusDismissButton.hidden = true;
+            setRenderOne();
+        });
+        view.div.appendChild(statusDismissButton);
     }
 
     if (!view._starTrackInteraction) {
@@ -4088,7 +4116,7 @@ function drawLiveDetections() {
     overlayCtx.fillStyle = COLORS.star;
     overlayCtx.font = "bold 13px sans-serif";
     overlayCtx.fillText(`${liveDetections.sources.length} detected`, 10, 20);
-    drawOverlayStatus(38);
+    drawOverlayStatus();
 }
 
 /**
@@ -4323,8 +4351,7 @@ function completionFadeOpacities() {
 
 
 /**
- * Draw the Star Tracker's status line on the overlay, under whatever caption the current
- * drawing pass wrote above it.
+ * Draw the Star Tracker's status at the bottom of the video, with a dismiss button.
  *
  * EVERY pass that owns the overlay calls this, not only the one with quads to show. The menu's
  * Status row is usually behind a collapsed folder, or scrolled off, while the user is watching
@@ -4338,17 +4365,18 @@ function completionFadeOpacities() {
  * ("best matched 221 of 289 needed...") and the tail is the useful half - but capped at
  * STATUS_MAX_LINES so it cannot curtain the frame.
  *
- * @param {number} y - baseline for the first line.
  */
-function drawOverlayStatus(y) {
+function drawOverlayStatus() {
     const text = params.status;
-    if (!text || text === "not run") return;
+    if (statusDismissButton) statusDismissButton.hidden = true;
+    if (!text || text === "not run" || text === dismissedOverlayStatus) return;
+    if (statusDismissButton) statusDismissButton.hidden = false;
     overlayCtx.font = "12px sans-serif";
 
     // Greedy wrap on spaces. A word too long for the line is left to overhang rather than
     // broken: these strings are prose and numbers, never long unbroken tokens, so hyphenation
     // logic would be code that never runs.
-    const maxWidth = Math.max(80, overlay.width - 20);
+    const maxWidth = Math.max(80, overlay.width - 50);
     const lines = [];
     let line = "";
     for (const word of text.split(" ")) {
@@ -4373,6 +4401,7 @@ function drawOverlayStatus(y) {
     overlayCtx.lineWidth = 3;
     overlayCtx.strokeStyle = "rgba(0, 0, 0, 0.7)";
     overlayCtx.fillStyle = COLORS.status;
+    let y = overlay.height - 12 - (lines.length - 1) * 15;
     for (const l of lines) {
         overlayCtx.strokeText(l, 10, y);
         overlayCtx.fillText(l, 10, y);
@@ -4443,7 +4472,7 @@ function drawLiveStage() {
         overlayCtx.fillText(settled ? "lens fitted" : "fitting camera lens", 10, 20);
         overlayCtx.font = "12px sans-serif";
         overlayCtx.fillText(bits.join("  -  "), 10, 38);
-        drawOverlayStatus(56);
+        drawOverlayStatus();
         return;
     }
 
@@ -4461,8 +4490,7 @@ function drawLiveStage() {
             liveStage.phase ? `phase: ${liveStage.phase}` : null,
         ].filter(Boolean).join("  -  "), 10, 38);
 
-        // Both detail rows are conditional, so the status' baseline is TRACKED rather than
-        // constant - a fixed y would land it on top of the step line on the runs that have one.
+        // Stack the optional detail rows below the stage title.
         let y = 56;
         if (Number.isFinite(liveStage.rms)) {
             const from = Number.isFinite(liveStage.first) && liveStage.first !== liveStage.rms
@@ -4478,7 +4506,7 @@ function drawLiveStage() {
                 + `${done ? "<" : "vs"} ${liveStage.tolerance.toExponential(0)} to stop`, 10, y);
             y += 18;
         }
-        drawOverlayStatus(y);
+        drawOverlayStatus();
     }
 }
 
@@ -4513,7 +4541,7 @@ export function drawStarTrackerOverlay() {
     // A frame outside the analysed range has no transform, so nothing else on this overlay can
     // be placed - but the status still can, and an empty screen with no word on it is the exact
     // thing this is here to prevent.
-    if (!T) { drawOverlayStatus(20); return; }
+    if (!T) { drawOverlayStatus(); return; }
 
     // The analysis lives in the DECODED pixel space of its run - and the decode size is a user
     // setting (Settings > Performance Tweaks > Max Resolution), so a 4K source may have been
@@ -4764,7 +4792,6 @@ export function drawStarTrackerOverlay() {
     // thickness by quad residual would draw every candidate the same. A wrong quad explains a
     // handful of stars and stays hairline; the winning one explains most of the field and is
     // unmistakable.
-    let quadCaption = false;
     if (params.showQuadLines && liveQuads.length) {
         liveQuads.forEach((q, qi) => {
             const sChart = result.sphereChart?.chart;
@@ -4822,13 +4849,10 @@ export function drawStarTrackerOverlay() {
             + `${liveQuads.length > 1 ? "s" : ""} - `
             + `strongest explains ${best.matched}/${best.nImage} stars`, 10, 20);
         overlayCtx.globalAlpha = 1;
-        quadCaption = true;
     }
 
-    // Under the quad caption when there is one, in its place when there is not. A blind solve
-    // that verifies nothing never draws a quad, and that is precisely the run whose progress
-    // and whose failure reason the user has no other way to see while watching the video.
-    drawOverlayStatus(quadCaption ? 38 : 20);
+    // Also show progress and failure reasons when a blind solve has no quads to draw.
+    drawOverlayStatus();
 
     overlayCtx.setLineDash([]);
 }
@@ -4923,6 +4947,8 @@ export function resetStarTracker() {
     // there is nothing left to restore TO - just drop the record.
     cameraSyncPrev = null;
     params.status = "not run";
+    dismissedOverlayStatus = null;
+    if (statusDismissButton) statusDismissButton.hidden = true;
     // The Camera menu's Lens folder described THAT solve's optics; with the solve gone it would
     // be stating a measurement nothing in the app still holds.
     updateCameraLensMenu(null);
@@ -4944,6 +4970,8 @@ export function disposeStarTracker() {
     folder = null;
     overlay = null;
     overlayCtx = null;
+    statusDismissButton?.remove();
+    statusDismissButton = null;
     hookedView = null;
     // Calibration was measured on THIS sitch's video; the next sitch's plate scale is unknown.
     // A minArea that CAME from that calibration falls with it - leaving the measured value

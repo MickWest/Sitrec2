@@ -1,4 +1,5 @@
 import {videoSkyProjection, projectSkyPoint} from "../VideoSkyProjection";
+import {ConstellationLabelLayout} from "../ConstellationLabelLayout";
 import {DEEP_SKY_OBJECTS, PLEIADES, PLEIADES_STARS, deepSkyCategory, groupPleiades} from "../DeepSkyObjects";
 import {SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
@@ -244,7 +245,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 // NOT the file's per-language fields: those translate the MEANING, so English
                 // would read "Swan", "Crab" and "Air Pump" where an astronomer expects Cygnus,
                 // Cancer and Antlia. 73 of the 89 differ that way.
-                return {name: f.properties.name, ra, dec, pos: raDec2Celestial(ra, dec, 100)};
+                // Serpens has two separate label positions with the same catalog ID.
+                return {id: `${f.id}:${raDeg}:${decDeg}`, name: f.properties.name, ra, dec, pos: raDec2Celestial(ra, dec, 100)};
             });
         }
         return this._constellationLabels;
@@ -266,6 +268,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         this._videoProjection = this.isVideo ? videoSkyProjection(this.overlayView, frame) : null;
         if (this.isVideo && !this._videoProjection) return;
         this._renderedRect = this._videoProjection?.rect ?? renderedRect(this.overlayView, this.widthPx, this.heightPx);
+        this._celestialLabelBoxes = [];
         const draw = live => {
             if (this.showHorizonCompassRibbon) this.renderHorizonCompassRibbon(live);
             if (!this.isVideo) this.renderLabels3D(frame, this.displayedCamera(live));
@@ -280,9 +283,6 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             const skyOpacity = this.isVideo || !sun ? 0 : sun.calculateSkyOpacity(actualCameraPosition, date);
             const camera = this.displayedCamera(live, true);
             this.drawAtCelestialLabelOpacity(() => {
-                if (this.showConstellationNames && skyOpacity < 1) {
-                    this.renderConstellationNames(camera, earthSphere, actualCameraPosition, date);
-                }
                 this.ctx.font = `${this.nightSky.celestialLabelSize ?? 12}px Arial`;
                 this.ctx.textAlign = "left";
                 this.ctx.fillStyle = "#ffffff";
@@ -293,12 +293,34 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 if (showStarNames) this.renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha);
                 if (showPoints) this.renderVideoPoints(camera, date);
                 if (this.showSatelliteNames) this.renderSatelliteNames(this.displayedCamera(live), earthSphere, starAlpha);
+                if (this.showConstellationNames && skyOpacity < 1) {
+                    this.renderConstellationNames(camera, earthSphere, actualCameraPosition, date);
+                }
             });
         };
         if (this._videoProjection) {
             this._videoProjection.begin(this.ctx, this.widthPx, this.heightPx);
             try { draw(this._videoProjection.camera); } finally { this.ctx.restore(); }
         } else withDisplayedCamera(this.overlayView, draw);
+    }
+
+    // Point names stay fixed to their objects. Their measured text bounds reserve
+    // space for the constellation names, which are placed after all point names.
+    drawCelestialPointLabel(text, x, y, opacity = 1) {
+        this.ctx.fillText(text, x, y);
+        if (!this._celestialLabelBoxes || this.ctx.globalAlpha === 0 || opacity === 0) return;
+        const size = this.nightSky.celestialLabelSize ?? 12;
+        const metrics = this.ctx.measureText(text);
+        const ascent = metrics.actualBoundingBoxAscent ?? size;
+        const descent = metrics.actualBoundingBoxDescent ?? 3;
+        this._celestialLabelBoxes.push({x, y: y - ascent, w: metrics.width, h: ascent + descent});
+    }
+
+    celestialLabelRect() {
+        const r = this._videoProjection?.clipRect ?? this._renderedRect;
+        const x = Math.max(0, r.x), y = Math.max(0, r.y);
+        return {x, y, w: Math.max(0, Math.min(this.widthPx ?? r.x + r.w, r.x + r.w) - x),
+            h: Math.max(0, Math.min(this.heightPx ?? r.y + r.h, r.y + r.h) - y)};
     }
 
     projectCatalogPosition(ra, dec, camera, earthSphere, observer, date) {
@@ -353,7 +375,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             ctx.beginPath();
             ctx.ellipse(x, y, radius, category === "Galaxies" ? Math.max(3, radius * 0.55) : radius, 0, 0, 2 * Math.PI);
             ctx.stroke();
-            ctx.fillText(name, labelX, labelY);
+            this.drawCelestialPointLabel(name, labelX, labelY);
         }
         ctx.restore();
     }
@@ -442,9 +464,9 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         const labels = this.constellationLabels();
         if (!labels) return;
 
-        // Bigger than the 9px point labels, and centred on the position rather than offset from
-        // it, because this names a REGION: there is no dot here for the text to sit beside.
-        this.ctx.font = `${(this.nightSky.celestialLabelSize ?? 12) * 4 / 3}px Arial`;
+        // Region names can shift locally to remain readable; point names stay fixed.
+        const fontSize = (this.nightSky.celestialLabelSize ?? 12) * 4 / 3;
+        this.ctx.font = `${fontSize}px Arial`;
         this.ctx.textAlign = 'center';
         // The grey of the asterism lines (0x808080), lifted enough to hold up as text, so a name
         // reads as belonging to the figure it sits in and stays quieter than the white star
@@ -468,6 +490,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         const target0 = V3();
         const target1 = V3();
+        const candidates = [];
         for (const c of labels) {
             // Cloned because applyRefractionECI, applyMatrix4 and project all mutate, and the
             // cached position has to survive for the next frame.
@@ -488,10 +511,19 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             pos.applyMatrix4(this.nightSky.celestialSphere.matrix);
             projectForCamera(pos, camera);
 
-            if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
+            if (pos.z > -1 && pos.z < 1) {
                 const [x, y] = this.labelXY(pos);
-                this.ctx.fillText(c.name, x, y);
+                const metrics = this.ctx.measureText(c.name);
+                const ascent = metrics.actualBoundingBoxAscent ?? fontSize;
+                const descent = metrics.actualBoundingBoxDescent ?? 3;
+                candidates.push({id: c.id ?? c.name, name: c.name, x, y: y + (descent - ascent) / 2,
+                    w: metrics.width, h: ascent + descent, baseline: (ascent - descent) / 2});
             }
+        }
+
+        this._constellationLayout ??= new ConstellationLabelLayout();
+        for (const label of this._constellationLayout.place(candidates, this.celestialLabelRect(), this._celestialLabelBoxes)) {
+            this.ctx.fillText(label.name, label.x, label.y + label.baseline);
         }
 
         this.ctx.textAlign = 'left';
@@ -548,7 +580,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                     const [x, y] = this.labelXY(pos);
-                    this.ctx.fillText(starName, x + 5, y - 5)
+                    this.drawCelestialPointLabel(starName, x + 5, y - 5, starAlpha)
                 }
             }
         }
@@ -568,7 +600,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                 const [x, y] = this.labelXY(pos);
-                this.ctx.fillText(name, x + 5, y - 5)
+                this.drawCelestialPointLabel(name, x + 5, y - 5, starAlpha)
             }
         }
     }
@@ -672,7 +704,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             const [x, y] = this.labelXY(screenPos);
 
             this.ctx.fillStyle = (sat.simulated ? SIMULATED_SATELLITE_COLOR : "#ffffff") + alphaHex;
-            this.ctx.fillText(satelliteLabelText(sat), x + 5, y - 5)
+            this.drawCelestialPointLabel(satelliteLabelText(sat), x + 5, y - 5, starAlpha)
         }
     }
 

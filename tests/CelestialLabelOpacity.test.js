@@ -43,6 +43,7 @@ function overlayAt(opacity) {
     const drawn = [];
     const ctx = {
         globalAlpha: 1, fillStyle: "", strokeStyle: "", font: "", textAlign: "left",
+        measureText(text) { return {width: text.length * 8}; },
         fillText(text) { drawn.push({text, alpha: this.globalAlpha, fillStyle: this.fillStyle}); },
     };
     const satellite = {name: "ISS (ZARYA)", visible: true, invalidPosition: false, ecef: position.clone()};

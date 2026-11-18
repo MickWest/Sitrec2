@@ -67,6 +67,8 @@ To check the match, compare the stars in the look view with the stars in the vid
 
 ## Reading the results
 
+The status summary appears at the bottom of the video. Click **×** to dismiss it; the **Status** row in the Star Tracker menu keeps the full text. A new analysis shows its status again.
+
 With **Fade at completion** on (the default), a successful identification removes most of the annotation after about three seconds: first the quad lines, then the circles shrink into their stars, then the HIP-number labels, one second each. Their switches in [Star Tracker Display](#star-tracker-display) (**Show quad lines**, **Show star markers**, **Show HIP star numbers**) turn off as each layer goes. What stays is the named stars over your footage, and any red and orange markers. For an unsynced result, if fewer than 12 stars have proper names, the brightest HIP-numbered stars stay too, up to 12 labels. A well registered result uses the shared celestial labels instead. To see or toggle stars again, tick **Show star markers** back on in **Star Tracker Display**; to keep the full annotation, untick **Fade at completion** before you run. A failed run never fades.
 
 Before the fade, the video view is annotated like this:

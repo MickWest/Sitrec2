@@ -13,6 +13,7 @@ test("video labels follow the source aspect, crop and stabilization independentl
         dx: 10, dy: 30, dWidth: 300, dHeight: 400, getSourceAndDestCoords() {},
         videoData: {stabilizationMatrix: () => ({a: 1, b: 0, c: 0, d: 1, e: 20, f: -10})}};
     const projected = videoSkyProjection(video, 0);
+    expect(projected.clipRect).toEqual({x: 10, y: 30, w: 300, h: 400});
     expect(projected.camera.aspect).toBe(0.75);
     expect(projected.camera.fov).toBe(40);
     expect(projected.labelXY(new Vector3(0, 0, 0))).toEqual([270, 325]);

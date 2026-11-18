@@ -36,6 +36,8 @@ The **V** boxes draw the selected celestial lines, names, deep-sky markers, hori
 
 For a clean sky comparison, set the location and camera direction, then set the UTC time. Enable Stars and Planets, choose the star limit, and add constellation lines or the compass as needed. Save the sitch to retain the settings.
 
+Constellation names stay inside the picture with a small edge margin. They can remain visible briefly as their catalog label position passes the edge, then disappear when it moves farther out. Names avoid star, planet, deep-sky and satellite labels, and keep a clear placement until an overlap requires a change. This prevents repeated rearrangement during small camera movements. A name with no clear space nearby is hidden rather than moved far from its constellation.
+
 Related controls keep their own menus:
 
 - **Time** sets the date, local time zone and playback.

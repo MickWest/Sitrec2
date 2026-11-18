@@ -35,7 +35,7 @@ export function videoSkyProjection(video, frame) {
         if (stabilization) [x, y] = applyAffine(stabilization, x, y);
         return [dx + (x - sx) * scaleX, dy + (y - sy) * scaleY];
     };
-    return {camera, rect, toCanvas,
+    return {camera, rect, clipRect: {x: dx, y: dy, w: dWidth, h: dHeight}, toCanvas,
         labelXY: ndc => toCanvas((ndc.x + 1) * width / 2, (1 - ndc.y) * height / 2),
         begin(ctx, canvasWidth, canvasHeight) {
             ctx.save();
