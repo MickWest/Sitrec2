@@ -157,7 +157,7 @@ export const saveMethods = {
 
     /**
      * GUI menu handler for the "Save" button.
-     * Wraps saveSitch() and suppresses errors for GUI use.
+     * Reports server save errors to the user.
      * @returns {Promise<boolean>}
      */
     saveSitchFromMenu() {
@@ -169,7 +169,9 @@ export const saveMethods = {
             console.log("Sitch saved as " + Sit.sitchName);
             return true;
         }).catch((error) => {
-            console.log("Error in saveSitchFromMenu:", error);
+            if (saveGeneration === Globals.loadGeneration && !isAbortLikeError(error)) {
+                showError("Server save failed: " + (error?.message ?? error), error);
+            }
             return false;
         })
     },
@@ -506,7 +508,9 @@ export const saveMethods = {
             .catch((error) => {
                 if (saveGeneration !== Globals.loadGeneration) return;
                 Sit.sitchName = lastSitchName; // Restore the last sitch name if we cancel
-                console.log("Error or Cancel in saveSitchAs:", error);
+                if (!isAbortLikeError(error)) {
+                    showError("Server Save As failed: " + (error?.message ?? error), error);
+                }
             }).finally(() => {
                 if (saveGeneration === Globals.loadGeneration) this.guiFolder.close();
             });

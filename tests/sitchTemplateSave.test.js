@@ -74,6 +74,18 @@ afterEach(() => {
 });
 
 describe('Save', () => {
+    test.each(['saveSitchFromMenu', 'saveSitchAs'])('%s reports a failed save but leaves cancellation quiet', async method => {
+        setSit({sitchName: 'Work'});
+        const error = new Error('Could not serialize color');
+        manager.saveSitchNamed.mockRejectedValueOnce(error);
+        await manager[method]();
+        expect(showError).toHaveBeenCalledWith(expect.stringContaining(error.message), error);
+        expect(Sit.sitchName).toBe('Work');
+        manager.saveSitchNamed.mockRejectedValueOnce('Save Cancelled');
+        await manager[method]();
+        expect(showError).toHaveBeenCalledTimes(1);
+    });
+
     test('writes a normal sitch to its name, with no prompt', async () => {
         setSit({sitchName: 'Work'});
 
