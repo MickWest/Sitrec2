@@ -1588,6 +1588,7 @@ export class CSitchBrowser {
         }
         this.filtered.forEach((sitch, idx) => {
             const row = document.createElement("div");
+            row.dataset.inputRecordingPath = `Sitch browser/${sitch.name}`;
             Object.assign(row.style, {
                 display: "flex", padding: "12px 0", borderBottom: "1px solid #2a2a3e",
                 cursor: "pointer", borderRadius: "4px", alignItems: "center",
@@ -1782,6 +1783,7 @@ export class CSitchBrowser {
         this.filtered.forEach((sitch, idx) => {
             const card = document.createElement("div");
             card.dataset.sitchCard = "1";
+            card.dataset.inputRecordingPath = `Sitch browser/${sitch.name}`;
             Object.assign(card.style, {
                 backgroundColor: "#1e1e2e", borderRadius: "8px",
                 border: "2px solid #333", overflow: "hidden",

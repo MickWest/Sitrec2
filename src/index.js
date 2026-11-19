@@ -1990,7 +1990,7 @@ async function initializeOnce() {
     initI18n();
     Globals.menuBar = new CGuiMenuBar();
 
-    // Opt-in logging of menu-item clicks (gated by LOG_UI_INTERACTIONS env var).
+    // Aggregate clicks and the server-authorized account input recorder.
     initUILogging();
 
     // Logs each use of a dropdown, for Help > Export Debug Log.

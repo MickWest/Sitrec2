@@ -7,7 +7,7 @@ import {t} from "./i18n";
 import {localizeElements} from "./NativeText";
 
 // The template has no text. Each string is a key in src/i18n/en.js, section timeEditor.
-const digit = part => `<input class="te-digit" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" data-part="${part}">`;
+const digit = part => `<input class="te-digit" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" data-part="${part}" data-input-recording-value="number">`;
 
 // One editor for menus and panels. The adapter owns scene time, playback, undo
 // and zones; this class only owns presentation, drafts and pointer gestures.

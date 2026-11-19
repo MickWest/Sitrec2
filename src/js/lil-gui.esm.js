@@ -15,6 +15,7 @@ import {setRenderOne} from "../Globals";
 import {showError} from "../showError";
 import {cleanFloat} from "../utils";
 import {panelKeepsKey} from "../NativeKeyRouting";
+import {notifyUIRecordingObserver} from "../UIRecordingHooks";
 
 /**
  * Base class for all controllers.
@@ -209,6 +210,7 @@ class Controller {
 
 
         this._changed = true;
+        notifyUIRecordingObserver(this);
 
     }
 
@@ -247,6 +249,8 @@ class Controller {
             if ( this._onFinishChange !== undefined ) {
                 this._onFinishChange.call( this, this.getValue() );
             }
+
+            notifyUIRecordingObserver(this, true);
 
         }
 

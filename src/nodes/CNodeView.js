@@ -190,6 +190,7 @@ class CNodeView extends CNode {
         } else {
 
             this.div = document.createElement('div')
+            this.div.dataset.inputRecordingView = this.id;
             this.div.style.position = 'absolute';
 
             // was recommended to fix Occulus overflow resizing.

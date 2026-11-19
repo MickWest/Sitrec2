@@ -106,6 +106,8 @@ done
 # `for var in $CLIENT_VARS $SERVER_VARS`, which word-splits, so a comment would be
 # treated as variable names.
 SERVER_VARS="
+INPUT_RECORDING_ENABLED
+INPUT_RECORDING_DIR
 SITREC_CHANNEL_MANIFEST
 CESIUM_ION_TOKEN
 GOOGLE_MAPS_API_KEY

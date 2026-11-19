@@ -1,6 +1,6 @@
 // UILogging.js
 //
-// Lightweight, opt-in logging of which menu items the user clicks.
+// Aggregate menu clicks plus startup of the separate account input recorder.
 //
 // When LOG_UI_INTERACTIONS is enabled (build-time env var, see config/shared.env),
 // every mousedown on a lil-gui menu element records {ts, path} where `path` is the
@@ -10,13 +10,14 @@
 // (and on pagehide via sendBeacon). The server appends them, with user id and IP,
 // to sitrec-upload/ui-stats/ for later aggregation (admin dashboard "Top 10").
 //
-// Gating is defence-in-depth: this module no-ops on serverless builds (no PHP) and
-// when the client env flag is off, AND uilog.php independently refuses to write when
-// its own LOG_UI_INTERACTIONS is off.
+// The aggregate counter requires LOG_UI_INTERACTIONS on both client and server.
+// Detailed InputRecording is independently authorized by the login response.
 
 import {getEnvBool} from "./envUtils";
 import {isServerless, SITREC_SERVER} from "./configUtils";
-import {withTestUser} from "./Globals";
+import {Globals, Sit, withTestUser} from "./Globals";
+import {par} from "./par";
+import {InputRecorder} from "./InputRecording";
 
 const FLUSH_INTERVAL_MS = 10000;   // send to server every 10 seconds
 const MAX_BUFFER = 500;            // hard cap so a runaway never grows unbounded
@@ -24,6 +25,8 @@ const MAX_PATH_LEN = 300;          // matches server-side sanitization cap
 
 let buffer = [];
 let initialized = false;
+let inputRecorder;
+let watchingLogin = false;
 
 /**
  * Build the full menu path for a clicked DOM element by walking up the lil-gui
@@ -183,12 +186,38 @@ export function flushUILog(useBeacon = false) {
 }
 
 /**
- * Initialize UI interaction logging. Safe to call unconditionally; it no-ops
- * unless LOG_UI_INTERACTIONS is enabled and we are running against a PHP backend.
+ * Initialize the configured recorders. Safe to call repeatedly; neither starts
+ * without its own permission and both require a PHP backend.
  */
+function syncInputRecording() {
+    // Separate from the aggregate click counter: the login response reports the
+    // real identity's recording permission, including while testing another user.
+    const enabled = Globals.userData?.inputRecording === true;
+    if (inputRecorder && (!enabled || inputRecorder.userID !== Globals.userData.inputRecordingUserID || !inputRecorder.active)) {
+        inputRecorder.stop(true);
+        inputRecorder = undefined;
+    }
+    if (!inputRecorder && enabled) {
+        try {
+            inputRecorder = new InputRecorder({url: withTestUser(SITREC_SERVER + 'inputlog.php'),
+                userID: Globals.userData.inputRecordingUserID,
+                pathFor: el => buildPanelPath(el) || buildMenuPath(el),
+                context: () => ({sitch: String(Sit?.name || '').slice(0, 100),
+                    frame: par.frame, paused: !!par.paused}),
+            });
+            inputRecorder.start();
+        } catch (_) { inputRecorder = undefined; /* recording must not stop startup */ }
+    }
+}
+
 export function initUILogging() {
-    if (initialized) return;
     if (isServerless) return;   // no PHP endpoint to receive logs
+    if (!watchingLogin) {
+        watchingLogin = true;
+        window.addEventListener('sitrec-login-change', syncInputRecording);
+    }
+    syncInputRecording();
+    if (initialized) return;
     if (!getEnvBool("LOG_UI_INTERACTIONS", process.env.LOG_UI_INTERACTIONS)) return;
     initialized = true;
 

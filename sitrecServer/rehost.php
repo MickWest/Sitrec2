@@ -163,6 +163,14 @@ if (isset($_GET['getuser'])) {
         'canUse3DBuildings' => false,
         'maxFileSizeMB' => getMaxFileSizeMB($userInfo),
     ];
+    // The secure build omits the recorder endpoint and its storage helper.
+    $response['inputRecording'] = false;
+    if (is_file(__DIR__ . '/inputlog.php')) {
+        require_once __DIR__ . '/input_recording.php';
+        $recordingIdentity = getCachedUserInfoCustom();
+        $response['inputRecording'] = inputRecordingConfigured($recordingIdentity);
+        if ($response['inputRecording']) $response['inputRecordingUserID'] = (int)$recordingIdentity['user_id'];
+    }
 
     $googleRootLimit = getGoogle3DRootDailyLimitForGroups($userGroups);
     $googleRootUsed = getTileServiceDailyUsage($user_id, 'google_3d_root');

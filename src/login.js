@@ -14,6 +14,10 @@ import {t} from "./i18n";
 const NOTICE_RETRY_MS = 500;
 const NOTICE_TRIES = 120;
 
+function notifyLoginChanged() {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('sitrec-login-change'));
+}
+
 export async function checkLogin()  {
     try {
         await asyncCheckLogin();
@@ -24,6 +28,7 @@ export async function checkLogin()  {
         console.warn("Login check failed, continuing as logged out", err);
         Globals.userID = 0;
         Globals.userData = { userID: 0, userGroups: [] };
+        notifyLoginChanged();
         // Without this, a member finds saving switched off and is not told why.
         showLoginCheckFailedNotice();
     }
@@ -57,6 +62,7 @@ export function asyncCheckLogin() {
         .then(data => {
             Globals.userData = data;
             Globals.userID = data.userID;
+            notifyLoginChanged();
             console.log("User ID is " + Globals.userID)
         })
         .catch(err => {
@@ -65,6 +71,7 @@ export function asyncCheckLogin() {
                 Globals.userID = 12345678;
                 // noLogin: this user ID is not a login (hasServerLogin in Globals.js).
                 Globals.userData = { userID: 12345678, userGroups: [], noLogin: true };
+                notifyLoginChanged();
                 return;
             }
             throw err;
