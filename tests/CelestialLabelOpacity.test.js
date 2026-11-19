@@ -21,7 +21,7 @@ const NO_EARTH = new Sphere(new Vector3(1e12, 0, 0), 1);
 // A night sky node as the constructor leaves it, without the scene and the menus.
 function sky() {
     const n = Object.create(CNodeDisplayNightSky.prototype);
-    n.simpleSerials = ["celestialLabelOpacity"];
+    n.simpleSerials = ["celestialLabelOpacity", "celestialLabelDensity"];
     n.celestialLabelOpacity = 1;
     for (const key of ["constellationsGroup", "equatorialSphereGroup", "azimuthalSphereGroup", "sunArrowGroup",
         "flareRegionGroup", "flareBandGroup", "satelliteGroup", "satelliteTrackGroup",
@@ -41,8 +41,11 @@ function overlayAt(opacity) {
     camera.lookAt(position);
     camera.updateMatrixWorld(true);
     const drawn = [];
+    const stack = [];
     const ctx = {
         globalAlpha: 1, fillStyle: "", strokeStyle: "", font: "", textAlign: "left",
+        save() { stack.push({globalAlpha: this.globalAlpha, fillStyle: this.fillStyle}); },
+        restore() { Object.assign(this, stack.pop()); },
         measureText(text) { return {width: text.length * 8}; },
         fillText(text) { drawn.push({text, alpha: this.globalAlpha, fillStyle: this.fillStyle}); },
     };
@@ -70,7 +73,7 @@ function overlayAt(opacity) {
         () => overlay.renderConstellationNames(camera, NO_EARTH, new Vector3(), DATE));
     const drawSatelliteNames = (starAlpha = 1) => overlay.drawAtCelestialLabelOpacity(
         () => overlay.renderSatelliteNames(camera, NO_EARTH, starAlpha));
-    return {ctx, drawn, satellite, drawStarNames, drawConstellationNames, drawSatelliteNames};
+    return {ctx, drawn, satellite, overlay, drawStarNames, drawConstellationNames, drawSatelliteNames};
 }
 
 // jsdom has no matchMedia, and a lil-gui number control asks it for the pointer type.
@@ -93,6 +96,47 @@ test("a save with no value keeps full opacity, and a saved value is restored and
     // 0 is a value, not "no value".
     n.modDeserialize({celestialLabelOpacity: 0});
     expect(n.celestialLabelOpacity).toBe(0);
+});
+
+test("old saves default to quarter density and saved density survives a round trip, including zero", () => {
+    const n = sky();
+    n.modDeserialize({});
+    expect(n.celestialLabelDensity).toBe(0.25);
+    for (const value of [0.6, 0]) {
+        n.modDeserialize({celestialLabelDensity: value});
+        expect(n.modSerialize().celestialLabelDensity).toBe(value);
+    }
+});
+
+test("the combined draw keeps the brighter overlapping name, its color and opacity, and reserves its bounds", () => {
+    const {overlay, ctx, drawn, drawStarNames} = overlayAt(0.4);
+    overlay.nightSky.planets.planetSprites.Jupiter.mag = -2;
+    overlay.nightSky.celestialLabelDensity = 1;
+    overlay._celestialLabelBoxes = [];
+    overlay.collectCelestialLabels(() => drawStarNames(0.5));
+    expect(drawn).toEqual([{text: "Jupiter", alpha: 0.4, fillStyle: "#FFFF807f"}]);
+    expect(overlay._celestialLabelBoxes).toHaveLength(1);
+    expect(overlay._celestialLabelCandidates).toBeNull();
+    expect(ctx.globalAlpha).toBe(1);
+
+    drawn.length = 0;
+    overlay.nightSky.celestialLabelDensity = 0;
+    overlay.collectCelestialLabels(() => drawStarNames());
+    expect(drawn).toEqual([]);
+});
+
+test("a rejected deep-sky label also omits its marker", () => {
+    const {overlay, drawStarNames, drawn} = overlayAt(1);
+    overlay.nightSky.celestialLabelDensity = 1;
+    const drawMarker = jest.fn();
+    overlay.collectCelestialLabels(() => {
+        // Same text position as Vega and Jupiter in this camera.
+        overlay.drawCelestialPointLabel("faint galaxy", 405, 295, 1,
+            {id: "galaxy", kind: "deepSky", magnitude: 1, drawMarker});
+        drawStarNames();
+    });
+    expect(drawn.map(l => l.text)).toEqual(["Vega"]);
+    expect(drawMarker).not.toHaveBeenCalled();
 });
 
 test("the slider is in the celestial Labels folder, with a mirror in the satellite Labels folder", () => {

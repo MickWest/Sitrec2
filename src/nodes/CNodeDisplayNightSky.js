@@ -50,6 +50,7 @@ import {
 import {ViewMan} from "../CViewManager";
 import {CNodeLabeledArrow} from "./CNodeLabels3D";
 import {CNodeDisplaySkyOverlay} from "./CNodeDisplaySkyOverlay";
+import {celestialLabelDensity} from "../CelestialLabelLayout";
 import {CNodeVideoSkyLines} from "./CNodeVideoSkyLines";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
@@ -357,12 +358,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
         this.groupPleiades = v.groupPleiades ?? true;
         this.celestialLabelSize = v.celestialLabelSize ?? 12;
+        this.celestialLabelDensity = celestialLabelDensity(v.celestialLabelDensity);
         this.deepSkyMagnitude = v.deepSkyMagnitude ?? 10.5;
         for (const category of ["Galaxies", "Clusters", "Nebulae"]) {
             this[`deepSky${category}`] = v[`deepSky${category}`] ?? true;
             this.addSimpleSerial(`deepSky${category}`);
         }
-        this.addSimpleSerials(["groupPleiades", "celestialLabelSize", "deepSkyMagnitude"]);
+        this.addSimpleSerials(["groupPleiades", "celestialLabelSize", "celestialLabelDensity", "deepSkyMagnitude"]);
         const horizonVisibility = this.addCelestialViewPair(this.horizonCompassGUI,
             "showHorizonCompassRibbon", "Horizon Compass", "horizonCompass",
             "Show true compass bearings and degree ticks along the sea-level horizon. Distant terrain can rise above the ribbon.",
@@ -1506,6 +1508,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.celestialLabelDensity = celestialLabelDensity(this.celestialLabelDensity);
         this.autoloadSatellites = v.autoloadSatellites ?? this.defaultAutoloadSatellites ?? false;
         if (this.satellites.TLEData && !this.satellites.TLEData.simulated) {
             this.satellites.catalogLoader?.restoreLoadedRequest(v.satelliteCatalogRequest);
@@ -2463,6 +2466,9 @@ export function addNightSky(def) {
     if (Sit.isCustom && NodeMan.exists("video")) {
         new CNodeDisplaySkyOverlay({id: "video_NightSkyOverlay", overlayView: "video", nightSky, gui: nightSky.labelsGUI});
     }
+    nightSky.labelsGUI.add(nightSky, "celestialLabelDensity", 0, 1, 0.01).listen().name("Labels")
+        .tooltip("Density of star, planet and deep-sky labels in Main, Look and Video. Fewer labels favors bright objects and removes faint deep-sky objects first. 0 hides celestial names; 1 shows as many as fit without crowding. Constellation names keep their own switch; satellite labels use their separate controls.")
+        .onChange(() => setRenderOne(true));
     nightSky.labelsGUI.add(nightSky, "celestialLabelSize", 6, 32, 1).listen().name("Label Size")
         .tooltip("Celestial label size in display pixels, shared by Main, Look and Video.")
         .onChange(() => setRenderOne(true));

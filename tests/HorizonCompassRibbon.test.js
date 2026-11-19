@@ -90,15 +90,20 @@ test.each([[86.47, 14], [86.47, 32], [120, 32]])("dragging at FOV %s and text si
     }
 });
 
-test("a sloped horizon keeps compass text upright and ticks vertical", () => {
+test("a sloped horizon keeps compass text upright and reports bounds for other labels to avoid", () => {
     const frame = horizonCompassFrame(new Vector3(a + 1700, 0, 0), a, b);
     const rect = {x: 0, y: 0, w: 1600, h: 900};
     const ctx = {
         globalAlpha: 1, save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, stroke() {},
         moveTo: jest.fn(), lineTo: jest.fn(), translate: jest.fn(), rotate: jest.fn(), fillText: jest.fn(),
+        measureText: text => ({width: text.length * 8, actualBoundingBoxAscent: 5, actualBoundingBoxDescent: 4}),
     };
     const project = d => ({x: 800 + 600 * d.y, y: 450 + 200 * d.y + 100 * d.z});
-    drawHorizonCompassRibbon(ctx, frame, project, rect, {pixelsPerDegree: 5});
+    const labelBoxes = [];
+    drawHorizonCompassRibbon(ctx, frame, project, rect, {pixelsPerDegree: 5, labelBoxes});
+    expect(labelBoxes).toHaveLength(ctx.fillText.mock.calls.length);
+    const north = project(frame.direction(0));
+    expect(labelBoxes[0]).toEqual({x: north.x - 4, y: north.y - 12 - 14 * 0.8 - 5, w: 8, h: 9});
     expect(ctx.rotate).not.toHaveBeenCalled();
     expect(ctx.fillText).toHaveBeenCalledWith("N", 0, expect.any(Number));
     for (const bearing of [0, 90, 180, 270]) {
