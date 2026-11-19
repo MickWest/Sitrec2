@@ -738,6 +738,54 @@ export async function solveField(imageStars, catalog, indexes, opts = {}) {
     }
 }
 
+/**
+ * Try a small set of bright point sources before an expensive full-field search.
+ * Acceptance still uses the ordinary chance and rematch gates. Additionally,
+ * require a strong seed and verify its pose against 75 UNUSED detections. The
+ * holdout cannot create the hypothesis or rescue a weak seed. Once both agree,
+ * refine only this bounded sample and preserve indices into the caller's list.
+ */
+export async function solveFieldBrightFirst(imageStars, catalog, ensureIndex, tierOrder, opts = {}) {
+    const width = opts.width ?? Math.max(
+        Math.max(...imageStars.map(s => s.x)) - Math.min(...imageStars.map(s => s.x)),
+        Math.max(...imageStars.map(s => s.y)) - Math.min(...imageStars.map(s => s.y)), 1);
+    const visible = imageStars.map((_, i) => i)
+        .filter(i => !starIsMasked(opts.visibilityMask, imageStars[i].x, imageStars[i].y));
+    const ranked = rankPointSources(visible.map(i => imageStars[i]), width, opts).map(i => visible[i]);
+    const strong = (solve, fraction) => solve?.ok && solve.matches.length >= 12
+        && solve.matchedFraction >= fraction && solve.rmsPx <= 0.6 * solve.tolPx;
+    const holdoutSize = 75;
+    for (const cap of [25, 50, 100]) {
+        if (ranked.length < cap + holdoutSize) continue;
+        const seedIds = ranked.slice(0, cap);
+        const holdoutIds = ranked.slice(cap, cap + holdoutSize);
+        const sampleIds = [...seedIds, ...holdoutIds];
+        const seed = seedIds.map(i => imageStars[i]);
+        const holdout = holdoutIds.map(i => imageStars[i]);
+        for (const tier of tierOrder) {
+            if (opts.shouldStop?.()) return {ok: false, reason: "cancelled"};
+            const index = await ensureIndex(tier);
+            if (opts.shouldStop?.()) return {ok: false, reason: "cancelled"};
+            opts.onSearch?.({cap, tier});
+            const attempt = await solveField(seed, catalog, [index], opts);
+            if (opts.shouldStop?.()) return {ok: false, reason: "cancelled"};
+            if (!strong(attempt, 0.7)) continue;
+            const independent = certifySolve(attempt, holdout, catalog, {...opts, refine: false});
+            if (!strong(independent, 0.5)) continue;
+            const cert = certifySolve(attempt, sampleIds.map(i => imageStars[i]), catalog,
+                {...opts, refine: true});
+            if (!strong(cert, 0.5)) continue;
+            return {...(cert.refinedSolve ?? attempt),
+                matches: cert.matches.map(m => ({...m, image: sampleIds[m.image]})),
+                nImage: cert.nImage, matchedFraction: cert.matchedFraction,
+                rmsPx: cert.rmsPx, tolPx: cert.tolPx,
+                brightStarCap: cap, validationMatches: independent.matches.length,
+                validationStars: holdoutSize, totalImage: imageStars.length};
+        }
+    }
+    return {ok: false, reason: "no independently verified bright-star match"};
+}
+
 async function solveFieldInner(imageStars, catalog, indexes, opts) {
     const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
     const nImage = imageStars.length;
@@ -1388,9 +1436,9 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
  *
  * Exists for solve attempts made on a REDUCED view of the evidence - the failure ladder caps
  * the input to the most persistent tracks when the full set will not solve. Capping shrinks
- * every consensus denominator, which makes acceptance structurally easier, so a capped view's
- * solve may not label stars or steer a camera until the pose has been certified against the
- * evidence that was actually collected: all of it.
+ * every consensus denominator, which makes acceptance structurally easier. The failure ladder
+ * therefore certifies against the full input. The bright-first path instead requires a much
+ * stronger seed and an independent holdout before accepting its bounded sample.
  *
  * @param {object} solved - an ok solve from {@link solveField} (carries .model)
  * @param {Array} fullStars - the UNCAPPED star set, same coordinate frame as the solve input

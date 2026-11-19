@@ -1,4 +1,5 @@
 import {canUseSharedStarLabels} from "./StarChartPolicy";
+import {yieldStarAnalysis as yieldToBrowser} from "./StarAnalysisYield";
 import {makeSkyPhotoPlate} from "./SkyPhotoPlate";
 import {activeSkyPhoto, disposeSkyPhoto} from "../SkyPhotoRegistration";
 import {findNightView} from "./StarNightView";
@@ -67,6 +68,7 @@ import {
     raDecToVec,
     scalePriorFromFov,
     solveField,
+    solveFieldBrightFirst,
     solveFieldWindowed,
     vecToRaDec,
     windowVfovDegAt,
@@ -307,19 +309,6 @@ async function ensureIdentifyData() {
         names = new Map();      // nameless identifications are still identifications
     }
     return {catalog, names};
-}
-
-/**
- * Yield to the event loop - a real macrotask, not a microtask.
- *
- * `await` on an already-resolved promise queues a MICROTASK, which the browser drains before it
- * ever repaints or dispatches input. So on a warm decoder, where every frame is already cached and
- * the awaits inside frameImage resolve immediately, the whole detection pass runs as one
- * uninterrupted block: the progress bar never moves and the Abort button cannot be clicked until
- * it is over. setTimeout yields properly.
- */
-function yieldToBrowser() {
-    return new Promise((r) => setTimeout(r, 0));
 }
 
 /**
@@ -2491,9 +2480,24 @@ export async function identifyStars(opts = {}) {
                 if (solved.ok) break;
             }
         };
-        // Finding the pattern in a bright sample avoids projecting and matching thousands
-        // of faint detections for every hypothesis. Full-set certification still follows.
-        if (!denseStill) await solveFullField();
+        // A strong bright-star match plus independent holdout evidence is enough.
+        // Do not make a dense image wait for every faint detection to be identified.
+        if (stars.length >= 100) {
+            const {bx0, by0, bx1, by1} = starBounds(stars);
+            solved = await solveFieldBrightFirst(stars, catalog, ensureIndex, tierOrder, {
+                center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+                width: Math.max(bx1 - bx0, by1 - by0),
+                bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],
+                ...commonSolveOpts,
+                shouldStop: () => !fresh(),
+                onSearch: ({cap, tier}) => {
+                    searchLabel = `${cap} bright point sources, tier ${tier + 1}`;
+                    setStatus(`matching ${searchLabel}`);
+                },
+            });
+        }
+        if (!fresh()) return;
+        if (!denseStill && !solved?.ok) await solveFullField();
         if (!fresh()) return;
         if (!solved || !solved.ok) {
             // Bright samples for dense stills, or a failure ladder for other inputs.
@@ -2577,9 +2581,14 @@ export async function identifyStars(opts = {}) {
             : (sphereChart ? fitFisheyeLensFromCatalog(myResult, catalog, solved, stars) : null);
         refreshSyncedCamera();
         const raH = solved.centerRaDeg / 15;
-        params.status = `identified ${solved.matches.length}/${stars.length} stars - `
+        const identifiedSummary = solved.brightStarCap
+            ? `${solved.matches.length}/${solved.nImage} bright stars from ${stars.length} detections`
+            : `${solved.matches.length}/${stars.length} stars`;
+        params.status = `identified ${identifiedSummary} - `
             + `field ${solved.fovDeg.toFixed(1)} deg at RA ${raH.toFixed(2)}h `
             + `Dec ${solved.centerDecDeg.toFixed(1)} deg, rms ${solved.rmsPx.toFixed(1)} px`
+            + (solved.brightStarCap
+                ? ` (${solved.brightStarCap}-star search; ${solved.validationMatches} independent checks)` : "")
             + (solved.certifiedFromCap
                 ? ` (rescued from a ${solved.certifiedFromCap}-star retry, certified)` : "");
         // Not on a scoring run: that solve exists to produce one number for a search and is

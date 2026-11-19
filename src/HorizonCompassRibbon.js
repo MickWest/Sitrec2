@@ -40,6 +40,7 @@ const compassNames = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 export function drawHorizonCompassRibbon(ctx, frame, project, rect, {
     wrap = false, opacity = 1, textSize = 14, pixelsPerDegree = rect.w / 180,
     showCardinals = true, showDegrees = true,
+    labelBoxes,
 } = {}) {
     if (opacity <= 0) return;
     // Choose a bearing-aligned scale from zoom and text size only. Greedy
@@ -96,15 +97,24 @@ export function drawHorizonCompassRibbon(ctx, frame, project, rect, {
         ctx.stroke();
         // Compass names sit above the ruler and numbers below it, so a nearby
         // compass name does not need to remove a degree label.
+        const drawLabel = (text, y, size) => {
+            ctx.fillText(text, 0, y);
+            if (!labelBoxes) return;
+            const metrics = ctx.measureText(text);
+            const ascent = metrics.actualBoundingBoxAscent ?? size / 2;
+            const descent = metrics.actualBoundingBoxDescent ?? size / 2;
+            labelBoxes.push({x: p.x - metrics.width / 2, y: p.y + y - ascent,
+                w: metrics.width, h: ascent + descent});
+        };
         if (cardinal && showCardinals) {
             ctx.font = `bold ${textSize}px Arial`;
             ctx.fillStyle = "#b8c9da";
-            ctx.fillText(compassNames[az / 45], 0, -length - textSize * 0.8);
+            drawLabel(compassNames[az / 45], -length - textSize * 0.8, textSize);
         }
         if (major && showDegrees) {
             ctx.font = `${numberSize}px Arial`;
             ctx.fillStyle = "#e6ecf4";
-            ctx.fillText(`${az}°`, 0, numberSize + 1);
+            drawLabel(`${az}°`, numberSize + 1, numberSize);
         }
         ctx.restore();
     }

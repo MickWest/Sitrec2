@@ -1,6 +1,7 @@
 import {videoSkyProjection, projectSkyPoint} from "../VideoSkyProjection";
 import {ConstellationLabelLayout} from "../ConstellationLabelLayout";
-import {DEEP_SKY_OBJECTS, PLEIADES, PLEIADES_STARS, deepSkyCategory, groupPleiades} from "../DeepSkyObjects";
+import {CelestialLabelLayout, celestialLabelDensity} from "../CelestialLabelLayout";
+import {DEEP_SKY_OBJECTS, PLEIADES, PLEIADES_STARS, PROMINENT_DEEP_SKY_IDS, deepSkyCategory, groupPleiades} from "../DeepSkyObjects";
 import {SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
@@ -289,10 +290,12 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 this.ctx.textAlign = "left";
                 this.ctx.fillStyle = "#ffffff";
                 this._groupPleiades = false;
-                if (skyOpacity < 1 && (this.showDeepSkyObjects || (showStarNames && !this.onlyLabelPlanets))) {
-                    this.renderDeepSkyObjects(camera, earthSphere, actualCameraPosition, date, showStarNames, starAlpha);
-                }
-                if (showStarNames) this.renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha);
+                this.collectCelestialLabels(() => {
+                    if (skyOpacity < 1 && (this.showDeepSkyObjects || (showStarNames && !this.onlyLabelPlanets))) {
+                        this.renderDeepSkyObjects(camera, earthSphere, actualCameraPosition, date, showStarNames, starAlpha);
+                    }
+                    if (showStarNames) this.renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha);
+                });
                 if (showPoints) this.renderVideoPoints(camera, date);
                 if (this.showSatelliteNames) this.renderSatelliteNames(this.displayedCamera(live), earthSphere, starAlpha);
                 if (this.showConstellationNames && skyOpacity < 1) {
@@ -306,9 +309,43 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         } else withDisplayedCamera(this.overlayView, draw);
     }
 
-    // Point names stay fixed to their objects. Their measured text bounds reserve
-    // space for the constellation names, which are placed after all point names.
-    drawCelestialPointLabel(text, x, y, opacity = 1) {
+    // Select stars, planets and deep-sky objects together before drawing any of
+    // them. Satellite labels retain their own count and visibility controls.
+    collectCelestialLabels(draw) {
+        this._celestialLabelCandidates = [];
+        this.ctx.save();
+        try {
+            draw();
+            this._celestialLabelLayout ??= new CelestialLabelLayout();
+            const placed = this._celestialLabelLayout.place(this._celestialLabelCandidates,
+                this.celestialLabelRect(), this.nightSky.celestialLabelDensity, this._celestialLabelBoxes);
+            this._celestialLabelCandidates = null;
+            for (const label of placed) {
+                this.ctx.fillStyle = label.color;
+                this.ctx.globalAlpha = label.alpha;
+                label.drawMarker?.();
+                this.drawCelestialPointLabel(label.text, label.x, label.y);
+            }
+        } finally {
+            this._celestialLabelCandidates = null;
+            this.ctx.restore();
+        }
+    }
+
+    // Point names stay fixed to their objects. Their measured text bounds also
+    // reserve space for constellation names, which are placed after point names.
+    drawCelestialPointLabel(text, x, y, opacity = 1, options) {
+        if (options && this._celestialLabelCandidates) {
+            if (this.ctx.globalAlpha === 0 || opacity === 0) return;
+            const metrics = this.ctx.measureText(text);
+            const ascent = metrics.actualBoundingBoxAscent ?? this.nightSky.celestialLabelSize ?? 12;
+            const descent = metrics.actualBoundingBoxDescent ?? 3;
+            this._celestialLabelCandidates.push({...options, text, x, y,
+                box: {x, y: y - ascent, w: metrics.width, h: ascent + descent},
+                color: this.ctx.fillStyle, alpha: this.ctx.globalAlpha});
+            return;
+        }
+        options?.drawMarker?.();
         this.ctx.fillText(text, x, y);
         if (!this._celestialLabelBoxes || this.ctx.globalAlpha === 0 || opacity === 0) return;
         const size = this.nightSky.celestialLabelSize ?? 12;
@@ -353,7 +390,6 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         this._groupPleiades = !!(showStarNames && !this.onlyLabelPlanets && pleiadesMarker
             && groupPleiades(pleiadesMarker.radius * 2, sky.groupPleiades !== false)
             && (!sky.labelListPrefixes || sky.labelPassesAny(["Pleiades", "M45", "M 45"])));
-        const boxes = [];
         ctx.save();
         ctx.globalAlpha *= alpha;
         for (const object of DEEP_SKY_OBJECTS) {
@@ -367,17 +403,20 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             if (!point) continue;
             const {x, y, radius} = point;
             const labelX = x + radius + 5, labelY = y + 4;
-            const width = ctx.measureText(name).width, height = sky.celestialLabelSize ?? 12;
-            const box = [labelX, labelY - height, labelX + width, labelY + 2];
-            if (!grouped && boxes.some(b => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
-            boxes.push(box);
-            ctx.strokeStyle = ctx.fillStyle = category === "Galaxies" ? "#efaa99" : category === "Clusters" ? "#e7d28c" : "#9fd4ca";
-            ctx.lineWidth = 0.7;
-            ctx.setLineDash(category === "Clusters" ? [2, 3] : []);
-            ctx.beginPath();
-            ctx.ellipse(x, y, radius, category === "Galaxies" ? Math.max(3, radius * 0.55) : radius, 0, 0, 2 * Math.PI);
-            ctx.stroke();
-            this.drawCelestialPointLabel(name, labelX, labelY);
+            const color = category === "Galaxies" ? "#efaa99" : category === "Clusters" ? "#e7d28c" : "#9fd4ca";
+            ctx.fillStyle = color;
+            this.drawCelestialPointLabel(name, labelX, labelY, alpha, {
+                id: `deepSky:${object.id}`, kind: "deepSky", magnitude: object.mag,
+                prominent: PROMINENT_DEEP_SKY_IDS.has(object.id),
+                drawMarker: () => {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 0.7;
+                    ctx.setLineDash(category === "Clusters" ? [2, 3] : []);
+                    ctx.beginPath();
+                    ctx.ellipse(x, y, radius, category === "Galaxies" ? Math.max(3, radius * 0.55) : radius, 0, 0, 2 * Math.PI);
+                    ctx.stroke();
+                },
+            });
         }
         ctx.restore();
     }
@@ -455,6 +494,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             showCardinals: this.nightSky.showHorizonCompassCardinals,
             showDegrees: this.nightSky.showHorizonCompassHeadings,
             pixelsPerDegree,
+            labelBoxes: this._celestialLabelBoxes,
         });
     }
 
@@ -463,6 +503,10 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
      * the asterism lines, with their own visibility switch.
      */
     renderConstellationNames(camera, earthSphere, actualCameraPosition, date) {
+        if (celestialLabelDensity(this.nightSky.celestialLabelDensity) === 0) {
+            this._constellationLayout?.place([], this.celestialLabelRect());
+            return;
+        }
         const labels = this.constellationLabels();
         if (!labels) return;
 
@@ -583,7 +627,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
                 if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                     const [x, y] = this.labelXY(pos);
-                    this.drawCelestialPointLabel(starName, x + 5, y - 5, starAlpha)
+                    this.drawCelestialPointLabel(starName, x + 5, y - 5, starAlpha,
+                        {id: `star:${HR}`, kind: "star", magnitude: mag});
                 }
             }
         }
@@ -603,7 +648,8 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             if (pos.z > -1 && pos.z < 1 && pos.x >= -1 && pos.x <= 1 && pos.y >= -1 && pos.y <= 1) {
                 const [x, y] = this.labelXY(pos);
-                this.drawCelestialPointLabel(name, x + 5, y - 5, starAlpha)
+                this.drawCelestialPointLabel(name, x + 5, y - 5, starAlpha,
+                    {id: `planet:${name}`, kind: "planet", magnitude: planet.mag});
             }
         }
     }
