@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.202.1 (2026-11-18)
+
+### New Features
+- **Label density** (Show → Celestial → Labels → *Labels*): this new slider sets how many star, planet and deep-sky names show in the Main, Look and Video views. At the default, 0.25, about a quarter of the names that fit without overlap show, brightest first. At 1, every name that fits shows. At 0, these names and the constellation names are hidden. Satellite names keep their own controls. The setting is saved with the sitch, and a sitch saved by an earlier version starts at 0.25.
+
+### Improvements
+- **Star, planet and deep-sky names** (Show → Celestial → Labels): the names no longer cover each other or the text of the horizon compass. When names compete for space, the brighter object wins, and ordinary deep-sky objects give way to stars and planets. A few prominent deep-sky objects, such as Andromeda, the Orion Nebula and the Pleiades, compete by brightness. A deep-sky object whose name is not shown also loses its outline. A name that would be cut off at the edge of the view is not shown. Constellation names now also keep clear of the compass text.
+- **Star identification starts with bright stars** (Video → Star Tracker → *Identify Stars (catalog)*): on a star map with 100 or more stars, Sitrec now searches first with 25 bright point sources. It checks the result against 75 other stars that the search did not use. If both agree, identification stops there and does not match thousands of faint stars, and the Star Tracker then names only the stars in that sample. If they do not agree, it tries 50 and then 100 sources, and then the searches of earlier versions. The status shows the size of the search and the number of independent checks.
+
+### Bug Fixes
+- Fixed the Star Tracker's analysis and identification slowing down while the browser tab is in the background (Video → Star Tracker).
+
 ## Version 2.202.0 (2026-11-18)
 
 ### New Features
