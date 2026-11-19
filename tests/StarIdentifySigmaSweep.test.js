@@ -140,7 +140,14 @@ describe("depth 9 does not re-admit the known impostors", () => {
         expect(Math.abs(solved.centerRaDeg - TRUE_RA)).toBeLessThan(1);
         expect(Math.abs(solved.centerDecDeg - TRUE_DEC)).toBeLessThan(1);
         expect(solved.matches.length).toBeGreaterThanOrEqual(10);
-        expect(solved.rmsPx).toBeLessThan(3);
+        // Canonical correspondences recover a twelfth tolerance-level match here. Keep
+        // checking the eleven previously established identities as well as fit precision.
+        expect(solved.rmsPx).toBeLessThan(3.5);
+        const named = new Map(solved.matches.map(m => [m.image, m.hip]));
+        for (const [image, hip] of [[0, 84345], [1, 83000], [2, 85355], [3, 82028],
+            [4, 84671], [5, 83430], [6, 85450], [11, 84177], [12, 85139], [13, 82316], [15, 82673]]) {
+            expect(named.get(image)).toBe(hip);
+        }
         // And the impostor path stays dead: the wide tier alone must still refuse this input
         // (its Cassiopeia-region candidates were chance, and remain executed).
         const wideOnly = await solveField(occluded.stars, catalog, [indexes[3]],

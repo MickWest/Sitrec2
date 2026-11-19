@@ -2461,35 +2461,43 @@ export async function identifyStars(opts = {}) {
         }
 
         let solved = null;
-        for (const tier of tierOrder) {
-            await ensureIndex(tier);
-            if (!fresh()) return;
-            searchLabel = `tier ${tier + 1}`;
-            setStatus(`matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`);
-            await yieldToBrowser();
-            // The reference frame is frame-0 pixels, but a panning clip carries the star map
-            // far beyond the frame-0 rectangle - stars that entered the view later live at
-            // reference positions outside it, and confining the solver's bounds to the video
-            // rect makes those stars unmatchable while still counting them in the consensus
-            // denominator (a wide-range solve fails outright on exactly the map that has the
-            // MOST evidence). The field is therefore the UNION of the video rectangle and the
-            // map's own bounding box: never smaller than the frame - so a sparse or lopsided
-            // sky cannot misstate a narrow field - and exactly as large as the pan made it.
-            const {bx0, by0, bx1, by1} = starBounds(stars);
-            const boundsPad = 12;
-            solved = await solveField(stars, catalog, [quadIndexes[tier]], {
-                ...(myResult.videoW ? {
-                    center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
-                    width: Math.max(bx1 - bx0, by1 - by0),
-                    bounds: [bx0 - boundsPad, by0 - boundsPad, bx1 + boundsPad, by1 + boundsPad],
-                } : {}),
-                ...commonSolveOpts,
-            });
-            if (!fresh()) return;
-            if (solved.ok) break;
-        }
+        const denseStill = myResult.still && stars.length > 200;
+        const solveFullField = async () => {
+            for (const tier of tierOrder) {
+                await ensureIndex(tier);
+                if (!fresh()) return;
+                searchLabel = `tier ${tier + 1}`;
+                setStatus(`matching against ${quadIndexes[tier].n} catalog quads (tier ${tier + 1})`);
+                await yieldToBrowser();
+                // The reference frame is frame-0 pixels, but a panning clip carries the star map
+                // far beyond the frame-0 rectangle - stars that entered the view later live at
+                // reference positions outside it, and confining the solver's bounds to the video
+                // rect makes those stars unmatchable while still counting them in the consensus
+                // denominator (a wide-range solve fails outright on exactly the map that has the
+                // MOST evidence). The field is therefore the UNION of the video rectangle and the
+                // map's own bounding box: never smaller than the frame - so a sparse or lopsided
+                // sky cannot misstate a narrow field - and exactly as large as the pan made it.
+                const {bx0, by0, bx1, by1} = starBounds(stars);
+                const boundsPad = 12;
+                solved = await solveField(stars, catalog, [quadIndexes[tier]], {
+                    ...(myResult.videoW ? {
+                        center: [(bx0 + bx1) / 2, (by0 + by1) / 2],
+                        width: Math.max(bx1 - bx0, by1 - by0),
+                        bounds: [bx0 - boundsPad, by0 - boundsPad, bx1 + boundsPad, by1 + boundsPad],
+                    } : {}),
+                    ...commonSolveOpts,
+                });
+                if (!fresh()) return;
+                if (solved.ok) break;
+            }
+        };
+        // Finding the pattern in a bright sample avoids projecting and matching thousands
+        // of faint detections for every hypothesis. Full-set certification still follows.
+        if (!denseStill) await solveFullField();
+        if (!fresh()) return;
         if (!solved || !solved.ok) {
-            // FAILURE LADDER. A knife-edge input - one or two marginal tracks the solver
+            // Bright samples for dense stills, or a failure ladder for other inputs.
+            // A knife-edge input - one or two marginal tracks the solver
             // cannot digest - can starve quad generation while the field remains perfectly
             // solvable from its reliable core (measured: inputs that failed outright solved
             // from their 11-12 most persistent tracks). So retry on progressively smaller
@@ -2506,18 +2514,23 @@ export async function identifyStars(opts = {}) {
                     bounds: [bx0 - 12, by0 - 12, bx1 + 12, by1 + 12],
                 };
             };
-            for (const cap of RESCUE_CAPS) {
+            // A dense still needs a bright-star sample large enough to span the field.
+            // The small video retries can contain mostly planets and bloomed stars, while
+            // ranking against thousands of faint sources rejects the bright stars as large.
+            const rescueCaps = denseStill ? [50, 100, ...RESCUE_CAPS] : RESCUE_CAPS;
+            for (const cap of rescueCaps) {
                 if (stars.length <= cap) continue;
                 const view = [...stars]
                     .sort((a, b) => b.n - a.n || a.mag - b.mag || a.index - b.index)
                     .slice(0, cap);
-                setStatus(`identify failed - retrying with the ${cap} most persistent stars`);
+                setStatus(`${denseStill ? "matching" : "identify failed - retrying with"} the ${cap} `
+                    + (myResult.still ? "brightest stars" : "most persistent stars"));
                 await yieldToBrowser();
                 let attempt = null;
                 for (const tier of tierOrder) {
                     await ensureIndex(tier);
                     if (!fresh()) return;
-                    searchLabel = `${cap}-star retry, tier ${tier + 1}`;
+                    searchLabel = `${cap}-star search, tier ${tier + 1}`;
                     attempt = await solveField(view, catalog, [quadIndexes[tier]], {
                         ...(myResult.videoW ? boundsOpts(view) : {}),
                         ...commonSolveOpts,
@@ -2526,13 +2539,21 @@ export async function identifyStars(opts = {}) {
                     if (attempt.ok) break;
                 }
                 if (!attempt?.ok) continue;
-                const cert = certifySolve(attempt, stars, catalog, commonSolveOpts);
+                const cert = certifySolve(attempt, stars, catalog, {
+                    ...(myResult.still ? boundsOpts(stars) : {}),
+                    ...commonSolveOpts,
+                    refine: denseStill && cap >= 50,
+                });
                 if (!cert.ok) continue;
-                solved = {...attempt, matches: cert.matches, nImage: cert.nImage,
+                solved = {...(cert.refinedSolve ?? attempt), matches: cert.matches, nImage: cert.nImage,
                     matchedFraction: cert.matchedFraction, rmsPx: cert.rmsPx,
                     tolPx: cert.tolPx, certifiedFromCap: cap};
                 break;
             }
+        }
+        if (denseStill && !solved?.ok) {
+            await solveFullField();
+            if (!fresh()) return;
         }
         if (!solved || !solved.ok) {
             params.status = `identify failed: ${solved ? solved.reason : "no result"}`;

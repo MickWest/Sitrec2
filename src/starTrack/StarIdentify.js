@@ -313,6 +313,12 @@ export function unGnomonic(xi, eta, c, b) {
  * which pair is "most separated" flips under noise and the code becomes unstable.
  */
 export function quadCode(pts) {
+    return canonicalQuad(pts)?.code ?? null;
+}
+
+// Keep the star correspondence in the same canonical order as the hash. Equal codes
+// describe the same geometry even when the input arrays enumerate the stars differently.
+function canonicalQuad(pts) {
     let ai = 0, bi = 1, best = -1;
     for (let i = 0; i < 4; i++) {
         for (let j = i + 1; j < 4; j++) {
@@ -342,9 +348,13 @@ export function quadCode(pts) {
     if (C[0] + D[0] > 1) {
         C = [1 - C[0], 1 - C[1]];
         D = [1 - D[0], 1 - D[1]];
+        [ai, bi] = [bi, ai];
     }
-    if (C[0] > D[0]) { const t = C; C = D; D = t; }
-    return [C[0], C[1], D[0], D[1]];
+    if (C[0] > D[0]) {
+        [C, D] = [D, C];
+        [rest[0], rest[1]] = [rest[1], rest[0]];
+    }
+    return {code: [C[0], C[1], D[0], D[1]], order: [ai, bi, ...rest]};
 }
 
 /** The C(k,3) index triples for k up to 8, precomputed once. */
@@ -412,10 +422,11 @@ export function buildQuadIndex(catalog, tier) {
         for (const [i1, i2, i3] of tri) {
             if (i1 >= k || i2 >= k || i3 >= k) break;
             if (!proj[i1] || !proj[i2] || !proj[i3]) continue;
-            const code = quadCode([anchor, proj[i1], proj[i2], proj[i3]]);
-            if (!code) continue;
-            codes.push(code);
-            quads.push([bright[a], bright[near[i1][1]], bright[near[i2][1]], bright[near[i3][1]]]);
+            const canonical = canonicalQuad([anchor, proj[i1], proj[i2], proj[i3]]);
+            if (!canonical) continue;
+            codes.push(canonical.code);
+            const stars = [bright[a], bright[near[i1][1]], bright[near[i2][1]], bright[near[i3][1]]];
+            quads.push(canonical.order.map(i => stars[i]));
         }
     }
 
@@ -787,8 +798,9 @@ async function solveFieldInner(imageStars, catalog, indexes, opts) {
                 (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2))));
             for (const mirrored of [false, true]) {
                 const mp = mirrored ? pts.map((p) => [p[0], -p[1]]) : pts;
-                const code = quadCode(mp);
-                if (code) imageQuads.push({quad, code, mirrored, diam, reach: i3});
+                const canonical = canonicalQuad(mp);
+                if (canonical) imageQuads.push({quad: canonical.order.map(i => quad[i]),
+                    code: canonical.code, mirrored, diam, reach: i3});
             }
         }
     }
@@ -1118,18 +1130,22 @@ function consensusDetail(O, nImage, nMatches, nProjected, expected) {
  * a wrong field to an over-detected one.
  */
 function verifyHypothesis(imageStars, mirrored, T, c0, b0, P, catQ, catalog, deep, deepVec, tolPx, width, centerPx, bounds, O, best) {
-    // Where does this hypothesis put the image centre? Re-anchor there and refit the quad.
-    const cPlane = applySim(T, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
-    const c1 = unGnomonic(cPlane[0], cPlane[1], c0, b0);
-    const b1 = tangentBasis(c1);
-    const Q1 = [];
-    for (const ci of catQ) {
-        const g = gnomonic(raDecToVec(catalog.ra[ci], catalog.dec[ci]), c1, b1);
-        if (!g) { diagCount("rej.recentreBehind"); return null; }
-        Q1.push(g);
+    // Refitting moves the inferred optical axis too. One step leaves a wide field's
+    // off-centre quad in the wrong projection; converge before looking for other stars.
+    const dirs = catQ.map(ci => raDecToVec(catalog.ra[ci], catalog.dec[ci]));
+    let c1 = c0, b1 = b0, T1 = T;
+    for (let round = 0; round < 12; round++) {
+        const cPlane = applySim(T1, centerPx[0], mirrored ? -centerPx[1] : centerPx[1]);
+        const next = unGnomonic(cPlane[0], cPlane[1], c1, b1);
+        const moved = Math.hypot(...next.map((v, i) => v - c1[i]));
+        c1 = next;
+        b1 = tangentBasis(c1);
+        const Q1 = dirs.map(d => gnomonic(d, c1, b1));
+        if (Q1.some(g => !g)) { diagCount("rej.recentreBehind"); return null; }
+        T1 = fitSimilarityFree(P, Q1);
+        if (!T1) { diagCount("rej.recentreFit"); return null; }
+        if (moved < 1e-7) break;
     }
-    const T1 = fitSimilarityFree(P, Q1);
-    if (!T1) { diagCount("rej.recentreFit"); return null; }
 
     const pm = projectAndMatch(imageStars, mirrored, T1, c1, b1, deep, deepVec, tolPx, width, centerPx, bounds,
         catalog, undefined, O.visibilityMask, O.visibleArea);
@@ -1385,6 +1401,7 @@ function finishSolve(best, imageStars, catalog, deep, deepVec, tolPx, width, cen
  */
 export function certifySolve(solved, fullStars, catalog, opts = {}) {
     if (!solved?.ok || !solved.model) return {ok: false, reason: "nothing to certify"};
+    const originalStars = fullStars;
     const O = {...STAR_IDENTIFY_DEFAULTS, ...opts};
     const originalIndices = fullStars.map((s, i) => i)
         .filter(i => !starIsMasked(O.visibilityMask, fullStars[i].x, fullStars[i].y));
@@ -1423,6 +1440,21 @@ export function certifySolve(solved, fullStars, catalog, opts = {}) {
         || !consensusMet(O, fullStars.length, pm.matches.length, pm.nProjected, pm.expected)) {
         return {ok: false, reason: "pose does not hold the full set's consensus",
             matches: pm.matches.map(m => ({...m, image: originalIndices[m.image]})), nImage: fullStars.length};
+    }
+    // Bright-star retries establish the field, but all the verified stars can improve its
+    // precision. Refine only AFTER full-set acceptance, then certify the new pose again.
+    // The optional returned solve carries the same original image indices as this certificate.
+    if (opts.refine) {
+        const refined = finishSolve({...solved.model, ...pm}, fullStars, catalog, deep, deepVec,
+            tolPx, width, centerPx, bounds, {...O, visibleArea: area,
+                refineRounds: Math.max(O.refineRounds, 6)});
+        if (refined.ok) {
+            const cert = certifySolve(refined, originalStars, catalog, {...opts, refine: false});
+            if (cert.ok) {
+                refined.matches = refined.matches.map(m => ({...m, image: originalIndices[m.image]}));
+                return {...cert, refinedSolve: refined};
+            }
+        }
     }
     let sse = 0;
     for (const m of pm.matches) sse += m.dPx * m.dPx;
