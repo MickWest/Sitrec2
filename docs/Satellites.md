@@ -17,10 +17,11 @@ from that date.
 This page is a reference for every control. For a step-by-step guide to recreating a
 Starlink flare sighting, see [Investigating Starlink Flares With Sitrec](Starlink.md).
 
-The top of the menu starts with current active-satellite and dated LEO downloads, then
-name/NORAD search, **Filter TLEs**, and the category folder. **Sun Angle Arrows**, **Flare Band**,
-**Look towards flare region**, the independent M/L **Flare Region** switches, and master
-visibility follow. Other controls are grouped:
+The top of the menu has **Show Satellites (Global)**, **Autoload**, catalog status, **Refresh**,
+the **Show** selector, brightness and Main/Look labels. **Sun Angle Arrows**, **Flare Band**,
+the independent M/L **Flare Region** switches and **Look towards flare region** are also on
+the main menu. Open **Advanced** for name/NORAD search, manual downloads, **Filter TLEs**
+and these folders:
 
 | Submenu | Controls |
 |---|---|
@@ -31,14 +32,14 @@ visibility follow. Other controls are grouped:
 | **Brightness** | Look-view brightness and magnitude limit; **Lighting & Flare Models** inside it holds the brightness model, Starlink design, sunlight model, flare geometry, and legacy appearance settings |
 
 The master **Show Satellites (Global)** switch applies to both views. M/L switches control only
-their own view. The separate [satellite viewing panel](Starlink.md#satellite-controls)
-is available from **Satellite Controls** at the top of this menu.
-It starts enabled in the Starlink Horizon Flares (LIVE) preset.
+their own view. The Starlink Horizon Flares (LIVE) preset opens the standard
+[Satellites, Time and Camera menus](Starlink.md#satellites-time-and-camera-menus).
 
 New custom sitches automatically use **light-blue simulated Starlink satellites** when no orbit
 data is loaded, or no loaded element set is within seven days of the viewing time. The stats
-and viewing panel say **Simulated Starlink**. Loaded catalogs remain intact and return
-automatically when the time is in range. **Orbit Data → Simulate unavailable satellites**
+show **Simulated Starlink** and the menu says **Simulated satellites**. Loaded catalogs remain
+intact and return automatically when the time is in range.
+**Advanced → Orbit Data → Simulate unavailable satellites**
 turns this fallback on and off and is saved with the sitch. A sitch that was saved before the
 fallback existed loads with it off, so the sitch looks as it did when it was saved.
 
@@ -64,18 +65,22 @@ and do not treat simulation IDs as NORAD numbers.
 
 ## Loading satellite data
 
-No satellites are shown until TLE data is loaded. There are three ways to load it: from the
-server with a button in the Satellites menu, by dragging a file into Sitrec, or by pasting the
-lines of a TLE into the Sitrec window.
+Load orbital data from the server, drag an orbit file into Sitrec, or paste the lines of a TLE
+into the Sitrec window. With the simulation fallback enabled, the views can also show
+approximate Starlink positions while real orbital data is unavailable.
 
 ### From the server
 
-**Satellites → Load CURRENT Active Satellites / Load LEO Satellites For Date**. Other downloads, including the current Starlink-only feed, are in **Satellites → Orbit Data**.
+Where the server supports it, **Autoload** loads orbital data when satellites are shown.
+With the Time menu focused, it waits until the viewing date has stayed unchanged for 15
+seconds or the menu loses focus. **Refresh** requests the catalog for the playhead date
+immediately. A current request includes payloads, rocket bodies and debris. A past request
+loads historical orbital data for the selected date. Both preserve display filters. Turn
+off **Autoload** to keep a saved or imported catalog while changing the time.
 
-The live Starlink preset loads the current active catalog by default, including Starlink and
-other active satellites. This excludes inactive objects and debris; the dated ALL download
-below has a different purpose. If the installation has no active-catalog source configured,
-the preset uses its existing Starlink source. Saved sitches retain their saved orbital data.
+For manual downloads, open **Satellites → Advanced**. **Load CURRENT Active Satellites**
+and **Load LEO Satellites For Date** appear there when configured. Other feeds can appear in
+**Orbit Data**.
 
 | Button | What it loads |
 |---|---|
@@ -127,10 +132,10 @@ It does not turn on **Starlink** or **ISS** for you.
 
 ### Is the data good for this time?
 
-When TLE data is loaded, the top right of the main view shows the date range the data covers,
+When TLE data is loaded, an overlay in Main (or Look in **Sky + overview**) shows the date range,
 and **In Range**, the percentage of the shown satellites that Sitrec can place at the sitch
 time. The date range is the oldest and newest element dates in the data (UTC), not the date
-you asked for. **Satellites → Orbit Data → TLEs From** and **TLEs To** show the
+you asked for. **Satellites → Advanced → Orbit Data → TLEs From** and **TLEs To** show the
 same two dates, or *None loaded*.
 
 A satellite whose elements are more than 90 days from the sitch time is not drawn. A satellite
@@ -139,7 +144,7 @@ each satellite in a dated load from Space-Track. An older saved set, or one the 
 before launch days were added, does not have them, and Sitrec then draws every satellite as
 before. Because only the day is known, a
 satellite is still drawn earlier on its launch day. The
-text at the top right of the main view is green when **In Range** is 100%, yellow from 95% up
+**In Range** text is green when **In Range** is 100%, yellow from 95% up
 to 100%, and red below 95%. If it is red, load the data for the sitch date.
 
 **In Range** does not measure accuracy. Elements age, and Starlink satellites change their
@@ -168,7 +173,7 @@ the missing satellites. See
 
 ## Which satellites are shown
 
-**Satellites → Selection & Filters**. The master switch and search stay at the top level.
+**Satellites → Advanced → Selection & Filters**. The master switch stays at the top level, and search is at the top of **Advanced**.
 
 Each satellite belongs to a category by its name or catalog number. A satellite is shown if any
 switch that applies to it is on.
@@ -197,7 +202,7 @@ number. Other satellites are white.
 
 ## Filter TLEs
 
-**Satellites → Filter TLEs**; **Clear TLE Filter** is in **Selection & Filters**.
+**Satellites → Advanced → Filter TLEs**; **Clear TLE Filter** is in **Selection & Filters**.
 
 **Filter TLEs** opens a window for narrowing down a large catalog by position, name or orbit.
 It works on top of the category switches: a satellite must pass both to be shown. You need TLE
@@ -257,7 +262,7 @@ detail fails a checked filter.
 
 ## Brightness and flares
 
-**Satellites → Brightness** for **Sat Brightness** and the magnitude limit. Its **Lighting & Flare Models** submenu holds the model settings.
+Use **Brightness** on the main menu to adjust the Look view. Open **Satellites → Advanced → Brightness** for the magnitude limit and **Lighting & Flare Models** for model settings, including **Sat Cut-Off**.
 
 A flare is sunlight reflected from a flat surface on the satellite, as from a mirror. The flare
 calculation assumes that this surface faces straight down. The **off-specular angle** is how many
@@ -368,7 +373,7 @@ peak magnitude of each flare with this model, for an unknown design.
 ## Arrows, lines and labels
 
 **Sun Angle Arrows**, **Flare Band**, and **Flare Region** are at the top level.
-Other arrows and lines are in **Satellites → Tracks & Guides**; labels are in **Satellites → Labels**.
+Other arrows and lines are in **Satellites → Advanced → Tracks & Guides**; labels are in **Satellites → Advanced → Labels**.
 
 In custom sitches, **Look towards flare region** aims the look camera once at the calculated
 550 km reflection region, even if the region marker is hidden. It selects Manual heading and
@@ -409,7 +414,7 @@ to that satellite.
 
 ## Satellite to Track
 
-**Satellites → Tracks & Guides → Satellite to Track / Satellite to Track 2**
+**Satellites → Advanced → Tracks & Guides → Satellite to Track / Satellite to Track 2**
 
 In a custom sitch, these two text fields each turn one satellite's orbit into a track for the
 whole sitch, named **Satellite** and **Satellite 2**. Type a name or a catalog number. The start
@@ -511,8 +516,7 @@ combined data.
 
 ### No satellites appear
 
-- Check that TLE data is loaded: the date range and **In Range** show at the top right of the
-  main view, and the date range shows in **Satellites → TLEs From** and **TLEs To**.
+- Check that TLE data is loaded: check the orbit overlay in Main or Look, or open **Satellites → Advanced → Orbit Data → TLEs From** and **TLEs To**.
 - Check **Show Satellites (Global)** and the category switches. A satellite that is in no
   category needs **Other Satellites**.
 - Check **Sat Brightness** is not 0. If the look view shows few satellites, lower **Sat Cut-Off**:

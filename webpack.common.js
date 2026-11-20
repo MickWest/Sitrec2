@@ -357,6 +357,8 @@ module.exports = (env = {}) => ({
                                 } while (markdownContent !== prevContent);
                                 markdownContent = rewriteMdLinks(markdownContent);
                                 const bodyContent = addHeadingIds(md.render(markdownContent));
+                                const stylesheet = path.relative(path.dirname(outputPath), path.join(outputDir, 'github-markdown.css'))
+                                    .split(path.sep).join('/');
                                 
                                 // Extract title from first H1 or use filename
                                 const titleMatch = markdownContent.match(/^#\s+(.+)$/m);
@@ -368,7 +370,7 @@ module.exports = (env = {}) => ({
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${title}</title>
-    <link rel="stylesheet" href="github-markdown.css">
+    <link rel="stylesheet" href="${stylesheet}">
 </head>
 <body>
 ${bodyContent}

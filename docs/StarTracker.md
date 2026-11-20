@@ -421,51 +421,67 @@ Star blobs are a few pixels across, but *how many* depends on the camera, the fo
 
 ![Detection](star-images/detection.svg)
 
-Each frame is reduced to brightness alone (luma), and the **sky level is measured per tile** rather than once for the whole frame — night footage is rarely evenly lit, and one global threshold either loses the faint stars in the dark corner or floods the bright one with false detections. Each tile's level is a *sigma-clipped* median: samples well above the running median are discarded and it is re-measured, which stops a bright source from dragging up the very background it is measured against.
+Sitrec measures a sigma-clipped median sky level in each tile of the frame's luma. Local
+thresholds help detect faint stars in dark corners without flooding bright areas with
+false detections. Sigma clipping keeps bright sources from raising their own background.
 
-Detection then runs on a blurred copy (a matched filter, which favours things the size of a star) while measurement runs on the raw pixels. Connected bright pixels are flood-filled into blobs, and each blob is judged on area, elongation, signal-to-noise, color evidence and whether it touches the frame edge. A blob that holds more than one peak is **split**. That is two stars close enough to merge into a single blob, or a bright star with a fainter star inside its halo. The peaks are found by a dip in brightness along the line that joins them. The blob is divided along those dips, and the part that holds the biggest peak is measured as the source. The biggest peak is the brightest one. When more than one peak is at the clip level, it is the one whose part holds the most light. The other parts are not measured, so the fainter star of a merged pair gets no circle. The limit on area is applied to the whole blob.
+A matched filter detects bright pixels at the expected star size. Sitrec flood-fills them
+into blobs and measures them on the raw image, checking area, elongation, signal-to-noise,
+color and contact with the frame edge. It splits multi-peak blobs at dips between peaks
+and measures only the part with the brightest peak. If peaks clip, it keeps the part with
+the most light. The area limit applies to the whole blob.
 
-Almost nothing is discarded without a record: each rejection is tallied with its reason, and a sample of individual cases is kept, both stored on the analysis result. The exceptions are specks below the minimum area, which are dropped during the flood fill, and the fainter parts of a split blob. Neither reaches the tally. Note these are **diagnostic records, not something drawn on the video** — *Show rejected* is a separate control covering tracks that failed *classification* later on.
+The result records rejection counts by reason and a sample of individual rejections.
+Sub-minimum specks and discarded parts of split blobs are excluded from the tally.
+**Show rejected** displays tracks that failed classification later in the pipeline.
 
 ### Stage 2 — undo the camera's motion
 
 ![Reference coordinates](star-images/reference-frame.svg)
 
-Between consecutive frames, the same stars appear in slightly different places. Matching them gives a flat **2D transform** — one rotation and one shift — describing how the camera moved. Scale is deliberately held fixed: letting it float lets a handful of hot pixels drag the fit. Chaining those steps gives, for every frame, a transform into a common **reference** grid.
+Sitrec estimates a shift and rotation between consecutive frames at fixed scale. Chaining
+the transforms puts all frames on one reference grid. Three matchers compete on each
+step: prediction from the previous motion, triangle matching and votes for a common offset.
+The match with the most supporting sources wins. Weak or missing matches are flagged.
+This stage also detects dust, hot pixels and reticles that stay fixed in the frame.
 
-Three matchers run: predict where each star should be from the previous step's motion; match triangle shapes, which works even after a jump because a triangle's shape does not depend on where the camera is pointing; and vote on a common offset. **All three are consulted every time and the one explaining the most sources wins**, because a tight cluster of stationary artifacts can look like a strong lock while the real field has shifted somewhere else entirely, registering the frame wrongly with no failure to show for it. Frames where nothing worked are recorded rather than papered over, and weakly-fitted frames are flagged so a chain that is partly guesswork does not look uniformly trustworthy.
-
-This stage also spots things **fixed in the frame** while the sky slides past — dust, hot pixels, a reticle.
+After a dropout the matcher can search recent trusted frames, using measured motion to
+guide it across a short gap. If matching fails on more than half the frame pairs, analysis
+stops before building the star map or fitting the lens. Try a shorter In/Out range with
+clear stars and check your detection settings.
 
 ### Stage 3 — build the map and judge what moved
 
-Detections are grouped into tracks **in reference coordinates**, not raw pixels. That matters: in reference coordinates a star barely moves however fast the camera pans, so the matching radius can be kept tight, which is what stops neighbouring stars being confused during a fast pan. (It is not free — where the frame registration is rough, a single real track can still fragment into several.)
-
-The map and the transforms are then refined together, which removes the drift that accumulates along a chain of frame-to-frame steps. After that, **a track's leftover residual against the map *is* its motion relative to the sky** — nothing has to be assumed about what the "normal" motion ought to be.
+Sitrec groups detections into tracks on the reference grid. Stars move little on this
+grid, so a tight matching radius helps distinguish neighbors during a fast pan. Rough
+registration can still split one track into several.
 
 ![Classification](star-images/classification.svg)
 
-Where there are enough confirmed stars to support it, the solve then runs a **second time using only those stars**. This matters more than it sounds: the first pass necessarily includes the movers and the artifacts, and those pull on the very transforms used to judge them. Re-solving on things that actually belong to the sky gives a cleaner map, and the classification is repeated against it. On a sparse field with too few confirmed stars the second pass is skipped and the first-pass verdicts stand.
+Sitrec refines the map and transforms together to reduce accumulated drift. Each track's
+remaining displacement measures its motion relative to the sky. If enough confirmed stars
+are available, a second pass uses only those stars to refine the map and repeat classification.
 
 ### Why fitting the lens matters
 
-Everything above treats the picture as flat. A real lens is not.
-
 ![Flat model versus fitted lens](star-images/flat-vs-sphere.svg)
 
-*Measured on one particular clip: a cropped wide-angle Starlink timelapse whose optical axis sits 336 px off centre, sampled at a single frame over the 231 stars observed in it. The figures show the shape of the problem, not a universal scale — on a narrow-field clip the flat model's error stays small everywhere.*
+With a wide lens, a rotation can move stars near the edge a different number of pixels than
+stars near the center. A crop can make this error asymmetric by shifting the optical axis.
+On the illustrated wide-angle clip, the axis was 336 px off center. At one frame, a
+homography still had 11.4 px error across 231 stars, close to the rigid fit's 11.7 px.
 
-The flat model moves the whole field of circles rigidly. But a wide lens *bends*: one rotation of the sky moves a star at the frame edge a different number of pixels than a star at the centre. A rigid model can therefore only be correct at one distance from the optical axis, and the error grows outward from there. A homography (a transform that maps one flat picture to another in perspective) does not rescue it either: it measured 11.4 px against the rigid model's 11.7. A homography describes a rotation of a distortion-free camera exactly, so what remains is the lens's own radial distortion.
+**Fit lens from stars** estimates focal length, optical axis and lens curve, then solves
+each frame as a 3D orientation. It needs two frames with enough shared stars and enough
+change in pointing to constrain the lens. Roll alone keeps every star the same distance
+from the optical axis. When the correspondences suggest an off-center axis, Sitrec first
+runs a coarse grid search.
 
-On a cropped clip the error is lopsided rather than symmetric, because a crop moves the optical axis away from the centre of the picture.
-
-With **Fit lens from stars** on, Sitrec measures the focal length, the position of the optical axis and the shape of the lens curve from the star field itself, then re-solves each frame as a genuine 3D orientation, placing each star from its own direction on the sky.
-
-The fit works from a pair of frames far enough apart to have moved appreciably (the *baseline*), sharing enough matched stars, and rotating in a way that actually exercises the lens. The rotation that tells you **nothing** is roll about the optical axis — spin the camera about its own line of sight and every star moves a long way while no star changes its distance from the axis, which is precisely the quantity a lens curve describes. A pan across the sky does constrain it. When the correspondences suggest the axis is *not* near the frame centre, a coarse grid search runs first, because on a cropped clip the true axis can be hundreds of pixels away; on a normally-centred clip that search is skipped.
-
-**It declines when the evidence does not support a fit**, and scores candidates against stars held out of the final fitting rather than only the ones it trained on. That is what makes it reasonable to leave on: on a clip that does not constrain a lens it says so in the **Lens** field and the flat model stands. The holdout score is not a fully independent test, because earlier stages of the search see all the correspondences.
-
-**What the lens fit does not change.** It improves the *verdicts* — which tracks are called stars — and the placement of the circles. It does **not** migrate the rest of the pipeline onto the sphere: detections are still associated in 2D, and star identification and cluster placement still work from the flat chart. See [Limitations](#limitations-and-when-it-refuses).
+Sitrec checks the fit against stars held out of final fitting. Earlier search stages still
+use those correspondences. If the fit is unsupported, the **Lens** field explains why and
+the flat result stands. The fit refines verdicts and circle placement. Detection association,
+star identification and cluster placement still use the flat chart. See
+[Limitations](#limitations-and-when-it-refuses).
 
 ### Stage 4 — group the movers
 

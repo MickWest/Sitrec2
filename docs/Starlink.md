@@ -104,9 +104,13 @@ Time in Sitrec is UTC (also called Zulu time). But it can also be displayed in a
 
 ### Step 2 - Load the satellites
 
-The Starlink sitch will load the **current** satellites, but often we are investigating a past event. If it's more than a day or two, set the date first, then click "Load LEO Satellites For Date" in the Satellites menu. The button uses the sitch date. For an event in the last five days, see "Wait a few days" below.
+With **Autoload** on, the live Starlink sitch loads the current catalog and updates it
+when you change to a past date. Use **Refresh** to request the catalog for the playhead date
+immediately. To load only the dated low-Earth-orbit payloads, turn off **Autoload** and choose
+**Satellites → Advanced → Load LEO Satellites For Date**, if available. For a recent event,
+check the date range of the loaded orbital data.
 
-Note the text in the top right of the main view. It shows the date range of the loaded TLEs (two-line element sets, the orbital data), then In Range, the percentage of the shown satellites that Sitrec can place at the current time. Check that the date range is close to the time of the event. In Range does not measure accuracy: a set several days from the event can still show In Range:100.0%. If the text is red (In Range below 95%), the data is far from the current time, so load the satellites for the date.
+Check the orbit text in the top right of Main, or in Look when using **Sky + overview**. It shows the date range of the loaded TLEs (two-line element sets, the orbital data), then In Range, the percentage of the shown satellites that Sitrec can place at the current time. Check that the date range is close to the time of the event. In Range does not measure accuracy: a set several days from the event can still show In Range:100.0%. If the text is red (In Range below 95%), the data is far from the current time, so load the satellites for the date.
 
 You can also drag in your own satellite data file.
 
@@ -126,7 +130,7 @@ For a flare investigation this matters. If the set ends before the event, the po
 are calculated forward from older elements, and a satellite launched after the set ends
 is not in it. For an event in the last day or two, the **current** satellites that the
 Starlink sitch loads are closer to the event than this set. Compare the dates in the top
-right of the main view with the time of the event. When the event is more than five days
+right of the view that shows the orbit overlay with the time of the event. When the event is more than five days
 old, load the date again.
 
 #### Reopening a saved sitch
@@ -163,7 +167,7 @@ If the camera is off in space, that means you've got the date/time very wrong. Y
 
 You can move the camera direction in the look view by dragging it. Use the mouse wheel to zoom in and out (or the "VFOV (deg)" slider in the Camera → FOV (Zoom) sub-folder).
 
-Set the direction from the evidence first: landmarks in the video, recognizable stars, or a witness report. Then compare it with the region of the sky where flares occur. To show that region, turn on "Flare Region" in the Satellites menu. Sitrec marks it with a red wire sphere (the region is drawn for a 550 km shell; see [Flare Region](Satellites.md#arrows-lines-and-labels)). To see it in the look view as well, also turn on "Flare Region in Look View". The region is valid only when the camera is inside the Flare Band. Outside the band, Sitrec still draws it, but no reflection need be close to it.
+Set the direction from the evidence first: landmarks in the video, recognizable stars, or a witness report. Then compare it with the region of the sky where flares occur. To show that region, turn on **M** on the **Flare Region** row in **Satellites**. Sitrec marks it with a red wire sphere (the region is drawn for a 550 km shell; see [Flare Region](Satellites.md#arrows-lines-and-labels)). To see it in the look view as well, also turn on **L** on the same row. The region is valid only when the camera is inside the Flare Band. Outside the band, Sitrec still draws it, but no reflection need be close to it.
 
 If you have no direction to start from, set "Camera Heading" to "Horizon Flare Region" (Camera menu, Heading sub-folder). The camera then points at the Sun's azimuth (its compass direction), 9 degrees above the horizon, and follows the Sun as time changes. In this mode, a drag in the look view does not move the camera, and Pan (Az), Tilt (El) and Relative Heading are disabled. To adjust the direction, set "Camera Heading" back to "Manual". The camera keeps its direction, and stops following the Sun.
 
@@ -203,10 +207,10 @@ If there's another plane in the view, then it's very helpful to drop in the trac
 
 ### Step 7 - Adjust Visuals
 
-Satellite and star visibility vary with lighting conditions, the weather, and the camera used. To match it, you can adjust the star brightness (View Menu) and limits (a cut-off for dim stars). For satellites, use Sat Brightness and Sat Cut-Off in the Satellites menu. Adjust these to get a good visual match with the video. They change the display only: a brightness that you set this way is not a measurement.
+Satellite and star visibility vary with lighting conditions, the weather, and the camera used. To match it, you can adjust the **Star Brightness** and **Star Limit** under **Show → Celestial → Stars and Planets**. For satellites, use **Brightness** in the Satellites menu and **Advanced → Brightness → Lighting & Flare Models → Sat Cut-Off**. Adjust these to get a good visual match with the video. They change the display only: a brightness that you set this way is not a measurement.
 
 You can also adjust the video itself under Video → Video Adjustments, mostly just for brightness in this case, but some of the other options (like the emboss convolution filter) can be helpful in spotting stars and satellites.
 
-Star names can be turned on with Show → Celestial → Labels → Star/Planet Names in Look and Star/Planet Names in Main. Satellite names can be toggled with Satellite Labels (Look View) and Satellite Labels (Main View) in the Satellites menu. Note that only the nearest satellites are labeled; raise the "Max Labels Displayed" slider in the Satellites menu to show more.
+Star names can be turned on with Show → Celestial → Labels → Star/Planet Names in Look and Star/Planet Names in Main. Use the **M** and **L** label switches in **Satellites** for Main and Look. Raise **Max Labels Displayed** in **Advanced → Labels** to show more.
 
-To display _just_ the flaring satellite labels, turn on one of these, then check "Label Flares Only" in the Satellites menu. To see the name and catalog number of a satellite, right-click it in a 3D view. See [The Satellites Menu](Satellites.md).
+To label only flaring satellites, enable labels for the view, then check **Label Flares Only** in **Satellites → Advanced → Labels**. To see the name and catalog number of a satellite, right-click it in a 3D view. See [The Satellites Menu](Satellites.md).
