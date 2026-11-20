@@ -40,9 +40,11 @@ For a side-by-side of video and simulation, use **Render Viewport Video** and se
 layout first with the view presets (`Alt`+`1` to `Alt`+`8`).
 
 The renders do not include every mark on screen. Viewport renders and a single-view render of the
-video view include the Video Readout, annotations, the Motion Analysis overlay and, while
-**Enable Point Track** is on, the Point Track cursor and trail. They leave out the Star Tracker's
-marks, which are a separate layer over the video view. To record those, use *Record Browser
+video view include the Video Readout, annotations, the Motion Analysis overlay, enabled
+[celestial overlays](Celestial.md) and, while **Enable Point Track** is on, the Point Track cursor
+and trail. Celestial names and lines enabled after a star solve use this normal export path,
+including their label density and a photo's saved sky registration. The Star Tracker's separate
+diagnostic circles, quad lines and analysis names are left out. To record those, use *Record Browser
 Window*, which captures the tab as shown. *Render Source Video* adds annotations only.
 
 Other tools have their own video exports, for example stabilized video in

@@ -78,7 +78,7 @@ To ask whether a shape comes from the camera or from the file: Diffraction Glare
 - [Point Tracking](docs/PointTrack.md) — follow an object through the video automatically, get a line of sight from it, and stabilize on it.
 - [Frequency Analysis](docs/FrequencyAnalysis.md) — look for repeating brightness changes such as wing flapping; understand the controls, frame and pixel limits, and the DFT/FFT calculation.
 - [Motion Analysis](docs/MotionAnalysis.md) — measure how the whole picture moves, export the motion, stabilize, and make panoramas.
-- [Star Tracker](docs/StarTracker.md) — find the stars in a night-sky video, identify them, and get the camera's pointing, field of view and roll from them.
+- [Star Tracker](docs/StarTracker.md) — identify stars in a photograph or video, solve the camera's pointing, field of view and roll, and register a photo in the sky.
 - [Long Exposure/Stacking](docs/LongExposure.md) — simulate a long exposure or a brightest-pixel stack of the 3D scene, so that moving lights leave trails.
 - [Video QP Graph](docs/VideoQPGraph.md) — how hard each frame of an H.264 video was compressed.
 - [Video Tonal Range Graph](docs/VideoTonalRange.md) — how the recorded brightness levels are spread in each frame, and a tracked object against its local background.

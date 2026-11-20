@@ -105,6 +105,12 @@ pitch and roll, and the vertical field of view. If the image has a GPS position,
 **Video → Set Camera To EXIF GPS** applies the EXIF camera settings again, for example after
 you have moved the camera.
 
+For a night-sky photograph, [Star Tracker](StarTracker.md) can identify the field without a starting
+guess. In a fresh **Star Tracker** template, **Analyze New Images** starts analysis of the first
+imported image automatically; restoring a saved scene or adding another image does not rerun it.
+**Register Photo in Sky** saves the solved placement so you can pan and zoom Look around the photo
+while Video's celestial annotations stay aligned. See [Registering a photo in the sky](StarTracker.md#registering-a-photo-in-the-sky).
+
 ### Loading a second video
 
 A second video, dropped while one is already loaded, opens the **Second Video** dialog. An image
@@ -587,7 +593,7 @@ Once the video is loaded, set up and the right way up:
 - [Motion Analysis](MotionAnalysis.md): measure how the camera and the background move, and
   stabilize the whole frame.
 - [Masking](Masking.md): keep tracking and analysis off overlays, trees and buildings.
-- [Star Tracker](StarTracker.md): estimate the camera's field of view from the stars.
+- [Star Tracker](StarTracker.md): identify a photo or video's star field, solve the camera's pointing and field of view, and register a still photo in the sky.
 - [Rendering and Exporting Video](Video.md): make a video of the result.
 
 ---

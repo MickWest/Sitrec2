@@ -1,6 +1,6 @@
 # Star Tracker
 
-The Star Tracker takes a video of the night sky and works out, frame by frame, which points of light **stay fixed on the sky** and which **move against it**. It then identifies the fixed points against a star catalog, which tells you where the camera was pointing, roughly how wide its field of view was, and how it was rolled. The identification needs no starting guess, so you do not need to know any of this in advance. To turn the result into a direction over the ground, Sitrec needs the time and place: see [Where the answer is](#where-the-answer-is).
+The Star Tracker identifies stars in a still photograph or video of the night sky. On video it first works out, frame by frame, which points of light **stay fixed on the sky** and which **move against it**. Matching the fixed points against a star catalog tells you where the camera was pointing, roughly how wide its field of view was, and how it was rolled. The identification needs no starting guess, so you do not need to know any of this in advance. To turn the result into a direction over the ground, Sitrec needs the time and place: see [Where the answer is](#where-the-answer-is).
 
 ![The Star Tracker result on a generated star field: green circles and star names, a cyan quad, a red circle and two orange dashed rings](star-images/startracker-overview.jpg)
 
@@ -10,13 +10,15 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 
 ## Quickstart
 
-1. Load a video of the night sky and open **Video → Star Tracker**.
+1. Load a photograph or video of the night sky and open **Video → Star Tracker**. A fresh **Star Tracker** template can analyze the first imported image automatically, as described below.
 2. **Auto mask still images** proposes an editable mask for a still. Video masking is separate: **Auto mask video (experimental)** is off by default. Check the overlay before relying on it; paint fixed exclusions such as burned-in text if needed. See [Masking out the ground](#masking-out-the-ground).
-3. Set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
-4. Click **Star Tracker Analysis**.
-5. Wait. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, and with the resolution and busyness of the footage. Press **Enough (solve what we have)** at any point to stop scanning and solve what has been measured so far.
+3. For video, set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. A still image is analyzed once.
+4. Click **Star Tracker Analysis** if an automatic run has not already started.
+5. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, resolution and busyness of the footage. During video detection, press **Enough (solve what we have)** to stop scanning and solve what has been measured so far. This button is not offered for a still image or during catalog identification.
 
-That is the whole common path. When it succeeds, the **Status** line gives the identification, for example `identified 72/231 stars - field 42.3 deg at RA 11.52h Dec 52.1 deg, rms 1.2 px`. That is the stars matched out of the stars offered, the field of view, the sky position of the field's centre, and the fit error. The menu row can cut the line short. The copy at the top left of the video shows all of it. [Where the answer is](#where-the-answer-is) says how to use these numbers.
+When it succeeds, the **Status** line gives the identification, for example `identified 72/231 stars - field 42.3 deg at RA 11.52h Dec 52.1 deg, rms 1.2 px`. That is the stars matched out of the stars offered, the field of view, the sky position of the field's centre, and the fit error. The menu row can cut the line short; hover over it for the full text, or read the summary at the bottom of the video. [Where the answer is](#where-the-answer-is) says how to use these numbers.
+
+On a dense field, the status can instead report `identified 66/100 bright stars from 3206 detections`, followed by the field and fit, and `(25-star search; 41 independent checks)`. This is a successful solve from a small sample: 25 sources established the field, 41 of 75 other detections confirmed it, and the combined 100-source sample was refined. It does not mean the remaining detections failed to match. Sitrec stops once a strong, independently checked solution is available; it need not name every faint point. See [Identifying the stars](#identifying-the-stars).
 
 The identification replaces the analysis summary. To see that summary, press **Find Candidate Stars**. The Status line then reads, for example, `231 stars, 5 moving, sigma 0.30 px`. That run replaces the identification, so press **Identify Stars (catalog)** afterwards to get it back.
 
@@ -24,9 +26,9 @@ The sigma figure is the clip's position noise, and it is the one to sanity-check
 
 **Star Tracker Analysis** runs three steps: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. Each step also has its own button, to run it alone. **Find Candidate Stars** and **Identify Stars (catalog)** are below **Star Tracker Analysis**, and **Detect Star Size (current frame)** is in [Star Tracker Tweaks](#star-tracker-tweaks). When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
 
-In a fresh **Star Tracker** template, dropping or importing an image starts this analysis automatically. **Analyze New Images** controls this behavior. Loading a saved scene, adding a second image, or importing after a search, camera setup or earlier analysis does not start another run.
+In a fresh **Star Tracker** template, dropping or importing an image starts this analysis automatically. **Analyze New Images** controls this behavior. Loading a saved scene, adding a second image, or importing after a search, camera setup or earlier analysis does not start another run. Importing a file clears the template's introductory text.
 
-A good fit with the camera synced enables the normal celestial overlays in Video: star/planet names, constellation lines and names, and deep-sky markers. Their controls are under **Show → Celestial**, and their label size matches Look. The separate analysis names are suppressed while this registration is active. Unsynced, partial, mirrored or poor fits retain the analysis labels.
+A good fit with the camera synced enables the normal celestial overlays in Video: star/planet names, constellation lines and names, and deep-sky markers. A [registered photo](#registering-a-photo-in-the-sky) also uses these overlays while Look is free to move. Their controls are under **Show → Celestial**, and their label size matches Look. **Labels → Labels** sets their density, starting at **0.25**; it favors brighter stars and planets and removes ordinary deep-sky names first. These are catalog overlays at the registered sky positions, not a list of detections verified by the solve. The separate analysis names are suppressed while this registration is active. Without a registered photo, unsynced, partial, mirrored or poor fits retain the analysis labels. See [Celestial Display](Celestial.md#label-density-and-visibility).
 
 ## Where the answer is
 
@@ -37,6 +39,8 @@ After a successful **Star Tracker Analysis**:
 | Field of view and sky position | The **Status** line. `field` is the angle across the wider side of the star map, and it is an estimate: see [Identifying the stars](#identifying-the-stars). On a steady clip the map is the size of the frame, so `field` is the field of view across the wider side of the frame. On a clip that drifts or pans, the map is larger than the frame and `field` reads high. On a video with the Fisheye render on, or with **From timelapse**, the map holds only the central 70 degrees of the field, so `field` reads 70 degrees or less whatever the lens: use the **Lens** row. The look camera does not use this number. `RA` and `Dec` are the sky position of the field's centre. A pan that makes the star map more than about 1.25 times the frame is identified in time windows, and the line then gives only star and window counts |
 | Camera direction and roll | The look camera. With **Sync Camera to Star Field** ticked, **Camera → Heading → Camera Heading** and **Camera → FOV (Zoom) → Camera FOV** read **Star Track**, and the look view shows the solved direction, roll and field of view. The sync gives a direction and roll for each analysed frame, so the camera follows a hand-held clip frame by frame. Frames outside the analysed range keep the nearest solved direction and roll. The greyed **Pan (Az)**, **Tilt (El)** and **Roll** rows in **Camera → Heading** follow the solved camera on every frame, so they give its azimuth, elevation and roll. The compass on the look view also gives the azimuth, and **Show → Show Compass Elevation** adds the elevation |
 | The lens | The **Lens** row, and the full fit in **Camera → Lens** |
+
+For a registered still photo, Look returns to Manual after initially pointing at the photo; its current direction need not match the saved photo registration. See [Registering a photo in the sky](#registering-a-photo-in-the-sky).
 
 To check the match, compare the stars in the look view with the stars in the video. The look view draws no stars until the sun is about 9 degrees below the horizon at the camera position, and the ground hides stars below the horizon. A new custom sitch starts in daylight. **Find Nighttime Viewpoint** moves to a dark viewing location where the fitted field is above the horizon, keeping its sky registration. It keeps the date by default; **Allow Date Change** lets it choose a nearby date if necessary. The camera is placed 10 km above sea level to clear ordinary terrain. This is a viewing aid, not a measurement of the photograph's location or time. **Undo** restores the previous position and time. For a known observing site, set its real location and time: see [Time, Frames and Syncing](TimeAndSync.md).
 
@@ -213,15 +217,17 @@ The Star Tracker folder lives under **Video**.
 
 | Control | What it does |
 |---|---|
+| **Analyze New Images** | Automatically analyze the first image imported into a fresh scene, before other setup or analysis. On by default in the Star Tracker template. Does not rerun analysis when restoring a saved scene or adding another image |
 | **Register Photo in Sky** | Keep a still photo at its solved sky position, with independent Look navigation and Video annotations. Captures the first successful solve and saves the registration with the scene |
 | **Re-register Photo** | Replace the photo registration with the current successful solve and center Look on it |
+| **Find Nighttime Viewpoint** / **Allow Date Change** | Move to a dark location where the solved field is above the horizon. Keeps the date unless **Allow Date Change** is on. This helps view the result; it does not locate or date the photograph |
 | **Star Tracker Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Analysis Resolution** / **Analysis pixels** | The resolution the frames are analysed at, shared with the other video analysis tools. See [Analysis resolution](PointTrack.md#analysis-resolution) in Point Track |
 | **Find Candidate Stars** | Run the analysis only: find the stars, track them from the **In** frame to the **Out** frame, and sort the tracks. It does not identify the stars |
 | **Identify Stars (catalog)** | Run the catalog match against the last analysis. Stars you clicked off are left out. With no analysis of this video yet, it runs **Find Candidate Stars** first |
 | **Identify Bright Triples** | Name a few bright points from their triangles, using the planets and the brightest stars. **Identify Stars (catalog)** runs it when it fails. With no analysis of this video yet, it runs **Find Candidate Stars** first. See [Bright Triples](#bright-triples) |
 | **Make Star Chart (PNG)** | Download a chart of the solved field. **Chart: object tracks** in [Star Tracker Display](#star-tracker-display) adds the paths of moving objects |
-| **Sync Camera to Star Field** | On by default. Whenever an identification succeeds, point Sitrec's camera the way the identification says the real one was pointing: *Star Track* is selected as both the heading and the FOV source (only the heading on a fisheye or timelapse run, where the Fisheye render carries the field of view). Untick it to put both back to the sources they were on before, so you can compare the solved pointing with your own |
+| **Sync Camera to Star Field** | On by default. Whenever an identification succeeds, point Sitrec's camera the way the identification says the real one was pointing: *Star Track* is selected as both the heading and the FOV source (only the heading on a fisheye or timelapse run, where the Fisheye render carries the field of view). Untick it to put both back to the sources they were on before, so you can compare the solved pointing with your own. **Register Photo in Sky** takes precedence for a still: it aims Look once, then releases Look to Manual and turns sync off |
 | **Stabilize on Stars** | Off by default. Move and rotate each frame so that the stars stay where they are on the **In** frame. It needs a **Find Candidate Stars** run, and a new analysis turns it off. See [Stabilizing on the stars](#stabilizing-on-the-stars) |
 | **Fade at completion** | On by default. After a successful identification, fade out the quad lines, then the star circles, then most HIP-number labels, and turn off their switches in [Star Tracker Display](#star-tracker-display). See [Reading the results](#reading-the-results). Tick a switch again to bring its layer back. A failed run never fades |
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
@@ -245,7 +251,7 @@ The switches for what the Star Tracker draws. Each switch controls one layer, so
 | Control | What it does |
 |---|---|
 | **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video. The circles are also what you click: a click toggles a star, a right-click opens its menu (name it, leave it out, or delete a circle you added), and a Ctrl-click (Cmd-click on a Mac) off a circle adds one. See [Naming stars by hand](#naming-stars-by-hand) |
-| **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself |
+| **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself. When a registered result uses shared celestial labels, control those under **Show → Celestial → Labels** instead |
 | **Show HIP star numbers** | Also label the stars that have no proper name, by Hipparcos number. Most matches are these; untick it to leave only the named stars. Needs **Show star names** |
 | **Show quad lines** | Draw the four-star shapes the solve matched against the catalog, line weight scaling with how much of the field each one explains. On by default; they are the visible evidence for the identification, so turn them off once you trust it. See [Identifying the stars](#identifying-the-stars) |
 | **Show moving** | Draw the red circles |
@@ -347,21 +353,21 @@ Four things worth knowing:
 
 ## Masking out the ground
 
-On still images, leave **Auto mask still images** on to exclude trees, rooftops and other foreground during analysis. Lit foliage is exactly what the detector is looking for — small, bright and
-stationary — and it is detected in quantity.
+Lit foliage and rooftops can produce many compact, bright detections that interfere with identification.
+**Auto mask still images**, on by default, proposes an editable foreground mask before analysis when
+the image has no mask. It uses texture and color, so inspect the proposal: low-contrast or structured
+sky can also be excluded. A dense star field can solve without a mask, especially with the bright-star
+search; masking is useful when foreground contaminates the detections, not a requirement for a solve.
 
-Measured on a wide night photograph with a treeline: without a mask it detected about a thousand
-"stars", roughly 40% of them foliage, and identification could not hold a consensus against that
-and failed. With the ground masked it kept 423 detections, none in the trees, and identified
-**221 stars**.
-
-1. Leave **Use mask** on. For still images, leave **Auto mask still images** on. For video, explicitly enable **Auto mask video (experimental)** if needed, then run **Star Tracker Analysis**.
+1. Leave **Video → Masking → Enable Mask** and **Use mask** on to use exclusions. For video, explicitly enable **Auto mask video (experimental)** if needed, then run **Star Tracker Analysis**.
 2. Turn on **Video → Masking → Show Mask** and inspect analyzed frames. Video masks are recomputed
    for each frame, so trees and buildings move with the camera. Ambiguous frames can decline
    automatic exclusion rather than mask sparse stars as foreground.
 3. Use **Edit Mask** for additional fixed exclusions. On video these brush marks stay fixed;
    disable **Auto mask video (experimental)** if you want to use only the painted mask. On a still, the
-   automatically proposed mask itself is editable.
+   automatically proposed mask itself is editable. Erase any excluded sky with **Alt/Option**-drag,
+   or turn off **Use mask** to try the image without exclusions, then rerun the analysis. Turning off
+   **Auto mask still images** prevents new proposals but does not remove one already in the painted mask.
 
 Masked pixels are excluded from background and noise estimates, detection smoothing, color
 measurements and photometry. They cannot produce star detections. A source cut by a mask edge
@@ -373,7 +379,9 @@ For a still image, the catalog verifier also ignores stars predicted behind the 
 the unmasked image area when estimating chance matches. Video identification works on a stitched
 reference chart, so it does not apply a single frame mask to that chart. Video detection and
 calibration use each frame's automatic foreground mask combined with the enabled painted mask.
-The automatic preview hides after a successful solve; **Show Mask** brings it back.
+The automatic **Show Mask** preview turns off when candidate-star analysis completes successfully,
+even before catalog identification. This hides the red overlay, not the exclusions; **Show Mask**
+brings it back. **Edit Mask** also keeps the overlay visible while editing.
 Generated video masks are not saved with the sitch; rerun analysis after loading to regenerate them.
 
 See [Masking](Masking.md) for the other ways to build a mask — including masking a burned-in
@@ -403,7 +411,7 @@ With **Display during analysis** on (the default), each stage shows what it is d
 | **Detecting sources** | Every accepted blob on the current frame circled, with a running count. These are raw detections — nothing is solved yet, so there is no classification, no name, and a star missed on this frame simply is not circled. It shows what the detector passes to the solver, which makes a bad **Detect threshold** or **Min blob area** obvious without waiting for the run to end |
 | **Fitting camera lens** | A crosshair at the **optical axis** the fit currently believes in, tethered to the frame centre so the offset is the visible quantity, with the running rms and focal length. It draws lightly while searching and solidly once settled |
 | **Solving sky rotation** / **Re-solving on stars only** | The residual being minimised, how far it has come, and the **step size against the tolerance that stops the loop** — so you can tell "nearly done" from "stuck" |
-| **Identifying** | Verified quads drawn over the field, line weight scaling with how much of the whole field each hypothesis explains. On a good map the search is over in under a tenth of a second, and a hard field can take seconds. Up to five of the best quads stay on screen afterwards, until the fade removes them |
+| **Identifying** | Verified quads drawn over the field, line weight scaling with how much of the current search sample each hypothesis explains. Large single-field maps try a small bright-star sample first and stop if independent checks confirm it. Harder fields use larger searches; first use also loads the catalog and builds its indexes. Up to five of the best quads stay on screen afterwards, until the fade removes them |
 
 Two stages — **Solving camera motion** and **Building star map** — draw nothing on the video. On a long clip they take up to a minute, so they run in a background thread: the page stays responsive, the progress bar moves through them, and its text gives the percentage of the solve done.
 
@@ -497,7 +505,7 @@ That description does not change when the camera points elsewhere, rolls, or zoo
 
 The quads are made from 25 of the stars on the map: those that are not in a dense group, are compact and round, and are the brightest. Brightness is the height of a star's peak above the noise around it. A star that is too bright for the picture is *clipped*: its peak stops at the top of the brightness range, at the same height as each other clipped star. Sitrec ranks the clipped stars by their total light instead, and puts them ahead of the stars that are not clipped. Lit ground can be clipped too. Its peak is low against the noise around it, so it is not ranked with the clipped stars.
 
-For a large single-field star map, Sitrec first searches with 25 bright point sources. A strong match is checked against 75 other detections that did not take part in that search. If both sets agree, only this small sample is refined and identification stops. The status reports the search size and independent matches. If the evidence is not strong enough, it tries 50 and 100 sources, then falls back to the larger searches. This avoids matching thousands of faint stars when a small, independently checked pattern already establishes the field. Panning videos still use time windows when one camera fit cannot represent the stitched map.
+For a large single-field star map, Sitrec first searches with 25 bright point sources. A strong match is checked against 75 other detections that did not take part in that search. Both sets must pass match-count, match-fraction and fit-error checks, as well as the normal chance-match tests. If both sets agree, only their combined sample is refined and certified again, and identification stops. The status reports the search size and independent matches. If the evidence is not strong enough, it tries 50 and 100 sources, then falls back to the larger searches. A tier is skipped if too few reliable detections remain for its separate 75-source check. This avoids matching thousands of faint stars when a small, independently checked pattern already establishes the field. Detection still examines the image; this shortcut saves catalog-matching work. Panning videos still use time windows when one camera fit cannot represent the stitched map.
 
 The catalog ships with Sitrec and is fetched from your own Sitrec server the first time you press Identify — no third-party service is contacted. It holds about 118,000 stars keyed by Hipparcos number, down to roughly magnitude 12. The *index* is built only from the bright end — the tiers cut at magnitude 6.5 — but the final match can use the whole catalog, so stars far fainter than any naked-eye limit can still be named. The quad index is **built at runtime** rather than shipped, so it can never drift out of sync with the catalog. Proper names come from the IAU Catalog of Star Names. A star must appear in a reasonable share of the analysed frames to be offered to the matcher, so a very short range gives it little to work with.
 
@@ -624,7 +632,7 @@ reference to find, and the search will under-credit adjustments that genuinely r
 
 - **The lens fit declines on clips whose motion does not exercise the lens.** Rolling about the line of sight, or too short a baseline between the frames it compares, leaves the lens shape unconstrained. This is reported in the **Lens** field, not hidden.
 - **Star identification needs enough stars.** It refuses fewer than five, and a handful of bright points in a narrow field may not produce a unique quad match. If identification fails, [Bright Triples](#bright-triples) tries to name a few bright points. If that fails too and you can see which points are which, name three of them: see [Naming stars by hand](#naming-stars-by-hand). Otherwise set the camera's direction and field of view by hand: see [The Camera and Target Menus](CameraAndTarget.md).
-- **Hand-held footage works, but a zoom reads as motion.** The frame-to-frame solve holds scale fixed. In a synthetic test of that solve, a 5% zoom across 40 frames called 79 of 84 stars *moving*. Analyse a stretch with no zoom.
+- **Hand-held footage works, but changing optical zoom can read as motion.** The frame-to-frame solve holds scale fixed, so analyze a stretch with no camera zoom. Automatic foreground masks can follow a zoom because they are rebuilt from each frame; that does not remove this tracking limitation. Zooming the Video view for inspection is separate from a zoom recorded in the footage.
 - **The Star Tracker reads the stabilized picture.** With **Video → Motion Analysis → Stabilize Video** or **Video → Point Track → Stabilize** on, the detector reads the shifted frames, so the solve follows the shifted picture and not the camera. Press **Disable Stabilization** before you run the analysis. [Stabilize on Stars](#stabilizing-on-the-stars) does not need this: a new analysis turns it off.
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star. The **Enough** button is not offered, since there is nothing to stop short of. On a still, the Fisheye render, **Fit lens from stars** and **Fixed camera** have no effect, and identification uses the flat chart. **From timelapse** is the exception: it takes the Fisheye render as its starting lens.
 - **The frame range is the In/Out range**, not the whole video. If the analysis covers less than you expected, check your In and Out markers.
@@ -646,8 +654,11 @@ reference to find, and the search will under-credit adjustments that genuinely r
 | Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first, or press **Optimize Adjustments for Frame** on a frame with sky and then run **Star Tracker Analysis** |
 | A visible star is not circled | Check that **Show star markers** is on, in **Star Tracker Display**: the completion fade turns it off. Then turn on **Show rejected**: if the point appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it is a `short` track (lower **Min detections per track**, or use a longer In/Out range), a detection under the mask (turn on **Show Mask** to check), or a point the detector never accepted (lower **Detect threshold (sigma)** or **Min blob area**) |
 | Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range. On a few bright points, read what [Bright Triples](#bright-triples) found, or [name three points by hand](#naming-stars-by-hand). Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
+| A dense image reports a small sample in the identification | A successful bright-star search only verifies and refines a sample of 100, 125 or 175 sources. The status separates that sample from the total detections and reports its independent checks. More matches are not needed once that sample securely establishes the field |
+| Names crowd the picture after a solve | Reduce **Show → Celestial → Labels → Labels**. The default is **0.25**. Ordinary deep-sky names are removed first, then dimmer stars; names avoid overlaps even at **1**. This changes the display, not detection or matching |
+| Red mask blocks cover sky, or expected stars are missing | Turn on **Show Mask** to inspect exclusions. On a still, turn off **Auto mask still images**, then erase excluded sky or clear the mask. On video, turn off **Auto mask video (experimental)** to remove generated exclusions; brush edits only change the fixed mask. Turn off **Use mask** for an unmasked comparison, then rerun analysis |
 | Fisheye footage: many real stars called *moving*, or the sphere solve fails | Turn on **Fixed camera** for a mounted camera. Check the Fisheye render is roughly matched to the footage first — the solve takes that lens as given |
-| The run is taking forever | Press **Enough (solve what we have)**, or shorten the In/Out range |
+| The run is taking forever | During video detection, press **Enough (solve what we have)** or shorten the In/Out range. During identification, read the search progress: a difficult field may need larger fallback searches after the bright-star attempts. **Enough** only shortens detection |
 
 ## See also
 
@@ -656,5 +667,3 @@ reference to find, and the search will under-credit adjustments that genuinely r
 - [Long Exposure/Stacking](LongExposure.md) — stacking frames, which pairs naturally with star work
 - [Investigating Starlink Flares With Sitrec](Starlink.md) — Starlink satellites in Sitrec. The Star Tracker does not name moving objects
 - [Tracks](Tracks.md) — loading and filtering track data
-
-If camera tracking fails on more than half the frame pairs, analysis stops before building a star map or fitting a lens. Try a shorter In/Out range with clear stars and check the detection settings. Short dropouts can use a recent stable motion estimate to find matches; prediction alone never counts as a measurement.
