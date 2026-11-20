@@ -158,10 +158,11 @@
     "transform": {
       "\\.[jt]s$": "babel-jest",
       "misb\\.js-main/.+\\.mjs$": "babel-jest",
+      "zstddec/.+\\.mjs$": "babel-jest",
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer)/)"
+      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer|zstddec)/)"
     ],
     "moduleNameMapper": {
       "^3d-tiles-renderer/src/(.*)$": "<rootDir>/node_modules/3d-tiles-renderer/src/$1",
