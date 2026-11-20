@@ -23,3 +23,15 @@ export function isAltitudeLockActive(node) {
 export function isAGLLockActive(node) {
     return isAltitudeLockActive(node) && !!node.altitudeLockAGL;
 }
+
+// Follow position sources only: a camera/target switch and additional smoothing
+// must retain the selected track's altitude constraint.
+export function getTrackAltitudeLock(node) {
+    const seen = new Set();
+    while (node && !seen.has(node)) {
+        seen.add(node);
+        if (node.altitudeLock !== undefined) return isAltitudeLockActive(node) ? node : null;
+        node = node.getObject?.() ?? node.inputs?.dataTrack ?? node.inputs?.misb ?? node.inputs?.source;
+    }
+    return null;
+}

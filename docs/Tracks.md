@@ -204,6 +204,24 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 | **Lock Height** | 0 to 100,000 ft | The height of the lock. Shown only while **Lock Altitude** is on. Shown in your display units; stored in meters |
 | **Height From** | Ground / Ellipsoid (HAE) | **Ground**: the height above the ground below. **Ellipsoid (HAE)**: the height above the WGS84 ellipsoid (HAE), *not* above mean sea level (MSL); see [Three Kinds of Height](GIS.md#three-kinds-of-height). The default is **Ground**. Shown only while **Lock Altitude** is on |
 
+With **Ground**, the lock is applied after smoothing, including camera smoothing.
+When Google 3D tiles supply the visible ground, Sitrec loads and retains the finest
+available tiles along the path. Moving a camera or changing its level of detail
+does not change the cached track heights. The cache updates when the path or the
+surface is edited, or finer path tiles arrive. Until those tiles are available it
+uses the elevation map. For a car, use **Lock Height = 0** and place the viewpoint inside the
+cabin with [Camera Position Offset](CameraAndTarget.md#camera--camera-tweaks).
+
+Enable **Road Track** to smooth both the Google 3D road geometry and the track's
+height. **Road Width (m)** sets the width of the smooth strip, with a gradual blend
+back to the original ground at the shoulders. **Road Smoothing (m)** controls the
+distance along the road used to remove bumps; the default is 20 metres. These
+settings use distance rather than video frames, so changing speed or frame rate
+does not change the road shape. A camera with **Relative** heading follows the
+smoothed uphill/downhill grade. Turning **Road Track** off restores the original
+geometry and keeps the track locked to its cached ground surface. The option and
+its settings are saved with the track; tile data is cached for the current session.
+
 > **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the
 > lock sets the height of all of its control points. Drag the up/down arrows on a control point
 > or on the object that rides the track, and you change the **Lock Height**: the full track moves up or down

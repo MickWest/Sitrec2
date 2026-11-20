@@ -1,3 +1,4 @@
+import {restoreRoadGeometry} from "./RoadGeometry";
 // TilesTreeFlatten.js
 //
 // "Flatten Trees" for Google Photorealistic 3D Tiles.
@@ -311,6 +312,7 @@ function filterTriangles(geometry, keepTri, triCount, index) {
 //   'edit'  — geometry modified (backup stashed, stamped)
 // `hash` is the current param hash used to stamp the mesh.
 function processMesh(mesh, params, hash) {
+    restoreRoadGeometry(mesh);
     const geometry = mesh.geometry;
     const posAttr = geometry && geometry.attributes.position;
     if (!posAttr) return "skip";
@@ -823,6 +825,7 @@ export class TreeFlattener {
     }
 
     _restoreMesh(mesh) {
+        restoreRoadGeometry(mesh);
         const orig = mesh[ORIGINAL_GEOMETRY];
         if (!orig) return;
         if (mesh.geometry !== orig) mesh.geometry.dispose();
@@ -911,6 +914,7 @@ export class TreeFlattener {
     // height (world units, along the geodetic up at worldCenter) for snap — when
     // given, snap drops verts to that level instead of the within-mesh minimum.
     _brushMesh(mesh, worldCenter, radius, action, floorWorldH) {
+        restoreRoadGeometry(mesh);
         const geometry = mesh.geometry;
         const posAttr = geometry && geometry.attributes.position;
         if (!posAttr) return false;

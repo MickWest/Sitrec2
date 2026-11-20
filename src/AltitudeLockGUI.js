@@ -10,7 +10,7 @@
 import {Units} from "./Globals";
 import {t} from "./i18n";
 import {altitudeHAE} from "./SphericalMath";
-import {getPointBelow} from "./threeExt";
+import {getVisiblePointBelow} from "./threeExt";
 
 /**
  * The height of an ECEF point the way a lock measures it: above the ground below it, or HAE.
@@ -20,7 +20,7 @@ import {getPointBelow} from "./threeExt";
  */
 export function lockHeightAt(position, agl) {
     const hae = altitudeHAE(position);
-    return agl ? hae - altitudeHAE(getPointBelow(position)) : hae;
+    return agl ? hae - altitudeHAE(getVisiblePointBelow(position)) : hae;
 }
 
 /**
@@ -72,17 +72,25 @@ export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight
         heightNode.show(on);
         heightFrom.show(on);
     };
-    lock.onChange(update);
+    const controls = {update};
+    lock.onChange(() => controls.update());
     // A saved sitch restores the height control's own `visible`, which CNodeGUIValue.update()
     // then applies, and it changes the lock only when the saved value differs. So after a
     // restore, show or hide by the lock again.
     const restore = heightNode.modDeserialize?.bind(heightNode);
     if (restore) {
         heightNode.modDeserialize = (v) => {
+            // Older imported tracks could save an OFF lock as a hidden zero
+            // control. An actual zero-height lock saved the control as visible.
+            if (v.value === 0 && v.visible === false) v = {...v, value: -1};
+            const unchanged = heightNode.value === v.value;
             restore(v);
-            update();
+            // GUIValue skips onChange for an unchanged value. The data node can
+            // nevertheless still be unlocked (notably a saved zero-height lock).
+            if (unchanged && v.value !== undefined) heightNode.onChange?.(heightNode.v0);
+            controls.update();
         };
     }
     update();
-    return {update};
+    return controls;
 }

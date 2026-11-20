@@ -19,6 +19,8 @@ import {extractFOV} from "./CNodeControllerVarious";
 import {t} from "../i18n";
 import {markFreeLookSafe} from "../FreeLookGuard";
 import {turnToGeometricAim} from "../atmosphere/refractionAim";
+import {getTrackAltitudeLock, isAGLLockActive} from "../AltitudeLock";
+import {getTrackPositionBasis} from "../CameraPositionOffset";
 
 const pszUIColor = "#C0C0FF";
 const _xAxis = new Vector3(1, 0, 0);
@@ -96,12 +98,21 @@ export class CNodeControllerAzElZoom extends CNodeController {
             camera.matrix.extractBasis(xAxis,yAxis,zAxis)
             fwd = zAxis.clone().negate()
 
-            // project fwd onto the horizontal plane define by up
-            // it's only relative to the heading, not the tilt
-            let dot = fwd.dot(up)
-            fwd = fwd.sub(up.clone().multiplyScalar(dot)).normalize()
-
-            right = fwd.clone().cross(up)
+            const track = objectNode.getPositionTrack?.();
+            const lock = getTrackAltitudeLock(track);
+            if (lock && isAGLLockActive(lock)) {
+                // A road camera's zero tilt follows the road's slope. Use the
+                // conformed path, before the cabin offset, not the horizon.
+                const basis = getTrackPositionBasis(track, f, track.p(f));
+                fwd = basis.forward;
+                right = basis.right;
+                up = basis.up;
+            } else {
+                // Preserve horizon-relative tilt for ordinary airborne tracks.
+                let dot = fwd.dot(up)
+                fwd = fwd.sub(up.clone().multiplyScalar(dot)).normalize()
+                right = fwd.clone().cross(up)
+            }
 
 
 

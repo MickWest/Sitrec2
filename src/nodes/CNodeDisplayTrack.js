@@ -1,3 +1,4 @@
+import {addRoadTrackControls} from "../RoadTrackGUI";
 import {triangulateTrackCap} from "../rendering/TrackCap";
 //
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
@@ -384,9 +385,10 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 // The lock height (-1 = off). Lock Altitude (AltitudeLockGUI) switches it, and
                 // hides it while the lock is off. The id is unchanged, so saved sitches load.
                 let altLockControls = null;
+                track.altitudeLock = -1;
                 const altLockNode = new CNodeGUIValue({
                     id: this.id + "altitudeLock",
-                    value: track.fireballObservedInterval ? -1 : 0,
+                    value: -1,
                     start: -1,
                     end: 1000,
                     step: 1,
@@ -417,8 +419,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     setAGL: (value) => {
                         track.altitudeLockAGL = value;
                         track.recalculateCascade();
+                        altLockControls?.update();
                     },
                 });
+                const roadControls = addRoadTrackControls(this.guiFolder, track, this.in.track);
+                const updateLock = altLockControls.update;
+                altLockControls.update = () => { updateLock(); roadControls.update(); };
                 this.updateAltitudeLockControls = () => altLockControls.update();
 
                 track.timeOffset = 0;

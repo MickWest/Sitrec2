@@ -59,8 +59,9 @@ export class CNodeControllerTrackToTrack extends CNodeController {
         }
         const camera = objectNode.camera
         var camPos = this.in.sourceTrack.p(f)
+        camPos = objectNode.offsetPosition?.(camPos, this.in.sourceTrack, f) ?? camPos;
         var targetPos = this.in.targetTrack.p(targetFrame)
-        camera.up = objectNode.getUpVector(camera.position)
+        camera.up = objectNode.getUpVector(camPos)
         camera.position.copy(camPos);
         lookAtDrawnPosition(camera, targetPos)
 
@@ -172,6 +173,10 @@ export class CNodeControllerTrackPosition extends CNodeController {
         assert(this.in.sourceTrack !== undefined, "CNodeControllerTrackPosition: sourceTrack is undefined, id=" + this.id)
         var pos = this.in.sourceTrack.p(f)
         assert(!Number.isNaN(pos.x), "CNodeControllerTrackPosition: track's position.x NaN")
+
+        if (object.isCamera) {
+            pos = objectNode.offsetPosition?.(pos, this.in.sourceTrack, f) ?? pos;
+        }
 
         if (objectNode.forceAboveSurface !== false) {
             const clampHeight = objectNode.cachedCenterToLowestPoint ?? (object.isCamera ? 0: 0.30); // 0.3m = about a foot, which is a reasonable default for the lowest point of a camera or object, but can be overridden by the node definition, or models

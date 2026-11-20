@@ -10,6 +10,7 @@
 // and a view that fills it starves the others.
 
 import {CNode} from "./CNode";
+import {TrackGroundCache} from "../TrackGroundCache";
 import {buildAssetURL} from '../release/assetURL';
 import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
@@ -976,6 +977,7 @@ export class CNodeBuildings3DTiles extends CNode {
             ? getSharedGooglePhotorealisticState(this.googleApiKey)
             : null;
 
+        this.trackGround = activeSource === "google-photorealistic" ? new TrackGroundCache(this) : null;
         for (const {id, mask} of viewConfigs) {
             this._perView[id] = new PerViewTiles(
                 this.group, mask, activeSource,
@@ -984,6 +986,7 @@ export class CNodeBuildings3DTiles extends CNode {
                 this.errorTarget,  // global tile-LOD target (slider-driven)
                 tileCacheBudgetForView(id)
             );
+            this.trackGround?.attach(this._perView[id]);
         }
 
         this._initialized = true;
@@ -994,6 +997,8 @@ export class CNodeBuildings3DTiles extends CNode {
     }
 
     disposeTilesRenderers() {
+        this.trackGround?.dispose();
+        this.trackGround = null;
         if (Object.keys(this._perView).length > 0) {
             markShadowCastersDirty(`${this.id}:disposeTilesRenderers`);
         }
@@ -1361,6 +1366,7 @@ export class CNodeBuildings3DTiles extends CNode {
     // Tree flattening and the Remove Geometry brush move the ground by metres, and
     // anything standing on it — a synthetic building — has to hear about it.
     announceSurfaceEdited() {
+        this.trackGround?.invalidate();
         EventManager.dispatchEvent("visibleGroundChanged", this);
     }
 
@@ -1532,6 +1538,7 @@ export class CNodeBuildings3DTiles extends CNode {
         // (load / LOD swap / fade -> setRenderOne in _onTileVisibilityChange) wakes the
         // loop, which re-runs this update, re-detects work via the per-view
         // grace/pending check above, and re-arms.
+        if (this.trackGround?.update()) active = true;
         this.updateWhilePaused = active;
 
         // Tile geometry stops moving the moment `active` falls away: nothing queued,
@@ -1588,7 +1595,8 @@ export class CNodeBuildings3DTiles extends CNode {
             };
         }
 
-        return {hasPending, perView};
+        const trackGroundPending = this.trackGround?.hasPendingWork() ?? false;
+        return {hasPending: hasPending || trackGroundPending, perView, trackGroundPending};
     }
 
     /**

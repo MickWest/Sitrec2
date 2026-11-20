@@ -1,3 +1,4 @@
+import {getTrackGroundPoint} from "../TrackGround";
 // given an array of "positions" smooth the x,y,and z tracks by moving average
 // or other techniques
 // optionally copy any other data (like color, fov, etc) to the new array
@@ -10,6 +11,8 @@ import {assert} from "../assert";
 import {CNodeTrack} from "./CNodeTrack";
 import {t} from "../i18n";
 import {saveAs} from "file-saver";
+import {getTrackAltitudeLock} from "../AltitudeLock";
+import {adjustHeightHAE, pointAbove} from "../threeExt";
 
 export class CNodeSmoothedPositionTrack extends CNodeTrack {
     constructor(v) {
@@ -483,6 +486,18 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
 
         }
 
+        // Smoothing changes horizontal position as well as height. Sample the
+        // surface at the FINAL position, including through camera/target smoothers,
+        // so filtering cannot lift a locked road track or cut through a hill.
+        const lock = getTrackAltitudeLock(this);
+        if (lock) {
+            for (const entry of this.array) {
+                entry.position = lock.altitudeLockAGL
+                    ? pointAbove(getTrackGroundPoint(entry.position, lock), lock.altitudeLock)
+                    : adjustHeightHAE(entry.position, lock.altitudeLock);
+            }
+        }
+
         // // if the source array has misbRows, then we need to copy them to the new array
         // // so that we can use them in the output
         // // this will be done in getValueFrame
@@ -538,7 +553,7 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
             return this.in.source.getValueFrame(frame);
         }
         let pos;
-        if (this.method === "none" || this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol" || this.method === "spline") {
+        if (getTrackAltitudeLock(this) || this.method === "none" || this.method === "moving" || this.method === "movingPolyEdge" || this.method === "sliding" || this.method === "savgol" || this.method === "spline") {
             // lazy assert message — hot read path, ~tens of thousands of calls per tick
             if (this.array[frame] === undefined) assert(0, "CNodeSmoothedPositionTrack: array[frame] is undefined, frame=" + frame + " id=" + this.id)
             pos = this.array[frame].position

@@ -1,3 +1,4 @@
+import {getTrackGroundPoint, trackGroundCache} from "../TrackGround";
 import {CNodeTrack} from "./CNodeTrack";
 import {NodeMan, Sit} from "../Globals";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
@@ -5,8 +6,8 @@ import {toPoint as mgrsToPoint} from "mgrs";
 import {parseSingleCoordinate} from "../CoordinateParser";
 import {EventManager} from "../CEventManager";
 import {f2m} from "../utils";
-import {adjustHeightAboveGround, adjustHeightHAE} from "../threeExt";
-import {isAltitudeLockActive} from "../AltitudeLock";
+import {adjustHeightHAE, pointAbove} from "../threeExt";
+import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 
 export function osdAltitudeToHAE(altitudeMeters, hasAltitudeValue, altitudeReference, lat, lon) {
@@ -27,10 +28,19 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
         // OSD altitudes are typically MSL (barometric); convert to HAE for LLAToECEF
         this.altitudeReference = v.altitudeReference ?? "MSL";
         EventManager.addEventListener("elevationChanged", () => this.onElevationChanged());
+        EventManager.addEventListener("visibleGroundChanged", () => {
+            if (this.disposed) return true;
+            if (isAGLLockActive(this) && !trackGroundCache()?.records.has(this)) this.recalculateCascade();
+        });
         this.recalculate();
     }
 
     onElevationChanged() {
+        if (isAGLLockActive(this)) {
+            if (trackGroundCache()?.records.has(this)) return;
+            this.recalculateCascade();
+            return;
+        }
         if (!this.isGroundRelative) return;
         const terrainNode = NodeMan.get("TerrainModel", false);
         if (terrainNode && this.refreshElevationCache(terrainNode, 1)) {
@@ -181,7 +191,9 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
 
         this.isGroundRelative = !hasAltitude;
         if (isAltitudeLockActive(this)) {
-            const lockFn = (this.altitudeLockAGL !== false) ? adjustHeightAboveGround : adjustHeightHAE;
+            const lockFn = (this.altitudeLockAGL !== false)
+                ? (position, height) => pointAbove(getTrackGroundPoint(position, this), height)
+                : adjustHeightHAE;
             for (let f = 0; f < this.frames; f++) {
                 this.array[f].position = lockFn(this.array[f].position, this.altitudeLock);
             }

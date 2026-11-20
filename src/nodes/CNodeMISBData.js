@@ -1,3 +1,4 @@
+import {getTrackGroundPoint, trackGroundCache} from "../TrackGround";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {FileManager, Globals, NodeMan, Sit} from "../Globals";
 import {MISB, MISBFields} from "../MISBUtils";
@@ -9,7 +10,7 @@ import {CNodeLOSTrackMISB} from "./CNodeLOSTrackMISB";
 import {makeArrayNodeFromMISBColumn} from "./CNodeArrayFromMISBColumn";
 import {assert} from "../assert";
 import {EventManager} from "../CEventManager";
-import {elevationAtLL} from "../threeExt";
+import {calculateAltitude, elevationAtLL} from "../threeExt";
 import {parsePartialDateTime} from "../ParseUtils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
@@ -102,8 +103,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // the dependency graph is ~45 ms per call — running it for every tile
         // burst makes playback visibly jerky. One cascade per frame is plenty
         // since the per-frame visual update can't be finer than that anyway.
-        EventManager.addEventListener("elevationChanged", () => {
+        const refreshGround = () => {
+            if (this.disposed) return true;
             if (!this.isTerrainDependent()) return;
+            if (this.isAGLLockActive() && trackGroundCache()?.records.has(this)) return;
             if (this._elevRefreshScheduled) return;
             this._elevRefreshScheduled = true;
             // Bump pendingActions so the regression test framework's
@@ -116,10 +119,20 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             Globals.pendingActions++;
             requestAnimationFrame(() => {
                 this._elevRefreshScheduled = false;
-                this.makeArrayForTrackDisplay();
-                this.recalculateCascade();
-                Globals.pendingActions--;
+                try {
+                    if (!this.disposed) {
+                        this.makeArrayForTrackDisplay();
+                        this.recalculateCascade();
+                    }
+                } finally {
+                    Globals.pendingActions--;
+                }
             });
+        };
+        EventManager.addEventListener("elevationChanged", refreshGround);
+        EventManager.addEventListener("visibleGroundChanged", () => {
+            if (this.disposed) return true;
+            if (this.isAGLLockActive() && !trackGroundCache()?.records.has(this)) refreshGround();
         });
     }
 
@@ -1987,7 +2000,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
     adjustAlt(a, lat, lon) {
         if (isAltitudeLockActive(this)) {
             if (this.altitudeLockAGL && lat !== undefined && lon !== undefined) {
-                return elevationAtLL(lat, lon) + this.altitudeLock;
+                return calculateAltitude(getTrackGroundPoint(LLAToECEF(lat, lon, 0), this)) + this.altitudeLock;
             }
             return this.altitudeLock;
         } else if (this.altitudeOffset !== undefined) {

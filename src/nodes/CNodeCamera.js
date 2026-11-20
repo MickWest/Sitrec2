@@ -1,6 +1,6 @@
 import {Camera, PerspectiveCamera, Raycaster, Vector3} from "three";
 import {f2m, m2f} from "../utils";
-import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {GlobalDateTimeNode, guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {disposePSF, loadPSF} from "../CameraPSF";
 import {ECEFToLLAVD_radii, LLAToECEF, LLAVToECEF} from "../LLA-ECEF-ENU";
 import {
@@ -23,6 +23,7 @@ import {ViewMan} from "../CViewManager";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {installFreeLookGuards} from "../FreeLookGuard";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {offsetCameraPosition} from "../CameraPositionOffset";
 
 export class CNodeCamera extends CNode3D {
     constructor(v, camera = null) {
@@ -46,6 +47,12 @@ export class CNodeCamera extends CNode3D {
         // menu setups, which would otherwise make what a sitch SAVES depend on what
         // GUI happens to be present.
         this.addSimpleSerial("freeLook");
+        // Store metres in the camera, irrespective of the current display units.
+        for (const axis of ["X", "Y", "Z"]) {
+            const key = "positionOffset" + axis;
+            this[key] = v[key] ?? 0;
+            this.addSimpleSerial(key);
+        }
 
         // Off keeps an absolute (MSL) camera height even below the loaded terrain or 3D-tile
         // surface: a dropped photo or video that gives an altitude turns it off (EXIFUtils.js,
@@ -137,6 +144,7 @@ export class CNodeCamera extends CNode3D {
         if (this.id === "lookCamera") {
             this.addGroundTrackSwitchGUI();
             this.addFreeLookGUI();
+            this.addPositionOffsetGUI();
         }
 
         this.addCameraTweaksControls();
@@ -601,6 +609,51 @@ export class CNodeCamera extends CNode3D {
 
     get camera() {
         return this._object
+    }
+
+    getPositionTrack() {
+        for (const controller of Object.values(this.inputs)) {
+            if (controller.isController && controller.enabled && controller.inputs?.sourceTrack) {
+                return controller.inputs.sourceTrack;
+            }
+        }
+        return null;
+    }
+
+    offsetPosition(position, track, frame) {
+        return offsetCameraPosition(position, track, frame,
+            this.positionOffsetX, this.positionOffsetY, this.positionOffsetZ);
+    }
+
+    addPositionOffsetGUI() {
+        const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
+        if (!menu) return;
+        const folder = menu.addFolder("Camera Position Offset").close();
+        const display = {};
+        this.positionOffsetControllers = ["X", "Y", "Z"].map(axis => {
+            const key = "positionOffset" + axis;
+            Object.defineProperty(display, axis, {
+                get: () => this[key] / (Units?.small?.toM ?? 1),
+                set: value => { this[key] = value * (Units?.small?.toM ?? 1); },
+            });
+            return folder.add(display, axis, -100, 100, 0.01).listen()
+                .tooltip("Move the camera within the vehicle: X right, Y up, Z forward along the path. "
+                    + "Follows the path's heading and slope, independently of camera Pan and Tilt. "
+                    + "Does not move the track or model.")
+                .onChange(() => {
+                    this.recalculateCascade();
+                    markSitchDirty();
+                    setRenderOne(true);
+                });
+        });
+        this.changeUnits();
+    }
+
+    changeUnits() {
+        this.positionOffsetControllers?.forEach((controller, i) => {
+            controller.name("Offset " + ["X", "Y", "Z"][i] + " (" + (Units?.small?.abbrev ?? "m") + ")");
+            controller.updateDisplay();
+        });
     }
 
     // Camera Tweaks: "<Main|Look> View Orthographic" checkbox for both view

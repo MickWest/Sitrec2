@@ -1,3 +1,4 @@
+import {getTrackGroundPoint} from "../TrackGround";
 import {interpolate} from "../utils";
 import {GlobalDateTimeNode, Globals, NodeMan, Sit} from "../Globals";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -11,6 +12,7 @@ import {isLocal} from "../configUtils"
 import stringify from "json-stringify-pretty-compact";
 import {Vector3} from "three";
 import {LLAToECEF, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
+import {pointAbove} from "../threeExt";
 
 export class CNodeTrackFromMISB extends CNodeTrack {
     constructor(v) {
@@ -417,6 +419,7 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         // race where elevationAtLL() returned a too-low value because terrain
         // tiles for the track region hadn't built yet at first recalculate.
         const useAGLPath = misb.isTerrainDependent();
+        const lockToVisibleGround = useAGLPath && misb.isAGLLockActive();
         const terrainNode = useAGLPath ? this._resolveTerrainNode() : null;
 
         // If frame count changed (e.g., Sit.frames updated), drop a stale cache
@@ -663,6 +666,12 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 const ecefZ = (_ratio * N + alt) * sinLat;
 
                 pos = new Vector3(ecefX, ecefY, ecefZ);
+            }
+            // A user-selected ground lock refers to the rendered surface. Keep
+            // the elevation-map cache as the fallback while 3D tiles load.
+            if (lockToVisibleGround) {
+                pos = pointAbove(getTrackGroundPoint(pos, misb), misb.altitudeLock);
+                alt = ECEFToLLAVD_radii(pos).z;
             }
             // const posY = pos.y;
             // pos.y = pos.z;

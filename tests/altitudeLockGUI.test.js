@@ -14,7 +14,7 @@ jest.mock("../src/Globals", () => ({
     Units: {getScaleFactors: () => mockScale},
     setRenderOne: () => {},
 }));
-jest.mock("../src/threeExt", () => ({getPointBelow: () => null}));
+jest.mock("../src/threeExt", () => ({getVisiblePointBelow: () => null}));
 jest.mock("../src/SphericalMath", () => ({altitudeHAE: () => 0}));
 
 import GUI from "../src/js/lil-gui.esm";
@@ -32,7 +32,10 @@ function heightNodeIn(folder, target, controls) {
     };
     node.show = (visible) => { node.visible = visible; };
     // A saved sitch restores the node's own `visible` (CNode simple serials).
-    node.modDeserialize = (v) => { node.visible = v.visible; };
+    node.modDeserialize = (v) => {
+        node.visible = v.visible;
+        if (v.value !== undefined && node.value !== v.value) node.setValue(v.value);
+    };
     return node;
 }
 
@@ -94,4 +97,25 @@ test("a saved sitch that restores the height control as visible does not show it
     const {heightNode} = setup();
     heightNode.modDeserialize({visible: true});
     expect(heightNode.visible).toBe(false);
+});
+
+test("restoring an unchanged zero control still enables the saved ground lock", () => {
+    const {heightNode, target, lock, heightFrom} = setup();
+    heightNode.value = 0;
+    Object.defineProperty(heightNode, "v0", {get: () => heightNode.value / mockScale.small});
+    heightNode.onChange = value => { target.altitudeLock = value; };
+    heightNode.modDeserialize({visible: true, value: 0});
+    expect(target.altitudeLock).toBe(0);
+    expect(lock.getValue()).toBe(true);
+    expect(heightNode.visible).toBe(true);
+    expect(heightFrom._hidden).toBe(false);
+});
+
+test.each([-1, 0])("an old hidden zero control restores an unlocked imported track (previous %s)", initial => {
+    const {heightNode, target, lock} = setup(initial);
+    heightNode.modDeserialize({value: 0, visible: false});
+    expect(target.altitudeLock).toBeLessThan(0);
+    expect(heightNode.value).toBe(-1);
+    expect(heightNode.visible).toBe(false);
+    expect(lock.getValue()).toBe(false);
 });

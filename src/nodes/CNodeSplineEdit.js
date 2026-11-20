@@ -1,3 +1,4 @@
+import {getTrackGroundPoint, trackGroundCache} from "../TrackGround";
 import {SplineEditor} from "../SplineEditor";
 import {Globals, guiMenus, NodeMan, Sit, TrackManager} from "../Globals";
 import {Vector3} from "three";
@@ -105,12 +106,16 @@ export class CNodeSplineEditor extends CNodeTrack {
                 .tooltip("Save the control points of this spline as a .spline.json file.\nDrop that file onto Sitrec to load it as an editable track")
         }
 
-        EventManager.addEventListener("elevationChanged", () => {
+        const refreshGround = () => {
+            if (this.disposed) return true;
             if (isAGLLockActive(this)) {
+                if (trackGroundCache()?.records.has(this)) return;
                 this.syncControlPointsToAltitudeLock();
                 this.recalculateCascade();
             }
-        });
+        };
+        EventManager.addEventListener("elevationChanged", refreshGround);
+        EventManager.addEventListener("visibleGroundChanged", () => { if (!trackGroundCache()?.records.has(this)) return refreshGround(); });
 
         this.recalculate()
         this.splineEditor.updatePointEditorGraphics()
@@ -369,6 +374,9 @@ export class CNodeSplineEditor extends CNodeTrack {
         if (isAltitudeLockActive(this)) {
             if (this.altitudeLockAGL === false) {
                 return adjustHeightHAE(position, this.altitudeLock);
+            }
+            if (NodeMan.get("TerrainModel", false)?.group?.visible === false) {
+                return pointAbove(getTrackGroundPoint(position, this), this.altitudeLock);
             }
             if (frame !== undefined) {
                 const terrainNode = NodeMan.get("TerrainModel", false);

@@ -1,3 +1,4 @@
+import {addRoadTrackControls} from "./RoadTrackGUI";
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {addNameControl, deduplicateNames, notifyDisplayNameChanged, uniqueDisplayName} from "./DisplayName";
@@ -3028,8 +3029,12 @@ class CTrackManager extends CManager {
             setAGL: (value) => {
                 trackOb.altitudeLockAGL = value;
                 splineEditorNode.setAltitudeLockAGL(value);
+                altLockControls?.update();
             },
         });
+        const roadControls = addRoadTrackControls(pathFolder, splineEditorNode, splineEditorNode);
+        const updateLock = altLockControls.update;
+        altLockControls.update = () => { updateLock(); roadControls.update(); };
         trackOb.updateAltitudeLockControls = () => altLockControls.update();
 
         // Set through the slider rather than the fields: the slider holds display units,
