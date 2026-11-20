@@ -83,6 +83,36 @@ The sidebar links **Global Templates** and **Local Templates** show the template
 
 An administrator can also use **File → Server → Save as Template**. It asks for a name and for the type of template, saves the sitch, and adds the label. The address then is the template by name, `?template=<name>`.
 
+#### Template options
+
+Administrators can set **File → Template Options** before **Save as Template**.
+These saved actions apply to every user who starts from the template. The menu has
+presets for Star Tracker, satellite viewing, and no automatic actions.
+
+- **On Media Import** can start Star Tracker after an image or video finishes loading.
+  Analysis runs on the new media, including when the user has already set a location
+  or time. Reloading a saved scene does not start another analysis.
+- **After Star Identification** can frame the solved stars and choose a clear nighttime
+  viewing setup. A known time constrains the location search; a known location constrains
+  the time search. User edits and imported metadata are preserved. With both missing,
+  the search prefers the United States, then Europe, and considers other locations if
+  neither provides a clear view. It checks the solved field against the horizon and
+  astronomical darkness, favors evening hours and nearby dates, and labels inferred
+  values as viewing assumptions. Stars alone do not uniquely recover a photograph's
+  location or capture time. Horizon matching from the photograph is not part of this step.
+  An ambiguous star pattern does not move the camera or change location/time. **Enough**
+  finishes analysis using the frames measured so far; it does not guarantee identification.
+- **Known Template Values** can preserve the template's own location or time as a
+  constraint. Leave these off when those values are only a starting view.
+- **Satellite Loading** can use the saved setting, load automatically, or **Load on
+  request**. The last option starts without the template's saved satellite catalogs;
+  users can load a catalog later from Satellites. Star Tracker and Satellite viewing
+  presets use this option.
+
+These actions run when a new scene starts from a template or new media is imported
+into it. They do not change the published template until the administrator saves it.
+The automatic viewing location/time change can be undone.
+
 #### Instructions for a template
 
 The Notes of a template are its instructions. To open the Notes, use **Show → Notes**, or press **N**.

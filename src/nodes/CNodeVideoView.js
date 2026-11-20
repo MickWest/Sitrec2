@@ -1,4 +1,5 @@
 import {shouldAnalyzeImportedStarImage} from "../starTrack/StarChartPolicy";
+import {shouldAnalyzeTemplateMedia} from "../TemplateOptions";
 import {wheelZoomFactor} from "../GestureActions";
 /**
  * Video view node for displaying and interacting with video content
@@ -722,6 +723,14 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             }
         }
 
+        if (newImport && shouldAnalyzeTemplateMedia(Sit, {
+            primary: this.id === "video", image: false, audio: isAudioOnlyFormat(fileName),
+            restoring: Globals.deserializing || restoreIndex !== undefined || !!this.pendingVideoRestore,
+        })) {
+            this.videoData._autoStarAnalysis = true;
+            this.videoData._templateStarAnalysis = true;
+        }
+
         console.log(`[VideoNew] Created videoData for video[${videoIndex}]: imageCache.length=${this.videoData?.imageCache?.length}`);
 
         VideoLoadingManager.registerLoading(videoDataId, fileName);
@@ -809,6 +818,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             videoData = this.videoData;
 
         assert(videoData, "CNodeVideoView loadedCallback called with no videoData, possibly because it's called in the constructor before the this.videoData is assigned");
+        const importActions = {_autoStarAnalysis: videoData._autoStarAnalysis,
+            _templateStarAnalysis: videoData._templateStarAnalysis};
         this.dispatchVideoAvailabilityChanged();
         setFilenameOverlaySource(this.fileName ?? videoData?.filename);
 
@@ -918,7 +929,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         this.updateVFRFixControl();
+        const importedVideoSelected = vd === this.videoData;
         this.settleVFR();
+        // Timeline wrappers must retain the one-shot actions belonging to this import.
+        if (importedVideoSelected) Object.assign(this.videoData, importActions);
         // After the wrap decision: what other nodes can rely on for the video's frame
         // numbers (an MP4 sends videoLoaded earlier, before that decision).
         EventManager.dispatchEvent("videoTimelineReady", {videoData: this.videoData, viewId: this.id});
@@ -2212,14 +2226,18 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             && restoreIndex === undefined && !this.pendingVideoRestore) {
             starTracker.photoRegistration = null;
         }
-        const autoStarAnalysis = shouldAnalyzeImportedStarImage({
+        const templateStarAnalysis = shouldAnalyzeTemplateMedia(Sit, {
+            primary: this.id === "video", image: true,
+            restoring: Globals.deserializing || restoreIndex !== undefined || !!this.pendingVideoRestore,
+        });
+        const autoStarAnalysis = templateStarAnalysis || (!Sit.templateSource && shouldAnalyzeImportedStarImage({
             template: Sit.templateSource?.name,
             automatic: starTracker?.autoAnalyzeImages,
             established: Globals.sitchEstablished, restoring: Globals.deserializing || restoreIndex !== undefined || !!this.pendingVideoRestore,
             primary: this.id === "video", hasWork: !!this.videoData
                 || (starTracker?.autoImageTimeSerial !== undefined
                     && starTracker.autoImageTimeSerial !== GlobalDateTimeNode.timeSetSerial),
-        });
+        }));
         this.fileName = filename;
         setFilenameOverlaySource(this.fileName);
         this.imageFileID = imageFileID ?? null;
@@ -2235,6 +2253,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.loadedCallback.bind(this), this.errorCallback.bind(this))
 
         this.videoData._autoStarAnalysis = autoStarAnalysis;
+        this.videoData._templateStarAnalysis = templateStarAnalysis;
 
         // Tag restore-originated loads so the completion (CVideoImageData queues
         // loadedCallback as a microtask, after this assignment) lands in its own

@@ -1,4 +1,5 @@
 import {gpHistoryWindowDays} from "./TLEUtils";
+import {templateOptions} from "./TemplateOptions";
 
 const day = date => date.toISOString().slice(0, 10);
 
@@ -16,6 +17,8 @@ export function satelliteCatalogRequest(date, now = new Date()) {
 // Template names are session provenance, not the name of a user's saved scene.
 export function satelliteAutoloadDefault(sitch) {
     const template = sitch.templateSource?.name?.trim().toLowerCase();
+    const options = templateOptions(sitch);
+    if (template && options.satellites !== 'inherit') return options.satellites === 'automatic';
     if (template) return ["starlink", "star tracker"].includes(template);
     return !sitch.mods && (sitch.name === "starlink" || sitch.name === "custom");
 }

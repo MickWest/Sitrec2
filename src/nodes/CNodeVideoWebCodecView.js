@@ -8,7 +8,8 @@
  */
 import {CNodeVideoView} from "./CNodeVideoView";
 import {par} from "../par";
-import {FileManager, Globals, NodeMan} from "../Globals";
+import {FileManager, Globals, NodeMan, Sit} from "../Globals";
+import {shouldAnalyzeTemplateMedia} from "../TemplateOptions";
 
 import {SITREC_APP} from "../configUtils";
 import {CVideoMp4Data, detectVideoContainer} from "../CVideoMp4Data";
@@ -256,6 +257,12 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
      * diagnostic can track it, and add the video entry to the menu.
      */
     _finishUploadSetup(file) {
+        if (shouldAnalyzeTemplateMedia(Sit, {primary: this.id === "video", image: false,
+            audio: this.videoData instanceof CVideoAudioOnly,
+            restoring: Globals.deserializing || !!this.pendingVideoRestore})) {
+            this.videoData._autoStarAnalysis = true;
+            this.videoData._templateStarAnalysis = true;
+        }
         if (this._newImportClearsFpsOverride) {
             this.videoData.clearsFpsOverride = true;
             this._newImportClearsFpsOverride = false;

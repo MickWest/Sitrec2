@@ -28,6 +28,8 @@ import {
 import {applyViewingMenuLayout} from "./ViewingMenuLayout";
 import {checkAndOfferTLERefresh} from "./TLERefresh";
 import {showTemplateIntro, templateIntroText} from "./SitchTemplateInstructions";
+import {beginTemplateSession, templateOptions} from "./TemplateOptions";
+import {beginInitialCameraPosition} from "./InitialCameraPosition";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
@@ -2076,12 +2078,20 @@ export const serializeMethods = {
         // This template is an empty starting point for an imported star photo.
         // Restoring its display settings must not count as a user camera setup.
         const starTracker = NodeMan.get("starTrackCameraController", false);
-        if (Sit.templateSource?.name?.trim().toLowerCase() === "star tracker"
-            && starTracker?.autoAnalyzeImages && !starTracker.poseTrack?.length
+        const actions = templateOptions(Sit);
+        if (Sit.templateSource && (actions.analyzeImages || actions.analyzeVideos)
+            && starTracker && !starTracker.poseTrack?.length
             && !NodeMan.get("video", false)?.videoData) {
             setSitchEstablished(false);
             starTracker.autoImageTimeSerial = GlobalDateTimeNode.timeSetSerial;
         }
+        beginTemplateSession(Sit, {
+            timeSerial: GlobalDateTimeNode.timeSetSerial,
+            location: NodeMan.get("fixedCameraPosition", false)?._LLA,
+            cameraChoice: NodeMan.get("cameraTrackSwitch", false)?.choice,
+        });
+        beginInitialCameraPosition(NodeMan.get("fixedCameraPosition", false),
+            Sit.isCustom && (!sitchData.mods || !!Sit.templateSource) && !actions.keepLocation);
         // Every track, object and selector has its saved state now. The changes of the load
         // itself asked for nothing (TrackObjectLinks.js).
         scheduleTrackObjectLinksRefresh();

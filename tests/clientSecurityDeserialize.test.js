@@ -18,7 +18,7 @@ function harness() {
     const mainView = {id: 'mainView'};
     const context = {
         console: {log: jest.fn(), warn: jest.fn(), error: jest.fn()},
-        Globals, Sit: {}, par: {}, GlobalDateTimeNode: null,
+        Globals, Sit: {}, par: {}, GlobalDateTimeNode: {timeSetSerial: 0},
         FileManager: {list: {}},
         NodeMan: {exists: () => false, get: () => undefined, list: {}, recalculateAllRootFirst: jest.fn()},
         TrackManager: {applyDisplayNames() {}},
@@ -45,6 +45,9 @@ function harness() {
         // The real rule for which sitch shows an intro, and a stub for the box itself.
         templateIntroText: require('../src/SitchTemplateInstructions').templateIntroText,
         showTemplateIntro: jest.fn(),
+        beginTemplateSession: require('../src/TemplateOptions').beginTemplateSession,
+        templateOptions: require('../src/TemplateOptions').templateOptions,
+        beginInitialCameraPosition: require('../src/InitialCameraPosition').beginInitialCameraPosition,
     };
     vm.createContext(context);
     vm.runInContext(code + ';globalThis.methods = serializeMethods;', context);
@@ -140,6 +143,25 @@ describe('restoring a saved sitch\'s globals', () => {
         const names = [...saved.matchAll(/^\s*"(\w+)"/gm)].map(m => m[1]);
         expect(names.length).toBeGreaterThan(10);
         expect(Object.keys(context.restorable).sort()).toEqual(names.sort());
+    });
+});
+
+describe('initial look-camera placement after loading', () => {
+    test.each([
+        ['a new custom scene', {isCustom: true}, {}, true],
+        ['a saved scene', {isCustom: true}, {mods: {}}, false],
+        ['a fresh template', {isCustom: true, templateSource: {name: 'Star Tracker'}}, {mods: {}}, true],
+        ['a template that keeps its location', {isCustom: true, templateSource: {name: 'Star Tracker'},
+            templateOptions: {keepLocation: true}}, {mods: {}}, false],
+        ['a built-in scene', {}, {}, false],
+    ])('%s has the correct text-location behavior', async (_name, sitch, data, allowed) => {
+        const {manager, context} = harness();
+        const position = {_LLA: [34, -118, 6], agl: true};
+        Object.assign(context.Sit, sitch);
+        context.NodeMan.get = id => id === 'fixedCameraPosition' ? position : undefined;
+        await manager.finishDeserialization(data, 1);
+        const {canPlaceInitialCamera} = require('../src/InitialCameraPosition');
+        expect(canPlaceInitialCamera(position, 'fixedCamera')).toBe(allowed);
     });
 });
 

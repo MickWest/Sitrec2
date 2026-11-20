@@ -77,6 +77,7 @@ import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
 import {showError, showErrorOnce, showConfirm} from "./showError";
 import {findTemplateByName} from "./SitchTemplates";
+import {prepareTemplateSitch} from "./TemplateOptions";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
@@ -1196,6 +1197,7 @@ export class CFileManager extends CManager {
                 delete sitch.sitchName;
                 if (sitch.Sit) delete sitch.Sit.sitchName;
                 sitch.templateSource = {name, userID: Number(sourceUserID) || getEffectiveUserID()};
+                prepareTemplateSitch(sitch, name);
                 // The new sitch is not a version of the template, so it lists none.
                 this.loadName = "-";
                 this.updateVersionsDropdown([]);

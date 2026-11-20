@@ -133,6 +133,22 @@ describe("parseDateTimeString", () => {
     });
 
     describe("date and time together", () => {
+        test.each(["Saturday,", "Saturday", "Sat,", "Sat.", "SATURDAY,"])(
+            "accepts the weekday prefix %s on a pasted timestamp", weekday => {
+                const expected = {
+                    date: {month: 8, day: 30, year: 2025},
+                    time: {hour: 20, minute: 9, second: 0, millisecond: 0},
+                    utc: false,
+                };
+                expect(parseDateTimeString(`${weekday} August 30, 2025, at 8:09 PM`)).toEqual(expected);
+            });
+
+        test.each(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])(
+            "accepts %s before an explicit calendar date", weekday => {
+                expect(parseDateTimeString(`${weekday}, August 30, 2025`))
+                    .toEqual(parseDateTimeString("August 30, 2025"));
+            });
+
         test("both halves are picked up", () => {
             expect(parseDateTimeString("Jan 6, 2020 15:20")).toEqual({
                 date: {month: 1, day: 6, year: 2020},
@@ -177,6 +193,11 @@ describe("parseDateTimeString", () => {
             expect(parseDateTimeString(null)).toBeNull();
             expect(parseDateTimeString("zzqqxyzz")).toBeNull();
         });
+
+        test.each(["Saturday", "Saturday at 8:09 PM", "Saturday Market August 30, 2025", "Saturdayish, August 30, 2025"])(
+            "does not strip weekday-like text without an explicit date: %s", text => {
+                expect(parseDateTimeString(text)).toBeNull();
+            });
     });
 });
 
@@ -186,6 +207,14 @@ describe("resolveDateTimeString", () => {
         now: new Date("2026-01-01T01:15:00.456Z"),
         offsetHours: -8,
     };
+
+    test("a weekday prefix preserves the selected time zone when resolving the pasted date", () => {
+        const text = "Saturday, August 30, 2025, at 8:09 PM";
+        expect(resolveDateTimeString(text, {...options, timeZone: "America/Los_Angeles"}).toISOString())
+            .toBe("2025-08-31T03:09:00.000Z");
+        expect(resolveDateTimeString(`${text} UTC`, options).toISOString())
+            .toBe("2025-08-30T20:09:00.000Z");
+    });
 
     test.each([
         ["yesterday", "2025-12-31T03:04:05.123Z"],

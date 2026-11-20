@@ -3,6 +3,9 @@ import {yieldStarAnalysis as yieldToBrowser} from "./StarAnalysisYield";
 import {makeSkyPhotoPlate} from "./SkyPhotoPlate";
 import {activeSkyPhoto, disposeSkyPhoto} from "../SkyPhotoRegistration";
 import {findNightView} from "./StarNightView";
+import {findTemplateNightView, solvedFieldDirections} from "./StarTemplateView";
+import {applyTemplateInference, templateConstraints, templateOptions} from "../TemplateOptions";
+import {dismissTemplateIntro} from "../SitchTemplateInstructions";
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
@@ -37,6 +40,8 @@ import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma,
     rejectReason} from "./StarDetect";
 import {applyTransform, invertTransform, stabilizingMaps} from "./StarMatch";
 import {TRIPLE_DEFAULTS} from "./StarTriples";
+import {assessBrightTripleIdentification, minimumIdentifyObservations,
+    unconfirmedIdentificationStatus} from "./StarIdentificationPolicy";
 import {identifyBrightTriplesOffThread} from "./StarTriplesOffThread";
 import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
 import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
@@ -2161,6 +2166,7 @@ function pointSourceStats(track) {
  * After a new identification - blind or manual - put it on the camera.
  */
 function applySolveToCamera(r) {
+    applyTemplateStarSetup(r);
     const registration = NodeMan.get("starTrackCameraController", false);
     if (registration?.registerPhotoInSky && videoView()?.videoData instanceof CVideoImageData) {
         if (!activeSkyPhoto()) registerSkyPhoto();
@@ -2244,8 +2250,7 @@ export async function identifyStars(opts = {}) {
         // array is the single solve EXPANDED across the nominal timeline - so the threshold must
         // come from the still flag, never from transform count, or every star gets filtered.
         const totalFrames = myResult.solved.transforms.length || 1;
-        const minIdentifyObs = myResult.still ? 1
-            : Math.min(25, Math.max(1, Math.ceil(0.15 * totalFrames)));
+        const minIdentifyObs = minimumIdentifyObservations(totalFrames, myResult.still);
         // disabledStars holds the circles the user clicked off in the video view - their call,
         // no questions asked: a light they know is a planet, a plane, or a bad track.
         // Identification runs on the 2D reference chart and on the star set THAT chart produced -
@@ -2563,7 +2568,7 @@ export async function identifyStars(opts = {}) {
             params.status = `identify failed: ${solved ? solved.reason : "no result"}`;
             // Too few stars for quads is what triples are for. Not on a scoring run, which
             // must not steer the camera.
-            if (!scoring) await identifyByBrightTriples({auto: true, quadFailure: params.status});
+            if (!scoring) await identifyByBrightTriples({auto: true});
             return;
         }
 
@@ -3693,7 +3698,7 @@ function applyManualLabels() {
  * names given by hand do (applyManualLabels), as one undo step.
  *
  * opts.auto: run because the quad solve failed. Names that the user gave are then left alone,
- * and the triples are not tried. opts.quadFailure: that failure, kept at the start of the status.
+ * and the triples are not tried. Only a confirmed match is applied to the scene.
  */
 export async function identifyByBrightTriples(opts = {}) {
     dismissedOverlayStatus = null;
@@ -3704,10 +3709,22 @@ export async function identifyByBrightTriples(opts = {}) {
         setRenderOne();
         return false;
     }
-    const lead = opts.quadFailure ? `${opts.quadFailure} - ` : "";
+    resetCompletionFade();
+    const fresh = () => result === r && videoView()?.videoData === r.videoData
+        && Globals.loadGeneration === r.generation;
+    const unconfirmed = reason => {
+        if (!fresh()) return false;
+        params.status = unconfirmedIdentificationStatus(r, reason);
+        if (r.videoData._templateStarSetupPending) {
+            r.videoData._templateViewingStatus = 'Not set: stars not reliably identified';
+        }
+        startCompletionFade();
+        setRenderOne();
+        return false;
+    };
     const userNamed = [...(r.manualLabels?.values() ?? [])].some((e) => e.source !== "triples");
     if (opts.auto && userNamed) {
-        params.status = `${lead}Bright Triples not tried: circles have names you gave`;
+        params.status = 'Catalog search inconclusive; existing star names kept';
         setRenderOne();
         return false;
     }
@@ -3718,7 +3735,7 @@ export async function identifyByBrightTriples(opts = {}) {
         params.status = `star catalog failed to load: ${e?.message ?? e}`;
         return false;
     }
-    if (result !== r) return false;
+    if (!fresh()) return false;
     const {catalog, names} = data;
     const date = GlobalDateTimeNode.frameToDate(r.frame0);
     const observerPos = observerECEF();
@@ -3729,7 +3746,10 @@ export async function identifyByBrightTriples(opts = {}) {
         : () => true;
     const limit = params.tripleMagLimit;
     const objects = [];
-    for (const body of PLANET_LABELS) {
+    // Planet positions depend on the date. A template's placeholder date cannot
+    // identify a planet and then be replaced by a different inferred date.
+    const timeKnown = !Sit.templateSource || templateConstraints(Sit, templateContextSnapshot()).timeKnown;
+    for (const body of timeKnown ? PLANET_LABELS : []) {
         if (body === "Moon") continue;              // a disk, not a point of light
         const mag = Astronomy.Illumination(body, date).mag;
         if (!(mag <= limit)) continue;
@@ -3748,24 +3768,27 @@ export async function identifyByBrightTriples(opts = {}) {
     // leaves a steady star slightly off: Mars on the Jupiter clip was seen in all 197 frames and
     // scattered 0.66 px, against a limit of 0.6 px.
     const nFrames = r.solved.transforms.length;
+    const minObservations = minimumIdentifyObservations(nFrames, r.still);
     const nearlySteady = (c) => (c.klass2D ?? c.klass) === "incoherent" && c.n >= 0.9 * nFrames
         && Number.isFinite(c.scatter) && c.scatter <= 0.001 * r.videoH;
     const stars = r.solved.classified
         .filter((c) => ((c.klass2D ?? c.klass) === "star" || nearlySteady(c)) && c.position
+            && (c.manual || c.n >= minObservations)
             && !r.disabledStars?.has(c.index) && (Number.isFinite(c.magnitude) || c.manual))
         // With the point-source measurements, as for identify: they say which candidate stars
         // are the brightest point sources, and only those take part (maxCandidateStars).
         .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index,
             ...pointSourceStats(r.solved.tracks[c.index])}));
+    if (stars.length < 4) return unconfirmed(`only ${stars.length} persistent candidate stars; at least 4 are needed`);
     const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
     const maxFovDeg = 2 * Math.atan(Math.tan(vfov * D2R / 2) * Math.hypot(1, r.videoW / r.videoH)) / D2R;
     const taking = Math.min(stars.length, TRIPLE_DEFAULTS.maxCandidateStars);
     const starCount = taking < stars.length
         ? `the ${taking} best of ${stars.length} candidate stars` : `${stars.length} candidate stars`;
-    setStatus(`${lead}Bright Triples: ${starCount}, ${objects.length} objects `
+    setStatus(`Checking bright-star patterns: ${starCount}, ${objects.length} objects `
         + `brighter than mag ${limit}${params.tripleAboveHorizon ? " above the horizon" : " in the whole sky"}`);
     await yieldToBrowser();
-    if (result !== r) return false;
+    if (!fresh()) return false;
 
     // In a worker, behind the Star Tracker's progress window, which can stop it. Building the
     // catalog triples is about a sixth of the time, matching the rest.
@@ -3781,31 +3804,24 @@ export async function identifyByBrightTriples(opts = {}) {
                 onProgress: (stage, f) => updateProgress(stage === "catalog"
                     ? {percent: 15 * f, status: "Making the triangles of bright objects"}
                     : {percent: 15 + 85 * f, status: "Matching the triangles of candidate stars"}),
-                shouldAbort: () => aborted || result !== r,
+                shouldAbort: () => aborted || !fresh(),
             });
     } catch (e) {
-        params.status = `${lead}Bright Triples failed: ${e?.message ?? e}`;
-        setRenderOne();
-        return false;
+        return unconfirmed(`bright-star search could not finish: ${e?.message ?? e}`);
     } finally {
         hideProgress();
     }
     const ms = performance.now() - t0;
     if (!res) {
-        if (result === r) params.status = `${lead}Bright Triples stopped`;
-        setRenderOne();
-        return false;
+        return unconfirmed('bright-star search stopped');
     }
-    const describe = (c) => `${c.matches.map((m) => m.object.label).join(", ")}: ${c.nMatched} matched, `
-        + `${c.nMissing} missing, rms ${c.rmsPx.toFixed(2)} px, field ${c.fovDeg.toFixed(1)} deg`;
+    if (!fresh()) return false;
     // The inputs too, so a run that names the wrong objects can be checked from the console.
     r.tripleReport = {...res, maxFovDeg, magLimit: limit, aboveHorizon: params.tripleAboveHorizon, ms, date, observer: ECEFToLLAVD_radii(observerPos),
         objects: objects.map(({label, raDeg, decDeg, mag}) => ({label, raDeg, decDeg, mag})), stars};
-    if (!res.ok) {
-        params.status = `${lead}Bright Triples failed: ${res.reason}`;
-        setRenderOne();
-        return false;
-    }
+    const assessment = assessBrightTripleIdentification(res, r.videoW, r.videoH);
+    r.tripleReport.assessment = {accepted: assessment.accepted, reason: assessment.reason};
+    if (!assessment.accepted) return unconfirmed(assessment.reason);
 
     const labels = new Map();
     for (const {star, object} of res.best.matches) {
@@ -3836,14 +3852,9 @@ export async function identifyByBrightTriples(opts = {}) {
     };
     UndoManager.add({description: "Identify Bright Triples", undo: () => restore(before), redo: () => restore(after)});
     restore(after);
-    const others = res.nFitting - 1;
-    const next = res.candidates[1];
-    params.status = `${lead}Bright Triples: ${res.best.matches.map((m) => m.object.label).join(", ")} - `
-        + params.status
-        + (promoted.length ? ` - ${promoted.map((p) => labels.get(p.c.index)?.label).join(", ")} made `
-            + `${promoted.length === 1 ? "a star circle" : "star circles"}` : "")
-        + (others > 0 ? ` - ${others} other triple${others === 1 ? "" : "s"} also fit` : "")
-        + (next ? `; next: ${describe(next)}` : "");
+    params.status = `Identified ${res.best.nMatched} stars with Bright Triples; `
+        + `rms ${assessment.fit.rmsPx.toFixed(1)} px`;
+    startCompletionFade();
     setRenderOne();
     return true;
 }
@@ -5155,14 +5166,83 @@ export function getStarTrackerResult() {
 export function autoAnalyzeStarImage({videoData, viewId}) {
     if (viewId !== "video" || !videoData?._autoStarAnalysis) return;
     delete videoData._autoStarAnalysis;
-    if (trackerHasWork || minAreaChosen || running || result || calibrationPending) return;
+    const fromTemplate = !!videoData._templateStarAnalysis;
+    if (!fromTemplate && (trackerHasWork || minAreaChosen || running || result || calibrationPending)) return;
     const generation = Globals.loadGeneration, ticket = ++autoAnalysisTicket;
     // Let image metadata, timeline setup and the import's synchronous UI finish first.
-    setTimeout(() => {
+    const start = () => {
         if (ticket !== autoAnalysisTicket || generation !== Globals.loadGeneration
-            || videoView()?.videoData !== videoData || trackerHasWork || minAreaChosen || running || result) return;
-        runFullStarTracker().catch(error => { params.status = `star analysis failed: ${error.message}`; setRenderOne(); });
-    }, 0);
+            || videoView()?.videoData !== videoData) return;
+        if (fromTemplate && (running || calibrationPending)) { setTimeout(start, 100); return; }
+        if (!fromTemplate && (trackerHasWork || minAreaChosen || running || result)) return;
+        if (fromTemplate) {
+            dismissTemplateIntro();
+            resetStarTracker();
+            videoData._templateStarSetupPending = true;
+            par.paused = true;
+        }
+        runFullStarTracker().then(() => {
+            if (videoView()?.videoData === videoData && result?.identify?.solved?.ok && videoData._templateViewingStatus) {
+                params.status += `; ${videoData._templateViewingStatus}`;
+                setRenderOne();
+            }
+        }).catch(error => { params.status = `star analysis failed: ${error.message}`; setRenderOne(); });
+    };
+    setTimeout(start, 0);
+}
+
+function templateContextSnapshot() {
+    return {timeSerial: GlobalDateTimeNode.timeSetSerial,
+        location: NodeMan.get('fixedCameraPosition', false)?._LLA,
+        cameraChoice: NodeMan.get('cameraTrackSwitch', false)?.choice};
+}
+
+// Run only for a new imported media item, after its stars have actually been
+// identified. Saved scenes and failed/partial solves never trigger a relocation.
+function applyTemplateStarSetup(r) {
+    const video = videoView(), data = video?.videoData;
+    if (!data?._templateStarSetupPending || r?.videoData !== data
+        || !r.identify?.solved?.ok || r.identify.partial || r.identify.solved.mirrored) return;
+    const options = templateOptions(Sit);
+    const controller = NodeMan.get('starTrackCameraController', false);
+    if (!controller || !controller.bakeFrom(r)) return;
+    data._templateStarSetupPending = false;
+    const constraints = templateConstraints(Sit, templateContextSnapshot());
+    if (options.findNightView && !(constraints.locationKnown && constraints.timeKnown)) {
+        const pose = controller.posesAt(par.frame);
+        const vfov = controller.vfovTrack?.[Math.max(0, par.frame - controller.frame0)]
+            ?? controller.vfovDeg ?? NodeMan.get('lookCamera').camera.fov;
+        const directions = solvedFieldDirections(pose, vfov, r.videoW / r.videoH);
+        const lla = ECEFToLLAVD_radii(NodeMan.get('lookCamera').camera.position);
+        const choice = findTemplateNightView(directions, {
+            date: constraints.timeKnown ? new Date(GlobalDateTimeNode.dateNow) : new Date(),
+            location: constraints.locationKnown ? {latitude: lla.x, longitude: lla.y} : null,
+            timeKnown: constraints.timeKnown,
+        });
+        if (choice) {
+            const position = NodeMan.get('fixedCameraPosition', false);
+            const before = {lla: position?._LLA.slice(), agl: position?.agl,
+                date: new Date(GlobalDateTimeNode.dateNow), cameraChoice: NodeMan.get('cameraTrackSwitch').choice};
+            const apply = (location, agl, date, cameraChoice) => applyTemplateInference(Sit, () => {
+                if (!constraints.locationKnown && position) {
+                    NodeMan.get('cameraTrackSwitch').selectOption(cameraChoice);
+                    position.gotoLLA(...location, agl);
+                }
+                if (!constraints.timeKnown) GlobalDateTimeNode.setNowDateTime(date);
+                setRenderOne();
+            }, templateContextSnapshot);
+            const after = {lla: [choice.latitude, choice.longitude, 2], agl: true, date: choice.date, cameraChoice: 'fixedCamera'};
+            const restore = state => apply(state.lla, state.agl, state.date, state.cameraChoice);
+            restore(after);
+            UndoManager.add({description: 'Set star viewing location and time', undo: () => restore(before), redo: () => restore(after)});
+            const changed = [!constraints.locationKnown && `location ${choice.latitude.toFixed(2)}, ${choice.longitude.toFixed(2)} (${choice.region})`,
+                !constraints.timeKnown && `time ${choice.date.toISOString()}`].filter(Boolean).join('; ');
+            data._templateViewingStatus = `assumed viewing ${changed}; field above ${choice.minAltitude.toFixed(0)}°, Sun ${choice.sunAltitude.toFixed(0)}° — not capture metadata`;
+        } else {
+            data._templateViewingStatus = 'no clear nighttime view satisfies the known location/time; kept them unchanged';
+        }
+    }
+    if (options.frameStars) params.syncCameraToStars = true;
 }
 
 function sharedStarLabelsActive() {
@@ -5331,8 +5411,14 @@ export function setupStarTrackerMenu() {
             + "The first identification downloads a 2.5 MB star catalog.");
     const starController = NodeMan.get("starTrackCameraController", false);
     if (starController) {
-        folder.add(starController, "autoAnalyzeImages").name("Analyze New Images").listen()
-            .tooltip("Automatically analyze an imported image in a fresh scene, before a search, camera setup or earlier analysis. On by default in the Star Tracker template.");
+        if (!Sit.templateSource) {
+            folder.add(starController, "autoAnalyzeImages").name("Analyze New Images").listen()
+                .tooltip("Automatically analyze an imported image in a fresh scene, before a search, camera setup or earlier analysis.");
+        } else if (templateOptions(Sit).findNightView) {
+            folder.add({get setup() { return videoView()?.videoData?._templateViewingStatus || 'Waiting for a solved star field'; }}, 'setup')
+                .name('Viewing Setup').listen().disable()
+                .tooltip('Missing location and time are chosen for a clear nighttime view. User edits and metadata are preserved. Inferred viewing values do not identify where or when the image was captured.');
+        }
         folder.add(starController, "registerPhotoInSky").name("Register Photo in Sky").listen()
             .onChange(on => {
                 if (on) {
@@ -5401,12 +5487,12 @@ export function setupStarTrackerMenu() {
             + "It replaces any other stabilization. A new analysis turns it off, because the analysis "
             + "must read the frames as recorded.");
     folder.add(params, "fadeAtCompletion").name("Fade at completion")
-        .tooltip("When an identification SUCCEEDS, fade out the working marks one layer at a time, one "
+        .tooltip("When identification finishes, fade out the working marks one layer at a time, one "
             + "second each: the quad lines, then the star circles, then the catalog-number labels. "
             + "The named stars keep their labels. If fewer than 12 stars have names, the brightest "
             + "numbered stars keep theirs too.\n"
             + "Each layer's switch in Star Tracker Display is turned off as it goes, so you can turn it back on. "
-            + "A FAILED run never fades: its marks show what went wrong.");
+            + "An inconclusive search keeps its status visible. Turn the markers back on to inspect its candidates.");
     // The same optimization the Video Adjustments folder offers, reachable from here as well: it
     // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
     // The builder adds its own Enough / Abort / status alongside, so a run started here can also be

@@ -29,6 +29,9 @@ import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
 import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
 import {autoAnalyzeStarImage, makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
+import {noteTemplateLocationChange} from "./TemplateOptions";
+import {setupTemplateOptionsMenu} from "./TemplateOptionsMenu";
+import {noteCameraPositionChange} from "./InitialCameraPosition";
 import {ScenarioManager} from "./CScenarioManager";
 import {setupFisheye} from "./FisheyeProjection";
 import {setupPanoramicCamera} from "./PanoramicCamera";
@@ -2403,7 +2406,9 @@ export const setupMethods = {
         // changing camera to a fixed camera, which might be something the user does even beforer
         // they add any tracks
         EventManager.addEventListener("Switch.onChange.cameraTrackSwitch", (choice) => {
+            noteCameraPositionChange(NodeMan.get("fixedCameraPosition", false), true);
             console.log("EVENT Camera track switch changed to " + choice)
+            noteTemplateLocationChange(Sit);
             setSitchEstablished(true)
         });
 
@@ -2432,6 +2437,8 @@ export const setupMethods = {
 
         EventManager.addEventListener("PositionLLA.onChange", (data) => {
             if (data.id === "fixedCameraPosition") {
+                noteCameraPositionChange(NodeMan.get("fixedCameraPosition", false));
+                noteTemplateLocationChange(Sit);
                 setSitchEstablished(true)
 
                 // if there's a camera track switch, then we need to update the camera track
@@ -2746,6 +2753,7 @@ export const setupMethods = {
         setupCameraMotionMenu();
 
         setupStarTrackerMenu();
+        setupTemplateOptionsMenu();
 
         // Street View pano needs the PHP stitcher endpoint (sitrecServer/streetview.php), which is
         // absent in serverless/desktop (no-PHP) builds — gate the menu so it isn't a dead UI there.

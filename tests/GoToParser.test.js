@@ -2,6 +2,7 @@ import {parseGoToString} from '../src/GoToParser';
 
 test.each([
     ['Bingley, 10AM', 'Bingley', '10AM'],
+    ['Saturday, August 30, 2025, at 8:09 PM, South Korea', 'South Korea', 'Saturday, August 30, 2025, at 8:09 PM'],
     ['go to Bingley, 10AM', 'Bingley', '10AM'],
     ['London at noon tomorrow', 'London', 'noon tomorrow'],
     ['Paris tomorrow at noon', 'Paris', 'tomorrow at noon'],

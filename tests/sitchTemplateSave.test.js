@@ -27,6 +27,7 @@ import {isAdmin} from '../src/configUtils';
 import {showChoice, showConfirm, showError} from '../src/showError';
 import {promptForText} from '../src/TextPrompt';
 import {addLocalTemplateLabel, ownTemplateLabels, updateGlobalTemplates} from '../src/SitchTemplates';
+import {prepareTemplateSitch, normalizeTemplateOptions} from '../src/TemplateOptions';
 
 const USER = 42;
 const TEMPLATES = {'Flares': ['Global Template'], 'My Setup': ['Local Template']};
@@ -393,6 +394,7 @@ describe('a sitch opened as a template', () => {
         findTemplateByName = jest.fn(async name => ({name, userID: 7}));
         showError = jest.fn();
         const bindings = {
+            prepareTemplateSitch,
             findTemplateByName: (...args) => findTemplateByName(...args),
             // A saved sitch has its name two times: at the top level, and in the "Sit" block.
             fetch: jest.fn(async () => ({ok: true, text: async () => JSON.stringify(
@@ -417,7 +419,8 @@ describe('a sitch opened as a template', () => {
 
         await loader.loadSavedFile('Flares', 7, {asTemplate: true});
 
-        expect(loaded).toEqual([{isASitchFile: true, lat: 40, Sit: {satScale: 2}, templateSource: {name: 'Flares', userID: 7}}]);
+        expect(loaded).toEqual([{isASitchFile: true, lat: 40, Sit: {satScale: 2},
+            templateSource: {name: 'Flares', userID: 7}, templateOptions: normalizeTemplateOptions(null, 'Flares')}]);
         expect(loader.getVersions).toHaveBeenCalledWith('Flares', 7);
         // The new sitch is not a version of the template.
         expect(loader.updateVersionsDropdown).toHaveBeenCalledWith([]);

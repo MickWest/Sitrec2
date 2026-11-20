@@ -27,6 +27,7 @@ import {
     supportsDirectoryPicker,
 } from "./CFileManagerUtils";
 import {promptForText} from "./TextPrompt";
+import {normalizeTemplateOptions} from "./TemplateOptions";
 import {
     GLOBAL_TEMPLATE_LABEL,
     LOCAL_TEMPLATE_LABEL,
@@ -429,6 +430,7 @@ export const saveMethods = {
 
         this.sourceUserID = null;
         Sit.sitchName = templateName;
+        Sit.templateOptions = normalizeTemplateOptions(Sit.templateOptions, templateName);
         try {
             await this.saveSitchNamed(templateName);
         } catch (error) {

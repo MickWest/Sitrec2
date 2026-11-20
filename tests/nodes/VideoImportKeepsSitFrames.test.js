@@ -66,6 +66,25 @@ test("importing into an empty view keeps the old frame count until the video's o
     expect(Sit.frames).toBe(900);
 });
 
+test("a new template video is marked for automatic star analysis", () => {
+    Sit.templateSource = {name: "Star Tracker"};
+    const view = emptyVideoView();
+    view.newVideo("clip.mp4", true);
+    expect(view.videoData._autoStarAnalysis).toBe(true);
+    expect(view.videoData._templateStarAnalysis).toBe(true);
+});
+
+test("restoring a video or disabling the action does not start template analysis", () => {
+    Sit.templateSource = {name: "Star Tracker"};
+    const restored = emptyVideoView();
+    restored.newVideo("clip.mp4", false);
+    expect(restored.videoData._autoStarAnalysis).toBeUndefined();
+    Sit.templateOptions = {analyzeVideos: false};
+    const disabled = emptyVideoView();
+    disabled.newVideo("clip.mp4", true);
+    expect(disabled.videoData._autoStarAnalysis).toBeUndefined();
+});
+
 test("the graph recalculates without error while the video loads", () => {
     const {NodeMan} = require("../../src/Globals");
     emptyVideoView().newVideo("clip.mp4", true);

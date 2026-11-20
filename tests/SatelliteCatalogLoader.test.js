@@ -64,12 +64,14 @@ test("pending and installed sets are reused across focus, time and Autoload togg
     expect(installCatalog).toHaveBeenCalledTimes(1);
 });
 
-test("defaults enable blank scenes and the two templates, while other saved scenes stay manual", () => {
+test("blank scenes can autoload while templates honor their satellite startup policy", () => {
     expect(new SatelliteCatalogLoader({}).automatic).toBe(false);
     expect(satelliteAutoloadDefault({name: "custom"})).toBe(true);
     expect(satelliteAutoloadDefault({name: "starlink"})).toBe(true);
-    for (const name of ["Star Tracker", "Starlink"]) {
-        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name}})).toBe(true);
+    for (const name of ["Star Tracker", "Starlink", "Starlink Horizon Flares"]) {
+        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name}})).toBe(false);
+        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name},
+            templateOptions: {satellites: 'automatic'}})).toBe(true);
     }
     expect(satelliteAutoloadDefault({name: "custom", mods: {}})).toBe(false);
     expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name: "Aircraft"}})).toBe(false);

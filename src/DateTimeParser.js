@@ -157,6 +157,12 @@ export function parseDateTimeString(input) {
         });
     }
 
+    // Pasted timestamps often prefix the calendar date with a weekday. Treat it
+    // as a label for the explicit date, never as a request to choose another day.
+    // Without a calendar date, keep rejecting "Saturday at 8pm" rather than
+    // silently using today's date. Other leftover words still reach the geocoder.
+    if (date) take(/^\s*(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\.?(?=[\s,])/, () => {});
+
     if (now && (date || time || namedTime || relativeDay !== undefined)) return null;
     if (time && namedTime) return null;
     if (date && relativeDay !== undefined) return null;

@@ -5,7 +5,7 @@
 // paste.
 
 import {par} from "./par";
-import {GlobalDateTimeNode, Sit, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, NodeMan, Sit, setRenderOne} from "./Globals";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {lastSitFrame} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
@@ -15,6 +15,7 @@ import {parseGoToString} from "./GoToParser";
 import {lookupTimeZone} from "./TimeZoneLookup";
 import {importPastedTLE} from "./TLEPaste";
 import {FeatureManager} from "./CFeatureManager";
+import {canPlaceInitialCamera, TEXT_LOCATION_HEIGHT_METERS, withInitialCameraPlacement} from "./InitialCameraPosition";
 
 // Bumped for each request that reaches a place lookup, so a slow one can tell it
 // has been superseded (see applyGoToString).
@@ -96,7 +97,15 @@ export async function executeGoToRequest(request, target = {}) {
 
         if (request.kind === "location") {
             if (target.moveToLocation) target.moveToLocation(location);
-            else goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+            else {
+                const position = NodeMan.get("fixedCameraPosition", false);
+                if (canPlaceInitialCamera(position, NodeMan.get("cameraTrackSwitch", false)?.choice,
+                    NodeMan.get("lookCamera", false)?.freeLook)) {
+                    withInitialCameraPlacement(position, () => position.gotoLLA(location.lat, location.lon,
+                        location.alt ?? TEXT_LOCATION_HEIGHT_METERS, location.alt === undefined));
+                }
+                goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
+            }
         }
         if (node) {
             // The requested calendar date determines the zone's offset, not

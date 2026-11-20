@@ -26,6 +26,7 @@ import {showError} from "../showError";
 import {f2m} from "../utils";
 import {attachLatLonInputs, moveTerrainTo, resolveLocationString} from "../CoordinateInput";
 import {t} from "../i18n";
+import {withInitialCameraPlacement} from "../InitialCameraPosition";
 
 export class CNodePositionLLA extends CNodeTrack {
     constructor(v) {
@@ -406,7 +407,7 @@ export class CNodePositionLLA extends CNodeTrack {
                 return;
             }
 
-            this.gotoLLA(result.lat, result.lon, 3); // set altitude to 3m above ground
+            withInitialCameraPlacement(this, () => this.gotoLLA(result.lat, result.lon, 3));
 
 
 

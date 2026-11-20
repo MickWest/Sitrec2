@@ -5,6 +5,7 @@ jest.mock('../src/Globals', () => ({
         getTimeLocation: () => ({lat: 53.8479533, lon: -1.8384526}),
     },
     Sit: {aFrame: 0, bFrame: 100},
+    NodeMan: {get: jest.fn()},
     setRenderOne: jest.fn(),
 }));
 jest.mock('../src/par', () => ({par: {frame: 0}}));
@@ -26,14 +27,16 @@ jest.mock('../src/CFeatureManager', () => ({FeatureManager: {addLocationPin: jes
 
 import {applyGoToString, executeGoToRequest} from '../src/GoTo';
 import {parseGoToString} from '../src/GoToParser';
-import {GlobalDateTimeNode} from '../src/Globals';
+import {GlobalDateTimeNode, NodeMan} from '../src/Globals';
 import {lookupTimeZone, utcOffsetHoursInZone} from '../src/TimeZoneLookup';
 import {goToLatLon, resolveLocationString} from '../src/CoordinateInput';
 import {FeatureManager} from '../src/CFeatureManager';
 import {applyDateTimeString} from '../src/DateTimeParser';
+import {beginInitialCameraPosition, noteCameraPositionChange, withInitialCameraPlacement} from '../src/InitialCameraPosition';
 
 beforeEach(() => {
     jest.clearAllMocks();
+    NodeMan.get.mockReset();
     resolveLocationString.mockReset();
     lookupTimeZone.mockReset();
     GlobalDateTimeNode.dateNow = new Date('2025-09-19T20:50:00Z');
@@ -42,6 +45,73 @@ beforeEach(() => {
         GlobalDateTimeNode.timeZoneOffset = utcOffsetHoursInZone(zone, date);
     });
     lookupTimeZone.mockResolvedValue('Europe/London');
+});
+
+function initialLookCamera() {
+    const position = {_LLA: [34, -118, 10000], agl: false};
+    position.gotoLLA = jest.fn((lat, lon, alt, agl) => {
+        position._LLA = [lat, lon, alt];
+        position.agl = agl;
+        noteCameraPositionChange(position);
+    });
+    const nodes = {fixedCameraPosition: position, cameraTrackSwitch: {choice: 'fixedCamera'}, lookCamera: {freeLook: false}};
+    NodeMan.get.mockImplementation(id => nodes[id]);
+    beginInitialCameraPosition(position, true);
+    lookupTimeZone.mockResolvedValue('Asia/Seoul');
+    resolveLocationString.mockResolvedValue({lat: 36.5, lon: 127.8});
+    return {position, nodes};
+}
+
+test.each(['South Korea', ' Saturday, August 30, 2025, at 8:09 PM, South Korea'])(
+    'text navigation places an untouched look camera 10 feet AGL: %s', async text => {
+        const {position} = initialLookCamera();
+        expect(await applyGoToString(text)).toBe(true);
+        expect(resolveLocationString).toHaveBeenCalledWith('South Korea');
+        expect(position.gotoLLA).toHaveBeenCalledWith(36.5, 127.8, 3.048, true);
+        expect(goToLatLon).toHaveBeenCalledWith(36.5, 127.8, undefined, undefined, 0);
+        if (text.includes('2025')) expect(GlobalDateTimeNode.editTime).toHaveBeenCalledWith(new Date('2025-08-30T11:09:00Z'));
+        else expect(GlobalDateTimeNode.editTime).not.toHaveBeenCalled();
+    });
+
+test('a geolocated starting camera still follows text locations', async () => {
+    const {position} = initialLookCamera();
+    withInitialCameraPlacement(position, () => position.gotoLLA(51, 1, 3, true));
+    position.gotoLLA.mockClear();
+    await applyGoToString('South Korea');
+    expect(position.gotoLLA).toHaveBeenCalledWith(36.5, 127.8, 3.048, true);
+    resolveLocationString.mockResolvedValueOnce({lat: 35.7, lon: 139.7});
+    await applyGoToString('Tokyo');
+    expect(position.gotoLLA).toHaveBeenLastCalledWith(35.7, 139.7, 3.048, true);
+});
+
+test('an independently placed camera stays put while the overview and destination time update', async () => {
+    const {position} = initialLookCamera();
+    position.gotoLLA(40, -80, 100, false);
+    position.gotoLLA.mockClear();
+    await applyGoToString('South Korea, August 30, 2025, 8:09 PM');
+    expect(position.gotoLLA).not.toHaveBeenCalled();
+    expect(position._LLA).toEqual([40, -80, 100]);
+    expect(goToLatLon).toHaveBeenCalled();
+    expect(GlobalDateTimeNode.editTime).toHaveBeenCalledWith(new Date('2025-08-30T11:09:00Z'));
+});
+
+test('a camera moved while geocoding is in flight is preserved', async () => {
+    const {position} = initialLookCamera();
+    let finish;
+    resolveLocationString.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const request = applyGoToString('South Korea');
+    position.gotoLLA(40, -80, 100, false);
+    position.gotoLLA.mockClear();
+    finish({lat: 36.5, lon: 127.8});
+    await request;
+    expect(position.gotoLLA).not.toHaveBeenCalled();
+});
+
+test('explicit coordinate altitude wins over the default ground clearance', async () => {
+    const {position} = initialLookCamera();
+    resolveLocationString.mockResolvedValueOnce({lat: 40, lon: -74, alt: 300, isCoordinate: true});
+    await applyGoToString('40, -74, 300');
+    expect(position.gotoLLA).toHaveBeenCalledWith(40, -74, 300, false);
 });
 
 test('Go To places one pin with the requested name', async () => {
