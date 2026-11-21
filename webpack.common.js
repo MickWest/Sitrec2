@@ -205,6 +205,23 @@ module.exports = (env = {}) => ({
         // Regenerated from this checkout on every build, including ship's production build.
         new DocumentationIndexPlugin(),
 
+        // satellite.js 7 adds a WebAssembly "bulk propagation" API, and its main entry
+        // re-exports it, so every `import * as satellite from "satellite.js"` reaches it.
+        // That API loads two Emscripten runtimes with dynamic import() of the package's
+        // private "#wasm-single-thread" and "#wasm-multi-thread" specifiers. The
+        // multi-thread runtime imports "node:module" and "node:worker_threads", which
+        // webpack cannot read, so the build fails. Sitrec uses only the JavaScript SGP4
+        // functions (twoline2satrec, json2satrec, propagate, gstime, eciToGeodetic,
+        // eciToEcf), so the runtimes are left out: nothing for them is emitted, and a
+        // call to createSingleThreadRuntime() or createMultiThreadRuntime() rejects with
+        // "Cannot find module". Using that API needs a separate change: the runtimes
+        // compile WebAssembly from inline base64 and start workers, which the production
+        // Content-Security-Policy must allow.
+        new webpack.IgnorePlugin({
+            resourceRegExp: /^#wasm-(single|multi)-thread$/,
+            contextRegExp: /[\\/]node_modules[\\/]satellite\.js[\\/]/,
+        }),
+
     //    new webpack.debug.ProfilingPlugin(),
 
         // {

@@ -162,9 +162,10 @@
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer|zstddec)/)"
+      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer|zstddec|satellite\\.js)/)"
     ],
     "moduleNameMapper": {
+      "^satellite\\.js$": "<rootDir>/node_modules/satellite.js/dist/index.js",
       "^3d-tiles-renderer/src/(.*)$": "<rootDir>/node_modules/3d-tiles-renderer/src/$1",
       "^3d-tiles-renderer/three$": "<rootDir>/node_modules/3d-tiles-renderer/src/three/renderer/math/OBB.js"
     }
@@ -198,7 +199,7 @@
     "pmtiles": "4.5.0",
     "proj4-fully-loaded": "^0.2.0",
     "regression": "^2.0.1",
-    "satellite.js": "^6.0.1",
+    "satellite.js": "^7.2.0",
     "seedrandom": "^3.0.5",
     "stats.js": "^0.17.0",
     "tesseract.js": "^7.0.0",
@@ -207,6 +208,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.13",
+    "@babel/plugin-transform-export-namespace-from": "^7.29.7",
     "@babel/plugin-transform-modules-commonjs": "^7.27.1",
     "@babel/preset-typescript": "^7.29.7",
     "@biomejs/biome": "^2.6.6",
