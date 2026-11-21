@@ -167,7 +167,7 @@ and put the target at the same place with **Alt+Shift+X**, or on the same track.
 | **Tilt (El)** | 0 | Elevation in degrees, from -89 to 89. Positive is up. Manual only. |
 | **Roll** | 0 | Roll around the view axis, in degrees. Manual and To Target only. |
 | **Lock Forward Vector** | Off | When on, moving the camera does not change the direction it points in space. Pan, Tilt and Roll (or the Satellite Mode angles) change to match the new position, so the stars and other sky objects stay where they are in the view. Changing Pan, Tilt or Roll yourself sets the new direction to hold. Manual only, and not with Relative Heading. |
-| **Relative Heading** | Off | When on, Pan is measured from the direction the camera track is moving, not from north. Pan 0 looks forward along the track, and -90 looks left. For a ground-locked track, Tilt 0 follows the slope of the ground beneath the path. For other tracks, Tilt is measured from level. Manual only. |
+| **Relative Heading** | Off | When on, Pan is measured from the direction the camera track is moving, not from north. Pan 0 looks forward along the track, and -90 looks left. For a ground-locked track with **Road Track** on, Tilt 0 follows the slope of the smoothed road. For other tracks, Tilt is measured from level. Manual only. |
 | **Satellite Mode** | Off | Screen-space camera movement for high and low elevation angles. See [Camera View Modes](satcam.md). Manual only. |
 | **Rotation** | 0 | Screen-space rotation around the view axis. Shown only in Satellite Mode. Manual only. |
 | **Use 0-360 for Pan** | Off | Shows Pan as a 0 to 360 compass bearing instead of -180 to 180. It changes only how the angle is written, not where the camera points. Typing a value above 180 into Pan ticks it for you. Manual only. |
@@ -218,7 +218,7 @@ Less common adjustments.
 | **Look Y-comp** | 1 | Stretches the look view's frustum vertically, to fit more into the same height. This distorts the view. 1 is off. |
 | **xOffset**, **yOffset** | 0 | Turn the look view off-center by this many degrees, horizontally or vertically (-20 to 20). Useful when the tracked object is not at the center of the video frame. |
 | **Near Plane (m)** | 0.1 | Near clipping distance of the look camera. Sometimes useful for very close objects, or to cut out near objects. |
-| **Camera Position Offset** (folder) | X/Y/Z = 0 | Moves the camera relative to its path: positive X is right, Y is up, and Z is forward. Uses feet or meters according to your small-distance units. The offsets follow the path's heading and slope independently of Pan and Tilt, and are saved with the camera. The track and model stay in place. |
+| **Camera Position Offset** (folder) | X/Y/Z = 0 | Moves the camera relative to its path: positive X is right, Y is up, and Z is forward. Uses feet or meters according to your small-distance units. The offsets follow the path's heading and slope independently of Pan and Tilt, and are saved with the camera. On a ground-locked track without **Road Track** they stay level: Y is straight up. The track and model stay in place. |
 | **Diffraction Glare** (folder) | — | Adds glare from an imported point spread function. See [Diffraction Glare](DiffractionGlare.md). |
 | **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list, and so is a 3D object whose **Position** is **Manual**. |
 | **Orbit Radius (m)** | 5000 | Radius of the circle, in meters. |
@@ -230,11 +230,14 @@ The orbit settings only have an effect when **Camera → Location → Position**
 The Orbit Radius, Altitude and Period controls always use meters and seconds, whatever
 your unit setting.
 
-For a road camera, lock the track to **Ground** at zero height, enable **Relative
-Heading**, and set **Offset Y** to the camera's height in the cabin. With Pan and
-Tilt near zero, the camera looks along the road and pitches with its slope. X and
-Z let you move it sideways or forward within the vehicle. These offsets use the
-path's direction; they do not depend on a model's size or banking animation.
+For a road camera, lock the track to **Ground** at zero height, turn on
+[Road Track](Tracks.md#altitude-adjustments), enable **Relative Heading**, and set
+**Offset Y** to the camera's height in the cabin. With Pan and Tilt near zero, the
+camera looks along the road and pitches with the smoothed road's slope. Without Road
+Track, Tilt is measured from level and the offsets stay level, because the raw ground
+heights along the path change from frame to frame. X and Z let you move the camera
+sideways or forward within the vehicle. These offsets use the path's direction; they
+do not depend on a model's size or banking animation.
 
 ### Camera → Smoothing
 

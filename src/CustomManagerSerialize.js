@@ -146,8 +146,21 @@ const RESTORABLE_GLOBALS = {
     showTimeDisplayMain: "boolean",
 };
 
+// The running build as an integer, such as 2202001 for 2.202.1. 0 when the build has no number.
+function buildVersionNumber() {
+    // The build replaces process.env.BUILD_VERSION_NUMBER with a string. Do not test
+    // `typeof process`: the browser has no process object.
+    let text = "";
+    try { text = process.env.BUILD_VERSION_NUMBER ?? ""; } catch (_) { /* no build environment, as in a test */ }
+    const parts = text.split('.').map(Number);
+    if (parts.length < 3 || parts.some(n => !Number.isFinite(n))) return 0;
+    return parts[0] * 1000000 + parts[1] * 1000 + parts[2];
+}
+
 export const serializeMethods = {
-    getCustomSitchString(local = false) {
+    // keepTemplateOptions: for a reload in memory (Reset Origin, the temporary save of a
+    // stale-build reload), which must keep an administrator's unsaved Template Options.
+    getCustomSitchString(local = false, {keepTemplateOptions = false} = {}) {
         // the output object
         // since we are going to use JSON.stringify, then when it is loaded again we do NOT need
         // the ad-hox parse functions that we used to have
@@ -160,8 +173,7 @@ export const serializeMethods = {
 
 
         assert(process.env.BUILD_VERSION_NUMBER !== undefined, "BUILD_VERSION_NUMBER must be defined in the environment");
-        const versionParts = process.env.BUILD_VERSION_NUMBER.split('.').map(Number);
-        const versionNumber = versionParts[0] * 1000000 + versionParts[1] * 1000 + versionParts[2];
+        const versionNumber = buildVersionNumber();
 
         let out = {
             stringified: true,
@@ -208,6 +220,8 @@ export const serializeMethods = {
             delete out.templateSource;
             delete out.showSatelliteControls;
             delete out.starlinkViewing;
+            // Template options are saved only by Save as Template (saveSitchAsTemplate).
+            if (!keepTemplateOptions && !FileManager?.savingTemplate) delete out.templateOptions;
         }
 
         // Serialize video state for any sitch with a video node
@@ -2073,6 +2087,10 @@ export const serializeMethods = {
         // before the chapter baseline, so the converted sitch does not read as edited.
         NodeMan.get("video", false)?.settleVFR?.();
         this.markChapterBaseline();
+        // A scene that did not come from a saved file (a new, blank sitch) is in the current
+        // format. Mods that are restored later, as in a chapter switch, must not get the
+        // conversions for old saves (AltitudeLockGUI.js).
+        if (sitchData.exportTagNumber === undefined && !sitchData.mods) Globals.exportTagNumber = buildVersionNumber();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
         // This template is an empty starting point for an imported star photo.

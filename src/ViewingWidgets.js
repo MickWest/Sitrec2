@@ -4,6 +4,7 @@ import {compassHeading, viewingDateInput} from "./StarlinkViewing";
 import {executeGoToRequest} from "./GoTo";
 import {parseGoToString} from "./GoToParser";
 import {disableFreeLook} from "./FreeLookGuard";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 // Reusable observer widgets. The context supplies the existing scene adapters;
 // these definitions contain presentation, never copies of scientific state.
@@ -61,7 +62,10 @@ function mountObserver(c, s) {
             const result = request && ["location", "time"].includes(request.kind) && await executeGoToRequest(request, {
                 isCurrent: () => !c.disposed && mine === ticket && c.observerIsManual,
                 getLocation: () => ({lat: c.observer._LLA[0], lon: c.observer._LLA[1]}),
-                moveToLocation: location => c.observer.gotoLLA(location.lat, location.lon, location.alt ?? 2, location.alt === undefined),
+                // A typed altitude is HAE, and a camera height that is not AGL is MSL (as in GoTo.js).
+                moveToLocation: location => c.observer.gotoLLA(location.lat, location.lon,
+                    location.alt === undefined ? 2 : location.alt - meanSeaLevelOffset(location.lat, location.lon),
+                    location.alt === undefined),
             });
             if (c.disposed || mine !== ticket || !c.observerIsManual) return;
             if (!result?.success) {

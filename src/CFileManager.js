@@ -687,7 +687,8 @@ export class CFileManager extends CManager {
 
         // Now serialize the sitch to capture the new origin (Sit.lat, Sit.lon)
         // and then deserialize it in memory to reload everything with the new origin
-        const sitchString = CustomManager.getCustomSitchString();
+        // A reload in memory keeps an administrator's unsaved Template Options.
+        const sitchString = CustomManager.getCustomSitchString(false, {keepTemplateOptions: true});
 
         const sitchObject = textSitchToObject(sitchString);
 

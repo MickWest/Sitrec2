@@ -46,13 +46,14 @@ function sites(region) {
     return result;
 }
 
+const raDecVector = ({raDeg, decDeg}) => new Vector3(Math.cos(decDeg * DEG) * Math.cos(raDeg * DEG),
+    Math.cos(decDeg * DEG) * Math.sin(raDeg * DEG), Math.sin(decDeg * DEG));
+
 // Include the frame edges, not just the optical axis: a high centre alone can
 // still leave half a wide photograph below the ground.
 export function solvedFieldDirections(pose, vfov, aspect = 1) {
     if (!pose?.centre || !pose?.above || !(vfov > 0 && vfov < 180) || !(aspect > 0)) return [];
-    const vector = ({raDeg, decDeg}) => new Vector3(Math.cos(decDeg * DEG) * Math.cos(raDeg * DEG),
-        Math.cos(decDeg * DEG) * Math.sin(raDeg * DEG), Math.sin(decDeg * DEG));
-    const center = vector(pose.centre), up = vector(pose.above);
+    const center = raDecVector(pose.centre), up = raDecVector(pose.above);
     up.addScaledVector(center, -up.dot(center)).normalize();
     const right = new Vector3().crossVectors(center, up).normalize();
     const y = Math.tan(Math.min(160, vfov) * DEG / 2), x = y * aspect;
@@ -63,55 +64,71 @@ export function solvedFieldDirections(pose, vfov, aspect = 1) {
     return directions;
 }
 
+/** J2000 directions of the identified stars, from entries with raDeg and decDeg. */
+export function identifiedStarDirections(entries) {
+    return [...(entries ?? [])].filter(e => Number.isFinite(e?.raDeg) && Number.isFinite(e?.decDeg)).map(raDecVector);
+}
+
 /** Choose a plausible viewing setup from solved J2000 sky directions. Stars alone
  * do not uniquely determine the photograph's position or date. Known inputs are
- * hard constraints; only missing inputs are searched. */
-export function findTemplateNightView(directions, {date, location = null, timeKnown = false} = {}) {
-    if (!directions.length || !Number.isFinite(date?.getTime())
-        || directions.some(d => ![d.x, d.y, d.z].every(Number.isFinite) || d.lengthSq() < 0.5)) return null;
+ * hard constraints; only missing inputs are searched. `stars` are the identified
+ * stars: with a known location and no time, a field whose lower part never clears
+ * the horizon still gets a dark time that puts these stars at least 10 degrees up. */
+export function findTemplateNightView(directions, {date, location = null, timeKnown = false, stars = []} = {}) {
+    const invalid = list => list.some(d => ![d.x, d.y, d.z].every(Number.isFinite) || d.lengthSq() < 0.5);
+    if (!directions.length || !Number.isFinite(date?.getTime()) || invalid(directions) || invalid(stars)) return null;
     if (location && (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)
         || Math.abs(location.latitude) > 90 || Math.abs(location.longitude) > 180)) return null;
     const minClearance = 10;
     const night = Math.sin(-18 * DEG);
+    // Used only with a known location and no time. Without identified stars, the
+    // frame centre stands in for them.
+    const lowest = location && !timeKnown ? (stars.length ? stars : directions.slice(0, 1)) : [];
     const fields = new Map();
+    const toECEF = (list, matrix) => list.map(d => d.clone().normalize().transformDirection(matrix));
     const fieldAt = instant => {
         const key = instant.getTime();
         if (!fields.has(key)) {
             const matrix = getEQJToECEFMatrix(instant);
-            fields.set(key, {directions: directions.map(d => d.clone().normalize().transformDirection(matrix)),
+            fields.set(key, {matrix, directions: toECEF(directions, matrix),
                 sun: getGeocentricBodyPositionECEF('Sun', instant).normalize()});
         }
         return fields.get(key);
     };
-    const evaluate = (point, instant, region) => {
+    const minAltitude = (list, up) => Math.asin(Math.max(-1, Math.min(1, Math.min(...list.map(d => d.dot(up)))))) / DEG;
+    // `which` is 'directions' for the whole frame, or 'lowest' for the identified stars.
+    const evaluate = (point, instant, region, which = 'directions') => {
         const field = fieldAt(instant), sunDot = field.sun.dot(point.up);
         if (sunDot > night + 1e-10) return null;
-        const altitude = Math.asin(Math.max(-1, Math.min(1, Math.min(...field.directions.map(d => d.dot(point.up)))))) / DEG;
+        // The stars are converted only for a dark instant that the relaxed search tests.
+        if (which === 'lowest') field.lowest ??= toECEF(lowest, field.matrix);
+        const altitude = minAltitude(field[which], point.up);
         if (altitude < minClearance) return null;
         // Solar local hour avoids inventing a civil time zone for a search point.
         const hour = ((instant.getUTCHours() + instant.getUTCMinutes() / 60 + point.longitude / 15) % 24 + 24) % 24;
         const eveningDistance = Math.abs(((hour - 21 + 36) % 24) - 12);
-        return {date: instant, latitude: point.latitude, longitude: point.longitude, region,
+        const result = {date: instant, latitude: point.latitude, longitude: point.longitude, region,
             minAltitude: altitude, sunAltitude: Math.asin(Math.max(-1, Math.min(1, sunDot))) / DEG,
             localSolarHour: hour, score: altitude - (timeKnown ? 0 : 3 * eveningDistance)};
+        if (which === 'lowest') {
+            result.fieldMinAltitude = minAltitude(field.directions, point.up);
+            result.lowFrame = result.fieldMinAltitude < minClearance;
+        }
+        return result;
     };
     const regions = location ? [{name: 'Known location', fixed: true}] : REGIONS;
     const offsets = [0];
     if (!timeKnown) for (let d = 1; d <= 183; d++) offsets.push(d, -d);
     const dayStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    const canRise = (p, list) => list.every(d => 90 - Math.abs(p.latitude - Math.asin(d.z / d.length()) / DEG) >= minClearance);
     for (const region of regions) {
         const candidates = location ? [{...location, up: upAt(location.latitude, location.longitude)}] : sites(region);
         // A circumpolar southern field cannot rise in either northern region.
-        if (!candidates.some(p => directions.every(d => 90 - Math.abs(p.latitude - Math.asin(d.z / d.length()) / DEG) >= minClearance))) continue;
-        for (const offset of offsets) {
-            let best = null;
-            const times = timeKnown ? [date] : Array.from({length: 24}, (_, hour) => new Date(dayStart + offset * DAY + hour * 3600000));
-            for (const instant of times) for (const point of candidates) {
-                const result = evaluate(point, instant, region.name);
-                if (result && (!best || result.score > best.score)) best = result;
-            }
-            if (!best) continue;
-            const coarse = best;
+        const strict = candidates.some(p => canRise(p, directions));
+        const relaxed = lowest.length > 0 && candidates.some(p => canRise(p, lowest));
+        if (!strict && !relaxed) continue;
+        const refine = (coarse, which) => {
+            let best = coarse;
             const minutes = timeKnown ? [0] : [-45, -30, -15, 0, 15, 30, 45];
             const refinements = location ? candidates : [];
             if (!location) for (let lat = coarse.latitude - 2; lat <= coarse.latitude + 2; lat += 0.5) {
@@ -120,11 +137,27 @@ export function findTemplateNightView(directions, {date, location = null, timeKn
                 }
             }
             for (const minute of minutes) for (const point of refinements) {
-                const result = evaluate(point, new Date(+coarse.date + minute * 60000), region.name);
+                const result = evaluate(point, new Date(+coarse.date + minute * 60000), region.name, which);
                 if (result && result.score > best.score) best = result;
             }
             return best;
+        };
+        // The nearest day on which the identified stars are clear, used only if no
+        // day clears the whole frame.
+        let fallback = null;
+        for (const offset of offsets) {
+            let best = null, low = null;
+            const times = timeKnown ? [date] : Array.from({length: 24}, (_, hour) => new Date(dayStart + offset * DAY + hour * 3600000));
+            for (const instant of times) for (const point of candidates) {
+                const result = strict && evaluate(point, instant, region.name);
+                if (result && (!best || result.score > best.score)) best = result;
+                const lowResult = relaxed && !fallback && evaluate(point, instant, region.name, 'lowest');
+                if (lowResult && (!low || lowResult.score > low.score)) low = lowResult;
+            }
+            fallback ||= low;
+            if (best) return refine(best, 'directions');
         }
+        if (fallback) return refine(fallback, 'lowest');
     }
     if (location) return null; // A supplied location must never be replaced by a regional guess.
     const elsewhere = findNightView(directions, date, !timeKnown);

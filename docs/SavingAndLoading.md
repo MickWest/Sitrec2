@@ -89,6 +89,12 @@ Administrators can set **File → Template Options** before **Save as Template**
 These saved actions apply to every user who starts from the template. The menu has
 presets for Star Tracker, satellite viewing, and no automatic actions.
 
+Only **Save as Template** saves these options. A normal save does not keep them. A
+template that has no saved options, such as a Local Template made in the sitch browser,
+gets its actions from its name. A template named "Star Tracker" gets the actions of the
+Star Tracker preset, and other names get no automatic actions. These templates keep
+their saved satellite setting.
+
 - **On Media Import** can start Star Tracker after an image or video finishes loading.
   Analysis runs on the new media, including when the user has already set a location
   or time. Reloading a saved scene does not start another analysis.
@@ -98,7 +104,10 @@ presets for Star Tracker, satellite viewing, and no automatic actions.
   the search prefers the United States, then Europe, and considers other locations if
   neither provides a clear view. It checks the solved field against the horizon and
   astronomical darkness, favors evening hours and nearby dates, and labels inferred
-  values as viewing assumptions. Stars alone do not uniquely recover a photograph's
+  values as viewing assumptions. With a known location and no time, if no dark time
+  puts the whole frame at least 10° above the horizon, it uses a dark time that puts the
+  identified stars 10° up, and the status says that the lower part of the frame is below
+  the horizon. Stars alone do not uniquely recover a photograph's
   location or capture time. Horizon matching from the photograph is not part of this step.
   An ambiguous star pattern does not move the camera or change location/time. **Enough**
   finishes analysis using the frames measured so far; it does not guarantee identification.
@@ -106,8 +115,8 @@ presets for Star Tracker, satellite viewing, and no automatic actions.
   constraint. Leave these off when those values are only a starting view.
 - **Satellite Loading** can use the saved setting, load automatically, or **Load on
   request**. The last option starts without the template's saved satellite catalogs;
-  users can load a catalog later from Satellites. Star Tracker and Satellite viewing
-  presets use this option.
+  users can load a catalog later from Satellites. The Star Tracker and Satellite viewing
+  presets in the menu use this option.
 
 These actions run when a new scene starts from a template or new media is imported
 into it. They do not change the published template until the administrator saves it.

@@ -6,7 +6,12 @@ import GUI from "../src/js/lil-gui.esm";
 import "../src/lil-gui-extras";
 import {addRoadTrackControls} from "../src/RoadTrackGUI";
 
+// The track ground cache exists only while Google 3D tiles are the visible ground.
+const mockGround = {cache: {}};
+jest.mock("../src/TrackGround", () => ({trackGroundCache: () => mockGround.cache}));
+
 beforeEach(() => {
+    mockGround.cache = {};
     window.matchMedia ??= () => ({matches: false, addListener() {}, removeListener() {}});
     global.ResizeObserver ??= class {observe() {} disconnect() {}};
     setNodeMan(new CNodeManager());
@@ -34,5 +39,24 @@ test("road settings survive a node save and restore, and controls follow ground 
     controls.update();
     expect(toggle._hidden).toBe(true);
     expect(width._hidden).toBe(true);
+    folder.destroy();
+});
+
+test("Road Track shows only while a track ground cache exists, and follows a change of ground", () => {
+    mockGround.cache = null;
+    const folder = new GUI({container: document.body, autoPlace: false});
+    const node = new CNodeArray({id: "road", array: []});
+    node.altitudeLock = 0; node.altitudeLockAGL = true; node.roadTrack = true;
+    addRoadTrackControls(folder, node, node);
+    const control = property => folder.controllers.find(c => c.property === property);
+    expect(["roadTrack", "roadWidth", "roadSmoothing"].map(p => control(p)._hidden)).toEqual([true, true, true]);
+    // The node's visibleGroundChanged handler runs this when Google 3D tiles become the ground.
+    mockGround.cache = {};
+    node.updateRoadTrackControls();
+    expect(["roadTrack", "roadWidth", "roadSmoothing"].map(p => control(p)._hidden)).toEqual([false, false, false]);
+    mockGround.cache = null;
+    node.updateRoadTrackControls();
+    expect(control("roadTrack")._hidden).toBe(true);
+    expect(node.roadTrack).toBe(true);
     folder.destroy();
 });

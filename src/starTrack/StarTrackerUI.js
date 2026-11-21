@@ -3,9 +3,10 @@ import {yieldStarAnalysis as yieldToBrowser} from "./StarAnalysisYield";
 import {makeSkyPhotoPlate} from "./SkyPhotoPlate";
 import {activeSkyPhoto, disposeSkyPhoto} from "../SkyPhotoRegistration";
 import {findNightView} from "./StarNightView";
-import {findTemplateNightView, solvedFieldDirections} from "./StarTemplateView";
+import {findTemplateNightView, identifiedStarDirections, solvedFieldDirections} from "./StarTemplateView";
 import {applyTemplateInference, templateConstraints, templateOptions} from "../TemplateOptions";
 import {dismissTemplateIntro} from "../SitchTemplateInstructions";
+import {withInitialCameraPlacement} from "../InitialCameraPosition";
 import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
@@ -3718,7 +3719,7 @@ export async function identifyByBrightTriples(opts = {}) {
         if (r.videoData._templateStarSetupPending) {
             r.videoData._templateViewingStatus = 'Not set: stars not reliably identified';
         }
-        startCompletionFade();
+        // No fade: the star circles stay, so they can be right-clicked and named by hand.
         setRenderOne();
         return false;
     };
@@ -5201,9 +5202,14 @@ function templateContextSnapshot() {
 // identified. Saved scenes and failed/partial solves never trigger a relocation.
 function applyTemplateStarSetup(r) {
     const video = videoView(), data = video?.videoData;
-    if (!data?._templateStarSetupPending || r?.videoData !== data
-        || !r.identify?.solved?.ok || r.identify.partial || r.identify.solved.mirrored) return;
+    if (!data?._templateStarSetupPending || r?.videoData !== data || !r.identify?.solved?.ok) return;
     const options = templateOptions(Sit);
+    if (r.identify.partial || r.identify.solved.mirrored) {
+        // Still pending: a later full identification of this media can set the view.
+        if (options.findNightView) data._templateViewingStatus = r.identify.partial
+            ? 'Not set: only part of the video was identified' : 'Not set: the solved field is mirrored';
+        return;
+    }
     const controller = NodeMan.get('starTrackCameraController', false);
     if (!controller || !controller.bakeFrom(r)) return;
     data._templateStarSetupPending = false;
@@ -5218,6 +5224,7 @@ function applyTemplateStarSetup(r) {
             date: constraints.timeKnown ? new Date(GlobalDateTimeNode.dateNow) : new Date(),
             location: constraints.locationKnown ? {latitude: lla.x, longitude: lla.y} : null,
             timeKnown: constraints.timeKnown,
+            stars: identifiedStarDirections(r.identify.identified?.values()),
         });
         if (choice) {
             const position = NodeMan.get('fixedCameraPosition', false);
@@ -5225,8 +5232,11 @@ function applyTemplateStarSetup(r) {
                 date: new Date(GlobalDateTimeNode.dateNow), cameraChoice: NodeMan.get('cameraTrackSwitch').choice};
             const apply = (location, agl, date, cameraChoice) => applyTemplateInference(Sit, () => {
                 if (!constraints.locationKnown && position) {
-                    NodeMan.get('cameraTrackSwitch').selectOption(cameraChoice);
-                    position.gotoLLA(...location, agl);
+                    // An initial placement, so Go To can still move a camera the user has not moved.
+                    withInitialCameraPlacement(position, () => {
+                        NodeMan.get('cameraTrackSwitch').selectOption(cameraChoice);
+                        position.gotoLLA(...location, agl);
+                    });
                 }
                 if (!constraints.timeKnown) GlobalDateTimeNode.setNowDateTime(date);
                 setRenderOne();
@@ -5237,10 +5247,16 @@ function applyTemplateStarSetup(r) {
             UndoManager.add({description: 'Set star viewing location and time', undo: () => restore(before), redo: () => restore(after)});
             const changed = [!constraints.locationKnown && `location ${choice.latitude.toFixed(2)}, ${choice.longitude.toFixed(2)} (${choice.region})`,
                 !constraints.timeKnown && `time ${choice.date.toISOString()}`].filter(Boolean).join('; ');
-            data._templateViewingStatus = `assumed viewing ${changed}; field above ${choice.minAltitude.toFixed(0)}°, Sun ${choice.sunAltitude.toFixed(0)}° — not capture metadata`;
+            const clearance = choice.lowFrame
+                ? `identified stars above ${choice.minAltitude.toFixed(0)}°, lower part of the frame `
+                    + `${choice.fieldMinAltitude < 0 ? 'below' : 'near'} the horizon`
+                : `field above ${choice.minAltitude.toFixed(0)}°`;
+            data._templateViewingStatus = `assumed viewing ${changed}; ${clearance}, Sun ${choice.sunAltitude.toFixed(0)}° — not capture metadata`;
         } else {
             data._templateViewingStatus = 'no clear nighttime view satisfies the known location/time; kept them unchanged';
         }
+    } else if (options.findNightView) {
+        data._templateViewingStatus = 'Location and time known; unchanged';
     }
     if (options.frameStars) params.syncCameraToStars = true;
 }
@@ -5487,12 +5503,12 @@ export function setupStarTrackerMenu() {
             + "It replaces any other stabilization. A new analysis turns it off, because the analysis "
             + "must read the frames as recorded.");
     folder.add(params, "fadeAtCompletion").name("Fade at completion")
-        .tooltip("When identification finishes, fade out the working marks one layer at a time, one "
+        .tooltip("When an identification succeeds, fade out the working marks one layer at a time, one "
             + "second each: the quad lines, then the star circles, then the catalog-number labels. "
             + "The named stars keep their labels. If fewer than 12 stars have names, the brightest "
             + "numbered stars keep theirs too.\n"
             + "Each layer's switch in Star Tracker Display is turned off as it goes, so you can turn it back on. "
-            + "An inconclusive search keeps its status visible. Turn the markers back on to inspect its candidates.");
+            + "An inconclusive or failed search keeps its markers, so you can inspect its candidates and name stars by hand.");
     // The same optimization the Video Adjustments folder offers, reachable from here as well: it
     // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
     // The builder adds its own Enough / Abort / status alongside, so a run started here can also be

@@ -189,6 +189,48 @@ entry here: an id, what the code does, where the data goes, the release, and its
   or a saved sitch reloads its visible grid wind field). A position or an area in the request,
   a request from the browser, another destination, or NCEI use for later cycles is a finding.
 
+### `selected-account-input-recording` — accepted 2.203.0
+- **Code:** `src/InputRecording.js`, `src/UILogging.js`, `sitrecServer/inputlog.php` and
+  `sitrecServer/input_recording.php`. For two authorized accounts only (user IDs 1 and
+  99999999, from the login that the server checks), the browser sends batches of UI input
+  events to the application's own `inputlog.php`. The server appends them to JSONL files in the
+  directory that `INPUT_RECORDING_DIR` names.
+- **Data:** control paths and values, pointer gestures, shortcuts, sitch and track
+  names, and scene and timing context, which can include a precise position and a time, with
+  the user ID and a session identifier. Checkbox, number, range, color, date and time controls
+  record their value, and a list records its selected option. A control path is a fixed path
+  or element id that the code sets, or else the control's label as the page shows it: its
+  accessible name, its title or placeholder, or the text of a button, link, menu item or
+  option. That label can be text that the user made, for example the name
+  of a sitch label in the sitch browser (an element title) or the text of a link in the sitch
+  Notes (widened 2.203.0). A URL in a label keeps only its origin and path: the recorder
+  removes its query, its fragment and any user name and password, and it redacts text in the
+  form of an API key or a bearer token. The text typed into a text field is never recorded,
+  only its length. A password field, or a control whose name or label names a password, a
+  secret, a credential, an API key, an access token, authorization or a user name, has its
+  value redacted. The files stay on the application's
+  own server, outside the web root, until an operator archives or deletes them. No other host
+  receives them.
+- **Limits:** those two accounts only, and only while an absolute `INPUT_RECORDING_DIR` is
+  configured. With the directory set, the recorder is on when `INPUT_RECORDING_ENABLED` is
+  unset or true, and any other value turns it off. Recording for another account or a visitor,
+  the text typed into a text field, a password, a URL query or fragment, text taken from
+  anything other than a control's own path, label or value as described above, a directory inside
+  the web root or a public mount, or a send to another host is a finding.
+
+### `ground-locked-track-tiles` — accepted 2.203.0 (contract widened)
+- **Code:** `src/TrackGroundCache.js` (`TrackLoadRegion`, `TrackGroundCache`), used by
+  `src/nodes/CNodeBuildings3DTiles.js`. While Google photorealistic 3D tiles are the ground,
+  each track that is locked to the ground (*Lock Altitude* with *Height From* = *Ground*) gets
+  a load region of 45 m spheres every 20 m along its path. The 3D tiles renderer loads the
+  finest tiles in that region, offscreen parts included, so that the locked heights follow the
+  drawn ground. This also happens when a saved sitch with such a track opens.
+- **Data:** the requests for the tiles along the track, to `tile.googleapis.com`. Together they
+  show the route of the track at about 45 m. No other field.
+- **Limits:** only while Google photorealistic 3D tiles are shown, and only for tracks that are
+  locked to the ground. A wider region, tiles for a track that is not locked to the ground,
+  another tile host, or any other data in the requests is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

@@ -42,6 +42,18 @@ test('passwords, free text, clipboard contents and typed characters are not reta
     expect(JSON.stringify(description)).not.toContain('private-prefilled-text');
 });
 
+test('in an editable field only named non-text keys keep their name', () => {
+    recorder.start();
+    const input = control('<input type="text" aria-label="Search">');
+    for (const key of ['😀', 'é', 'Dead', 'Process', 'Unidentified', 'Enter', 'ArrowLeft', 'Backspace']) {
+        input.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true}));
+    }
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', bubbles: true}));
+    expect(recorder.queue.filter(e => e.type === 'keydown').map(e => e.key)).toEqual(
+        ['[text]', '[text]', '[text]', '[text]', '[text]', 'Enter', 'ArrowLeft', 'Backspace', 'k']);
+    expect(JSON.stringify(recorder.queue)).not.toMatch(/😀|é/);
+});
+
 test('numeric values, checkbox state, selected labels and view names remain useful', () => {
     const input = control('<input type="number" aria-label="Altitude" value="1200">');
     expect(describeInputTarget(input)).toMatchObject({path: 'Altitude', value: 1200});
@@ -191,7 +203,10 @@ test('an invalid acknowledgement retains events and revocation removes listeners
     expect(recorder.queue).toHaveLength(1);
     recorder.retryAt = 0;
     fetch.mockResolvedValueOnce({ok: false, status: 403});
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     await recorder.flush();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
     expect(recorder.active).toBe(false);
     expect(sessionStorage.getItem(recorder.storageKey)).toBeNull();
     document.body.dispatchEvent(new MouseEvent('click', {bubbles: true}));

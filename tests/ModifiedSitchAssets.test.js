@@ -13,12 +13,12 @@ const declaration = parse(source, {sourceType: 'module'}).program.body
 const method = declaration.declaration.declarations[0].init.properties
     .find(node => node.key.name === 'getCustomSitchString');
 
-function save({local = false, custom = false, nodes = {}} = {}) {
+function save({local = false, custom = false, nodes = {}, sit = {}, savingTemplate, options} = {}) {
     const empty = () => null;
     const manager = {serialize: empty};
     const bindings = {
-        Sit: {name: custom ? 'custom' : 'modelinspector', isCustom: custom, canMod: !custom},
-        FileManager: {list: {
+        Sit: {name: custom ? 'custom' : 'modelinspector', isCustom: custom, canMod: !custom, ...sit},
+        FileManager: {savingTemplate, list: {
             'imported-model.ply': {
                 filename: 'imported-model.ply', staticURL: 'https://objects.example/model.ply',
                 localStaticURL: 'assets/model.ply', dynamicLink: true, dataType: 'ply',
@@ -37,12 +37,13 @@ function save({local = false, custom = false, nodes = {}} = {}) {
         serializeVideoQPGraph: empty, serializeVideoTonalGraph: empty, serializePointTrackFrequencyGraph: empty,
         serializeVideoNoisePattern: empty,
         process: {env: {BUILD_VERSION_NUMBER: '2.156.2', BUILD_VERSION_STRING: 'test', VERSION: 'test'}},
+        buildVersionNumber: () => 2156002,
         currentBuild: null, collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry,
         assert: (condition, message) => { if (!condition) throw new Error(message); },
     };
     const serializer = new Function(...Object.keys(bindings),
         `return ({${source.slice(method.start, method.end)}}).getCustomSitchString`)(...Object.values(bindings));
-    return JSON.parse(serializer.call({serializeFixedObjects: empty, serializeSubSitches: empty}, local));
+    return JSON.parse(serializer.call({serializeFixedObjects: empty, serializeSubSitches: empty}, local, options));
 }
 
 test.each([false, true])('hosted imported assets survive saving a %s custom scene', custom => {
@@ -59,6 +60,20 @@ test('modified scenes retain working-folder asset paths in local saves', () => {
     const result = save({local: true});
     expect(result.loadedFiles['imported-model.ply']).toBe('assets/model.ply');
     expect(result.loadedFiles['source.bin']).toBeUndefined();
+});
+
+test('only Save as Template keeps the template options of a custom scene', () => {
+    const sit = {templateOptions: {analyzeImages: true, satellites: 'manual'}, templateSource: {name: 'Star Tracker'}};
+    for (const local of [false, true]) {
+        const ordinary = save({custom: true, local, sit});
+        expect(ordinary).not.toHaveProperty('templateOptions');
+        expect(ordinary).not.toHaveProperty('templateSource');
+    }
+    expect(save({custom: true, sit, savingTemplate: true}).templateOptions).toEqual(sit.templateOptions);
+    // A reload in memory keeps an administrator's unsaved options, but not the template session.
+    const reload = save({custom: true, sit, options: {keepTemplateOptions: true}});
+    expect(reload.templateOptions).toEqual(sit.templateOptions);
+    expect(reload).not.toHaveProperty('templateSource');
 });
 
 test('the scene serializer includes wind snapshots only for a local save', () => {

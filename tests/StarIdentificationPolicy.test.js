@@ -33,10 +33,21 @@ test('equally plausible patterns remain unconfirmed even if each fits closely', 
         reason: 'multiple star patterns fit about equally well'});
 });
 
-test('missing bright stars count against the proposed field', () => {
+test('catalog objects with no detection do not reject a consistent field by themselves', () => {
+    // A twilight or city sky shows few of the catalog objects in frame.
     const report = fieldReport();
-    report.best.nMissing = 7;
-    expect(assessBrightTripleIdentification(report, width, height).accepted).toBe(false);
+    report.best.nMissing = 20;
+    expect(assessBrightTripleIdentification(report, width, height).accepted).toBe(true);
+});
+
+test('missing catalog objects still separate competing answers', () => {
+    const report = fieldReport();
+    report.best.nMissing = 2;
+    report.candidates.push({...report.best, nMissing: 8, rmsPx: 0.11});
+    expect(assessBrightTripleIdentification(report, width, height).accepted).toBe(true);
+    report.candidates[1].nMissing = 3;
+    expect(assessBrightTripleIdentification(report, width, height)).toEqual({accepted: false,
+        reason: 'multiple star patterns fit about equally well'});
 });
 
 test('checks all proposed matches, not just the original three-point fit residual', () => {

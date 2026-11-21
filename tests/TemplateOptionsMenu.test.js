@@ -36,7 +36,8 @@ test('an admin edit produces serializable options and cannot edit after losing p
     const options = guiMenus.file.folders['Template Options'];
     const control = options.folders['On Media Import'].controls.find(c => c.property === 'analyzeVideos');
     control.object.analyzeVideos = false;
-    expect(JSON.parse(JSON.stringify(Sit)).templateOptions).toMatchObject({analyzeImages: true, analyzeVideos: false});
+    // An edit keeps the other values of the preset that the name gives, and the saved satellite setting.
+    expect(JSON.parse(JSON.stringify(Sit)).templateOptions).toMatchObject({analyzeImages: true, analyzeVideos: false, satellites: 'inherit'});
     expect(markSitchDirty).toHaveBeenCalledTimes(1);
     isAdmin.mockReturnValue(false);
     control.object.analyzeVideos = true;

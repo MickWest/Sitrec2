@@ -7,7 +7,7 @@
 // The height control is still the CNodeGUIValue that holds altitudeLock, so saved sitches load
 // as before.
 
-import {Units} from "./Globals";
+import {Globals, Units} from "./Globals";
 import {t} from "./i18n";
 import {altitudeHAE} from "./SphericalMath";
 import {getVisiblePointBelow} from "./threeExt";
@@ -36,9 +36,11 @@ export function lockHeightAt(position, agl) {
  *        dropping it to the ground.
  * @param {function(): boolean} opts.getAGL
  * @param {function(boolean)} opts.setAGL
+ * @param {boolean} [opts.legacyZeroIsOff] - before 2.177.0 this control defaulted to 0, which did
+ *        not lock, so a saved 0 from then means off
  * @returns {{update: function()}} shows the height and Height From only while the lock is on
  */
-export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL}) {
+export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL, legacyZeroIsOff = false}) {
     const state = {
         get lockAltitude() { return isOn(); },
         set lockAltitude(on) {
@@ -82,7 +84,10 @@ export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight
         heightNode.modDeserialize = (v) => {
             // Older imported tracks could save an OFF lock as a hidden zero
             // control. An actual zero-height lock saved the control as visible.
-            if (v.value === 0 && v.visible === false) v = {...v, value: -1};
+            // Before 2.177.0 there was no Lock Altitude checkbox, and an untouched
+            // control saved its default 0 as visible, so with legacyZeroIsOff that is off too.
+            if (v.value === 0 && (v.visible === false
+                || (legacyZeroIsOff && (Globals.exportTagNumber ?? 0) < 2177000))) v = {...v, value: -1};
             const unchanged = heightNode.value === v.value;
             restore(v);
             // GUIValue skips onChange for an unchanged value. The data node can

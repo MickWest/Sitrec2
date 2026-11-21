@@ -421,6 +421,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                         track.recalculateCascade();
                         altLockControls?.update();
                     },
+                    // Fireball tracks always defaulted to -1, so their saved 0 is a lock.
+                    legacyZeroIsOff: !track.fireballObservedInterval,
                 });
                 const roadControls = addRoadTrackControls(this.guiFolder, track, this.in.track);
                 const updateLock = altLockControls.update;

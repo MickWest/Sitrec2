@@ -19,7 +19,8 @@ import {extractFOV} from "./CNodeControllerVarious";
 import {t} from "../i18n";
 import {markFreeLookSafe} from "../FreeLookGuard";
 import {turnToGeometricAim} from "../atmosphere/refractionAim";
-import {getTrackAltitudeLock, isAGLLockActive} from "../AltitudeLock";
+import {getTrackAltitudeLock} from "../AltitudeLock";
+import {isRoadTrackActive} from "../TrackGround";
 import {getTrackPositionBasis} from "../CameraPositionOffset";
 
 const pszUIColor = "#C0C0FF";
@@ -100,15 +101,16 @@ export class CNodeControllerAzElZoom extends CNodeController {
 
             const track = objectNode.getPositionTrack?.();
             const lock = getTrackAltitudeLock(track);
-            if (lock && isAGLLockActive(lock)) {
-                // A road camera's zero tilt follows the road's slope. Use the
-                // conformed path, before the cabin offset, not the horizon.
+            if (isRoadTrackActive(lock)) {
+                // A Road Track camera's zero tilt follows the smoothed road's slope. Use
+                // the conformed path, before the cabin offset, not the horizon.
                 const basis = getTrackPositionBasis(track, f, track.p(f));
                 fwd = basis.forward;
                 right = basis.right;
                 up = basis.up;
             } else {
-                // Preserve horizon-relative tilt for ordinary airborne tracks.
+                // Tilt is from the horizon for any other track. A ground lock without Road
+                // Track has raw ground heights, so its one-frame slope is noise.
                 let dot = fwd.dot(up)
                 fwd = fwd.sub(up.clone().multiplyScalar(dot)).normalize()
                 right = fwd.clone().cross(up)

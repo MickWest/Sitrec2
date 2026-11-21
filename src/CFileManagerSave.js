@@ -431,12 +431,16 @@ export const saveMethods = {
         this.sourceUserID = null;
         Sit.sitchName = templateName;
         Sit.templateOptions = normalizeTemplateOptions(Sit.templateOptions, templateName);
+        // getCustomSitchString keeps the template options only while this is set.
+        this.savingTemplate = true;
         try {
             await this.saveSitchNamed(templateName);
         } catch (error) {
             if (!superseded()) Sit.sitchName = previousSitchName;
             console.log("Error in saveSitchAsTemplate:", error);
             return false;
+        } finally {
+            this.savingTemplate = false;
         }
         if (superseded()) return false;
 

@@ -169,6 +169,16 @@ if (isset($_GET['getuser'])) {
         require_once __DIR__ . '/input_recording.php';
         $recordingIdentity = getCachedUserInfoCustom();
         $response['inputRecording'] = inputRecordingConfigured($recordingIdentity);
+        if ($response['inputRecording']) {
+            // Advertise recording only where uploads can be stored. Otherwise every
+            // upload fails, and the client retries without end.
+            try {
+                inputRecordingDirectory();
+            } catch (RuntimeException $e) {
+                error_log('Input recording: ' . $e->getMessage());
+                $response['inputRecording'] = false;
+            }
+        }
         if ($response['inputRecording']) $response['inputRecordingUserID'] = (int)$recordingIdentity['user_id'];
     }
 

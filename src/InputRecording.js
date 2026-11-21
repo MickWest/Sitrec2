@@ -8,6 +8,9 @@ const FLUSH_MS = 5000;
 const SAMPLE_MS = 100;
 const SECRET = /password|passwd|secret|credential|api.?key|access.?token|authorization|username/i;
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+// In an editable field only these keys keep their name. Every other key value can be
+// typed text (an emoji has two UTF-16 code units; composition sends Dead or Process).
+const NON_TEXT_KEY = /^(?:Enter|Tab|Escape|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|Shift|Control|Alt|AltGraph|Meta|CapsLock|F\d{1,2})$/;
 
 function clean(value, max = 300) {
     return String(value ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, max);
@@ -179,7 +182,7 @@ export class InputRecorder {
             if (type.startsWith('key')) {
                 const editing = event.target?.closest?.(EDITABLE);
                 // Do not retain key codes either: those reconstruct omitted text.
-                data.key = target.sensitive ? '[redacted]' : editing && event.key?.length === 1 ? '[text]' : clean(event.key, 40);
+                data.key = target.sensitive ? '[redacted]' : editing && !NON_TEXT_KEY.test(event.key ?? '') ? '[text]' : clean(event.key, 40);
                 data.repeat = !!event.repeat;
             }
             if (type === 'input') data.inputType = clean(event.inputType, 40);
@@ -270,7 +273,12 @@ export class InputRecorder {
             const response = await fetch(this.url, {method: 'POST', credentials: 'same-origin',
                 headers: {'Content-Type': 'application/json'}, body, keepalive: true, signal: abort.signal});
             if (!this.active) return;
-            if ([401, 403].includes(response.status)) { this.stop(true); return; }
+            if ([401, 403].includes(response.status)) {
+                // The recorder stops for this session, so this shows once.
+                console.warn(`Input recording stopped: the server refused the upload (HTTP ${response.status}).`);
+                this.stop(true);
+                return;
+            }
             if (!response.ok) throw new Error('Recording upload failed');
             const result = await response.json();
             if (!this.active) return;

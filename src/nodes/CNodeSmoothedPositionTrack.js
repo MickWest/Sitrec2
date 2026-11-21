@@ -1,4 +1,4 @@
-import {getTrackGroundPoint} from "../TrackGround";
+import {beginTrackGroundPass, getTrackGroundPoint} from "../TrackGround";
 // given an array of "positions" smooth the x,y,and z tracks by moving average
 // or other techniques
 // optionally copy any other data (like color, fov, etc) to the new array
@@ -491,9 +491,11 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         // so filtering cannot lift a locked road track or cut through a hill.
         const lock = getTrackAltitudeLock(this);
         if (lock) {
+            // This pass replaces the ground columns that the last one used.
+            if (lock.altitudeLockAGL) beginTrackGroundPass(lock, this);
             for (const entry of this.array) {
                 entry.position = lock.altitudeLockAGL
-                    ? pointAbove(getTrackGroundPoint(entry.position, lock), lock.altitudeLock)
+                    ? pointAbove(getTrackGroundPoint(entry.position, lock, this), lock.altitudeLock)
                     : adjustHeightHAE(entry.position, lock.altitudeLock);
             }
         }

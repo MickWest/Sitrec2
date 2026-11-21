@@ -1,5 +1,6 @@
 import {markSitchDirty, setRenderOne} from "./Globals";
 import {isAGLLockActive} from "./AltitudeLock";
+import {trackGroundCache} from "./TrackGround";
 
 export function addRoadTrackControls(folder, lock, track) {
     lock.groundTrack = track;
@@ -18,10 +19,15 @@ export function addRoadTrackControls(folder, lock, track) {
         .tooltip("Distance along the road used to smooth its height. Larger values remove more bumps while retaining hills and grades.")
         .onFinishChange(refresh);
     const update = () => {
-        enabled.show(isAGLLockActive(lock));
-        width.show(isAGLLockActive(lock) && lock.roadTrack);
-        smoothing.show(isAGLLockActive(lock) && lock.roadTrack);
+        // Road Track works on the track ground cache, which only Google 3D tiles have.
+        // The camera follows the road slope under the same rule (isRoadTrackActive).
+        const available = isAGLLockActive(lock) && !!trackGroundCache();
+        enabled.show(available);
+        width.show(available && lock.roadTrack);
+        smoothing.show(available && lock.roadTrack);
     };
+    // The lock node's visibleGroundChanged handler calls this when the ground changes.
+    lock.updateRoadTrackControls = update;
     const restore = lock.modDeserialize?.bind(lock);
     if (restore) lock.modDeserialize = data => { restore(data); update(); };
     update();

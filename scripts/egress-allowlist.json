@@ -160,7 +160,7 @@
     {
       "host": "tile.googleapis.com",
       "purpose": "photorealistic 3D tiles, and street-level imagery fetched by the server at a chosen position",
-      "trigger": "3D tiles automatically while that layer is shown; street-level imagery when the user asks for it",
+      "trigger": "3D tiles automatically while that layer is shown, including the finest tiles along each track that is locked to the ground, offscreen parts included; street-level imagery when the user asks for it",
       "mayReceive": ["coarse-area", "precise-position"]
     },
     {
@@ -653,6 +653,7 @@
     {"endpoint": "ai_log.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "curlGetRequest.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "rate_limit.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "input_recording.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "shared.env.php", "purpose": "generated at build time from the configuration; read by the server, never requested by the browser", "trigger": "never requested", "mayReceive": ["none"]}
   ]
 }

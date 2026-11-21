@@ -18,15 +18,13 @@ export const TEMPLATE_PRESETS = Object.freeze({
 });
 
 export function templatePresetName(name = '') {
-    const normalized = name.trim().toLowerCase();
-    if (normalized === 'star tracker') return 'Star Tracker';
-    if (['starlink', 'starlink horizon flares', 'satellite', 'satellites'].includes(normalized)) return 'Satellite viewing';
-    return 'No automatic actions';
+    return name.trim().toLowerCase() === 'star tracker' ? 'Star Tracker' : 'No automatic actions';
 }
 
+// A template with no saved options takes its actions from its name, but keeps its
+// saved satellite setting. Only a preset applied from the menu sets 'manual'.
 export function normalizeTemplateOptions(value, name = '') {
-    const defaults = TEMPLATE_PRESETS[templatePresetName(name)];
-    const result = {...defaults};
+    const result = {...TEMPLATE_PRESETS[templatePresetName(name)], satellites: 'inherit'};
     if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
     for (const key of Object.keys(DEFAULTS)) {
         if (typeof DEFAULTS[key] === 'boolean' && typeof value[key] === 'boolean') result[key] = value[key];
@@ -41,6 +39,7 @@ export function templateOptions(sitch) {
 
 // Called before constructing the graph. Older templates gain a named preset,
 // while saved options take precedence. A normal saved scene is not rewritten.
+// Satellite settings and catalogs change only for a saved 'manual' or 'automatic'.
 export function prepareTemplateSitch(sitch, name) {
     const options = normalizeTemplateOptions(sitch.templateOptions ?? sitch.Sit?.templateOptions, name);
     sitch.templateOptions = options;

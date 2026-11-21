@@ -364,6 +364,40 @@ describe('Save as Template', () => {
         expect(manager.saveSitchNamed).not.toHaveBeenCalled();
     });
 
+    test('only its own save keeps the template options, also when that save fails', async () => {
+        setSit({sitchName: 'Work'});
+        promptForText.mockResolvedValue('Satellites');
+        showChoice.mockResolvedValue('Global Template');
+        const flags = [];
+        manager.saveSitchNamed = jest.fn(async () => { flags.push(manager.savingTemplate); });
+        expect(await manager.saveSitchAsTemplate()).toBe(true);
+        manager.saveSitchNamed = jest.fn(async () => { flags.push(manager.savingTemplate); throw new Error('upload failed'); });
+        expect(await manager.saveSitchAsTemplate()).toBe(false);
+        expect(manager.savingTemplate).toBe(false);
+        manager.saveSitchNamed = jest.fn(async () => { flags.push(manager.savingTemplate); });
+        await manager.saveSitch();
+        expect(flags).toEqual([true, true, false]);
+    });
+
+    test.each([
+        ['opened as an older template', 'Starlink', () => {
+            const sitch = {};
+            prepareTemplateSitch(sitch, 'Starlink');
+            return {templateSource: {name: 'Starlink', userID: USER}, templateOptions: sitch.templateOptions};
+        }, {analyzeImages: false}],
+        ['opened as a sitch', 'Star Tracker', () => ({sitchName: 'Star Tracker'}), {analyzeImages: true, findNightView: true}],
+    ])('a re-save of an older template %s keeps its saved satellite setting', async (_how, name, sit, actions) => {
+        setSit(sit());
+        promptForText.mockResolvedValue(name);
+        showChoice.mockResolvedValue('Global Template');
+        let saved;
+        manager.saveSitchNamed = jest.fn(async () => { saved = {...Sit.templateOptions}; });
+
+        expect(await manager.saveSitchAsTemplate()).toBe(true);
+
+        expect(saved).toMatchObject({...actions, satellites: 'inherit'});
+    });
+
     test('a Save after it does not write to the template', async () => {
         setSit({sitchName: 'Work'});
         promptForText.mockResolvedValue('Flares');

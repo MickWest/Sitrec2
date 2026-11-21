@@ -30,6 +30,8 @@ export class CNodeOSDDataSeriesTrack extends CNodeTrack {
         EventManager.addEventListener("elevationChanged", () => this.onElevationChanged());
         EventManager.addEventListener("visibleGroundChanged", () => {
             if (this.disposed) return true;
+            // The ground can gain or lose the track ground cache that Road Track needs.
+            this.updateRoadTrackControls?.();
             if (isAGLLockActive(this) && !trackGroundCache()?.records.has(this)) this.recalculateCascade();
         });
         this.recalculate();

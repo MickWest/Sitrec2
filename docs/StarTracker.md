@@ -10,7 +10,7 @@ The Star Tracker identifies stars in a still photograph or video of the night sk
 
 ## Quickstart
 
-1. Load a photograph or video of the night sky and open **Video → Star Tracker**. A fresh **Star Tracker** template can analyze the first imported image automatically, as described below.
+1. Load a photograph or video of the night sky and open **Video → Star Tracker**. The **Star Tracker** template analyzes each new image or video automatically, as described below.
 2. **Auto mask still images** proposes an editable mask for a still. Video masking is separate: **Auto mask video (experimental)** is off by default. Check the overlay before relying on it; paint fixed exclusions such as burned-in text if needed. See [Masking out the ground](#masking-out-the-ground).
 3. For video, set the **In** and **Out** markers on the timeline (press **Alt+I** and **Alt+O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. A still image is analyzed once.
 4. Click **Star Tracker Analysis** if an automatic run has not already started.
@@ -26,7 +26,9 @@ The sigma figure is the clip's position noise, and it is the one to sanity-check
 
 **Star Tracker Analysis** runs three steps: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. Each step also has its own button, to run it alone. **Find Candidate Stars** and **Identify Stars (catalog)** are below **Star Tracker Analysis**, and **Detect Star Size (current frame)** is in [Star Tracker Tweaks](#star-tracker-tweaks). When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
 
-In a fresh **Star Tracker** template, dropping or importing an image starts this analysis automatically. **Analyze New Images** controls this behavior. Loading a saved scene, adding a second image, or importing after a search, camera setup or earlier analysis does not start another run. Importing a file clears the template's introductory text.
+In a sitch opened from a template, the template's actions decide whether an import starts this analysis: see [Template options](SavingAndLoading.md#template-options). The **Star Tracker** template analyzes each new image or video in the main video view. For a video, the analysis covers the **In** to **Out** range, which is the whole clip on a new video. The new result replaces the previous one. Loading a saved scene, or loading media into the second video view, does not start a run. Importing a file clears the template's introductory text.
+
+Outside a template, **Analyze New Images** starts this analysis for an image. When it is ticked, the first image imported into a fresh scene is analyzed, before a search, camera setup or earlier analysis. Loading a saved scene or adding another image does not start another run.
 
 A good fit with the camera synced enables the normal celestial overlays in Video: star/planet names, constellation lines and names, and deep-sky markers. A [registered photo](#registering-a-photo-in-the-sky) also uses these overlays while Look is free to move. Their controls are under **Show → Celestial**, and their label size matches Look. **Labels → Labels** sets their density, starting at **0.25**; it favors brighter stars and planets and removes ordinary deep-sky names first. These are catalog overlays at the registered sky positions, not a list of detections verified by the solve. The separate analysis names are suppressed while this registration is active. Without a registered photo, unsynced, partial, mirrored or poor fits retain the analysis labels. See [Celestial Display](Celestial.md#label-density-and-visibility).
 
@@ -217,7 +219,7 @@ The Star Tracker folder lives under **Video**.
 
 | Control | What it does |
 |---|---|
-| **Analyze New Images** | Automatically analyze the first image imported into a fresh scene, before other setup or analysis. On by default in the Star Tracker template. Does not rerun analysis when restoring a saved scene or adding another image |
+| **Analyze New Images** | Shown only outside a template. Automatically analyze the first image imported into a fresh scene, before other setup or analysis. Does not rerun analysis when restoring a saved scene or adding another image. In a template, the template's actions decide instead: see [Template options](SavingAndLoading.md#template-options) |
 | **Register Photo in Sky** | Keep a still photo at its solved sky position, with independent Look navigation and Video annotations. Captures the first successful solve and saves the registration with the scene |
 | **Re-register Photo** | Replace the photo registration with the current successful solve and center Look on it |
 | **Find Nighttime Viewpoint** / **Allow Date Change** | Move to a dark location where the solved field is above the horizon. Keeps the date unless **Allow Date Change** is on. This helps view the result; it does not locate or date the photograph |

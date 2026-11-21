@@ -1,6 +1,6 @@
 import {Vector3} from 'three';
 import {getECEFToEQJMatrix, getEQJToECEFMatrix, getGeocentricBodyPositionECEF} from '../src/CelestialMath';
-import {findTemplateNightView, solvedFieldDirections} from '../src/starTrack/StarTemplateView';
+import {findTemplateNightView, identifiedStarDirections, solvedFieldDirections} from '../src/starTrack/StarTemplateView';
 
 const DEG = Math.PI / 180;
 const upAt = (lat, lon) => new Vector3(Math.cos(lat * DEG) * Math.cos(lon * DEG),
@@ -73,4 +73,35 @@ test('the field footprint includes corners and rejects unusable poses', () => {
     expect(solvedFieldDirections(null, 60)).toEqual([]);
     expect(findTemplateNightView([], {date: new Date()})).toBeNull();
     expect(findTemplateNightView(field, {date: new Date('invalid')})).toBeNull();
+});
+
+test('a known location gets a dark time for a low southern field whose lower frame never rises', () => {
+    // From latitude 40 N, the lower corners of this field (Dec -43) never rise above 7 degrees.
+    const field = solvedFieldDirections({centre: {raDeg: 195, decDeg: -30}, above: {raDeg: 195, decDeg: -29}}, 40, 1.5);
+    const stars = identifiedStarDirections([{raDeg: 190, decDeg: -24}, {raDeg: 196, decDeg: -33},
+        {raDeg: 201, decDeg: -28}, {raDeg: 193, decDeg: -21}, {label: 'no position'}]);
+    expect(stars).toHaveLength(4);
+    const location = {latitude: 40, longitude: -100};
+    const date = new Date('2026-11-21T12:00:00Z');
+    const result = findTemplateNightView(field, {date, location, stars});
+    expect(result).not.toBeNull();
+    expect(result.latitude).toBe(location.latitude);
+    expect(result.longitude).toBe(location.longitude);
+    expect(result.lowFrame).toBe(true);
+    expect(result.fieldMinAltitude).toBeLessThan(10);
+    const up = upAt(result.latitude, result.longitude);
+    const sun = getGeocentricBodyPositionECEF('Sun', result.date).normalize();
+    expect(Math.asin(sun.dot(up)) / DEG).toBeLessThanOrEqual(-18 + 1e-8);
+    const matrix = getEQJToECEFMatrix(result.date);
+    const altitudes = stars.map(d => Math.asin(d.clone().transformDirection(matrix).dot(up)) / DEG);
+    expect(Math.min(...altitudes)).toBeGreaterThanOrEqual(10 - 1e-8);
+    expect(result.minAltitude).toBeCloseTo(Math.min(...altitudes), 8);
+
+    // Without identified stars, the frame centre must clear 10 degrees instead.
+    const centreOnly = findTemplateNightView(field, {date, location});
+    expect(centreOnly?.lowFrame).toBe(true);
+    expect(Math.asin(field[0].clone().transformDirection(getEQJToECEFMatrix(centreOnly.date))
+        .dot(up)) / DEG).toBeCloseTo(centreOnly.minAltitude, 8);
+    // With the time known as well, nothing is searched, so the whole frame must still clear.
+    expect(findTemplateNightView(field, {date: result.date, location, stars, timeKnown: true})).toBeNull();
 });

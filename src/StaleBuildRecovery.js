@@ -85,7 +85,8 @@ const usesWorkingFolder = () => !!FileManager?.directoryHandle;
 // address does not change. This is the store that a change of release channel uses.
 async function reloadWithTemporarySave(dirty = !!Globals.sitchDirty) {
     try {
-        const text = CustomManager.getCustomSitchString(usesWorkingFolder());
+        // The reload keeps unsaved changes, and an administrator's Template Options are among them.
+        const text = CustomManager.getCustomSitchString(usesWorkingFolder(), {keepTemplateOptions: true});
         const sourceRef = FileManager.loadURL ?? null;
         await saveChannelHandoff(text, {
             sourceRef,

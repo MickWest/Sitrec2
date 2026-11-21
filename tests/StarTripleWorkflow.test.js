@@ -52,7 +52,8 @@ test('short noise tracks never reach the fallback or change the camera', async (
     expect(h.UndoManager.add).not.toHaveBeenCalled();
     expect(h.params.status).toContain('after 194 frames (Enough)');
     expect(h.params.status).toContain('0 persistent candidate stars');
-    expect(h.startCompletionFade).toHaveBeenCalledTimes(1);
+    // The circles stay, so the user can right-click and name them.
+    expect(h.startCompletionFade).not.toHaveBeenCalled();
 });
 
 test('an ambiguous worker result never becomes names, a camera fit or a relocation', async () => {
@@ -64,7 +65,7 @@ test('an ambiguous worker result never becomes names, a camera fit or a relocati
     expect(h.result.manualLabels).toBeUndefined();
     expect(h.result.videoData._templateViewingStatus).toBe('Not set: stars not reliably identified');
     expect(h.params.status).toContain('No reliable star identification');
-    expect(h.startCompletionFade).toHaveBeenCalledTimes(1);
+    expect(h.startCompletionFade).not.toHaveBeenCalled();
 });
 
 test('a confirmed fallback applies once, reports success and fades the markers', async () => {

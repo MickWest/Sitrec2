@@ -5,7 +5,7 @@
 // paste.
 
 import {par} from "./par";
-import {GlobalDateTimeNode, NodeMan, Sit, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit, setRenderOne} from "./Globals";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {lastSitFrame} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
@@ -16,6 +16,7 @@ import {lookupTimeZone} from "./TimeZoneLookup";
 import {importPastedTLE} from "./TLEPaste";
 import {FeatureManager} from "./CFeatureManager";
 import {canPlaceInitialCamera, TEXT_LOCATION_HEIGHT_METERS, withInitialCameraPlacement} from "./InitialCameraPosition";
+import {meanSeaLevelOffset} from "./EGM96Geoid";
 
 // Bumped for each request that reaches a place lookup, so a slow one can tell it
 // has been superseded (see applyGoToString).
@@ -101,8 +102,21 @@ export async function executeGoToRequest(request, target = {}) {
                 const position = NodeMan.get("fixedCameraPosition", false);
                 if (canPlaceInitialCamera(position, NodeMan.get("cameraTrackSwitch", false)?.choice,
                     NodeMan.get("lookCamera", false)?.freeLook)) {
-                    withInitialCameraPlacement(position, () => position.gotoLLA(location.lat, location.lon,
-                        location.alt ?? TEXT_LOCATION_HEIGHT_METERS, location.alt === undefined));
+                    // A typed altitude is HAE, and a camera height that is not AGL is MSL.
+                    const alt = location.alt === undefined ? TEXT_LOCATION_HEIGHT_METERS
+                        : location.alt - meanSeaLevelOffset(location.lat, location.lon);
+                    // Like geolocation, this initial placement does not establish the sitch, so a
+                    // track or video dropped next still sets the time, camera and location.
+                    // A requested time establishes it below, through editTime().
+                    const established = Globals.sitchEstablished;
+                    const byTrackImport = Globals.sitchEstablishedByTrackImport;
+                    try {
+                        withInitialCameraPlacement(position, () => position.gotoLLA(location.lat, location.lon,
+                            alt, location.alt === undefined));
+                    } finally {
+                        Globals.sitchEstablished = established;
+                        Globals.sitchEstablishedByTrackImport = byTrackImport;
+                    }
                 }
                 goToLatLon(location.lat, location.lon, undefined, undefined, location.alt ?? 0);
             }

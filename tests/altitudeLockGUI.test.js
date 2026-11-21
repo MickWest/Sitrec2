@@ -20,6 +20,7 @@ jest.mock("../src/SphericalMath", () => ({altitudeHAE: () => 0}));
 import GUI from "../src/js/lil-gui.esm";
 import "../src/lil-gui-extras";
 import {addAltitudeLockControls} from "../src/AltitudeLockGUI";
+import {Globals} from "../src/Globals";
 
 // The lock height: a CNodeGUIValue in the real code. value is in display units.
 function heightNodeIn(folder, target, controls) {
@@ -39,7 +40,7 @@ function heightNodeIn(folder, target, controls) {
     return node;
 }
 
-function setup(altitudeLock = -1) {
+function setup(altitudeLock = -1, {legacyZeroIsOff = false} = {}) {
     const folder = new GUI({container: document.body, autoPlace: false, title: "Path"});
     const target = {altitudeLock, agl: true};
     const controls = {current: null};
@@ -50,12 +51,13 @@ function setup(altitudeLock = -1) {
         currentHeight: () => 123.4,
         getAGL: () => target.agl,
         setAGL: (value) => { target.agl = value; },
+        legacyZeroIsOff,
     });
     const control = (property) => folder.controllers.find(c => c.property === property);
     return {folder, target, heightNode, lock: control("lockAltitude"), heightFrom: control("heightFrom")};
 }
 
-afterEach(() => { mockScale.small = 1; document.body.innerHTML = ""; });
+afterEach(() => { mockScale.small = 1; document.body.innerHTML = ""; delete Globals.exportTagNumber; });
 
 test("the order is Lock Altitude, the height, Height From; off hides the other two", () => {
     const {folder, heightNode, lock, heightFrom} = setup();
@@ -118,4 +120,29 @@ test.each([-1, 0])("an old hidden zero control restores an unlocked imported tra
     expect(heightNode.value).toBe(-1);
     expect(heightNode.visible).toBe(false);
     expect(lock.getValue()).toBe(false);
+});
+
+// Before 2.177.0 a display track's lock height defaulted to 0, which did not lock, and the
+// control was always visible. So an untouched track saved {visible: true, value: 0}.
+test.each([undefined, 0, 2176999])("a visible zero from a save before 2.177.0 (version %s) restores an unlocked track", version => {
+    Globals.exportTagNumber = version;
+    const {heightNode, target, lock} = setup(-1, {legacyZeroIsOff: true});
+    heightNode.modDeserialize({visible: true, value: 0});
+    expect(target.altitudeLock).toBeLessThan(0);
+    expect(heightNode.value).toBe(-1);
+    expect(heightNode.visible).toBe(false);
+    expect(lock.getValue()).toBe(false);
+});
+
+test.each([
+    ["a 2.177.0 save", 2177000, true],
+    ["a 2.202.0 save", 2202000, true],
+    ["an old save of a track that always defaulted to off", 0, false],
+])("a visible zero from %s keeps the zero-height lock", (name, version, legacyZeroIsOff) => {
+    Globals.exportTagNumber = version;
+    const {heightNode, target, lock} = setup(-1, {legacyZeroIsOff});
+    heightNode.modDeserialize({visible: true, value: 0});
+    expect(target.altitudeLock).toBe(0);
+    expect(lock.getValue()).toBe(true);
+    expect(heightNode.visible).toBe(true);
 });

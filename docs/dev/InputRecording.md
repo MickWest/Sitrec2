@@ -33,9 +33,13 @@ replacements. Do not use an unmounted container layer or a temporary directory.
 
 There is deliberately **no temporary-storage fallback**. An empty
 `INPUT_RECORDING_DIR` disables recording; `INPUT_RECORDING_ENABLED=false` disables
-it explicitly. The login response advertises recording only for the two accounts
-when configured. Reload the page after changing configuration. Deploy both the
-frontend and PHP changes; a frontend-only update cannot activate the recorder.
+it explicitly. The login response advertises recording only for the two accounts,
+and only when the directory can be created and written. If it cannot, the login
+response says `inputRecording: false` and PHP's error log gives the reason. Reload the
+page after changing configuration. Deploy both the frontend and PHP changes; a
+frontend-only update cannot activate the recorder. If the server refuses an upload
+(HTTP 401 or 403, for example a web server rule that blocks `inputlog.php`), the
+recorder stops for that session and writes one warning to the browser console.
 
 Check the `rehost.php?getuser=1` response for `inputRecording: true`. After interacting
 for at least five seconds, `inputlog.php` should acknowledge uploads with
@@ -64,8 +68,9 @@ events or a flush. Individual button presses, clicks, input/change events and ke
 distinguishes browser-generated input from synthetic events. Capture listeners are
 passive and do not replace application event handlers.
 
-Free text is represented by its length and `[text omitted]`; printable keys in
-editable controls are omitted too. Password fields and controls identified as
+Free text is represented by its length and `[text omitted]`. In editable controls every
+key is omitted too (`[text]`), except a named non-text key: Enter, Tab, Escape, the
+editing and navigation keys, the modifier keys and the function keys. Password fields and controls identified as
 credentials are redacted. A custom control or container can use
 `data-input-recording="redact"` to redact its values. URLs in labels lose user info,
 query strings and fragments. The recorder does not collect screenshots, network

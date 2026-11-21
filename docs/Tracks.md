@@ -221,6 +221,9 @@ does not change the road shape. A camera with **Relative** heading follows the
 smoothed uphill/downhill grade. Turning **Road Track** off restores the original
 geometry and keeps the track locked to its cached ground surface. The option and
 its settings are saved with the track; tile data is cached for the current session.
+The Road Track controls show only on a ground-locked track while Google 3D tiles
+supply the visible ground. Over the elevation map, a saved Road Track has no effect,
+and the camera's tilt and offsets stay level.
 
 > **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the
 > lock sets the height of all of its control points. Drag the up/down arrows on a control point

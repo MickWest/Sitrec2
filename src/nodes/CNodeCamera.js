@@ -639,6 +639,7 @@ export class CNodeCamera extends CNode3D {
             return folder.add(display, axis, -100, 100, 0.01).listen()
                 .tooltip("Move the camera within the vehicle: X right, Y up, Z forward along the path. "
                     + "Follows the path's heading and slope, independently of camera Pan and Tilt. "
+                    + "Level on a ground-locked track without Road Track. "
                     + "Does not move the track or model.")
                 .onChange(() => {
                     this.recalculateCascade();
@@ -655,6 +656,10 @@ export class CNodeCamera extends CNode3D {
             controller.updateDisplay();
         });
     }
+
+    // Units set while loading a save call updateDesc, not changeUnits. The offsets are
+    // stored in meters, so only their labels and displayed values change.
+    updateDesc() { this.changeUnits(); }
 
     // Camera Tweaks: "<Main|Look> View Orthographic" checkbox for both view
     // cameras, plus a "Main Near Plane" slider on the main camera (the look

@@ -68,8 +68,13 @@ test("blank scenes can autoload while templates honor their satellite startup po
     expect(new SatelliteCatalogLoader({}).automatic).toBe(false);
     expect(satelliteAutoloadDefault({name: "custom"})).toBe(true);
     expect(satelliteAutoloadDefault({name: "starlink"})).toBe(true);
-    for (const name of ["Star Tracker", "Starlink", "Starlink Horizon Flares"]) {
-        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name}})).toBe(false);
+    // A template with no saved satellite setting keeps the rule from before template options.
+    for (const [name, autoload] of [["Star Tracker", true], ["Starlink", true], ["Starlink Horizon Flares", false]]) {
+        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name}})).toBe(autoload);
+        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name},
+            templateOptions: {satellites: 'inherit'}})).toBe(autoload);
+        expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name},
+            templateOptions: {satellites: 'manual'}})).toBe(false);
         expect(satelliteAutoloadDefault({name: "custom", mods: {}, templateSource: {name},
             templateOptions: {satellites: 'automatic'}})).toBe(true);
     }

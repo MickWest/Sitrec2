@@ -91,7 +91,20 @@ $UPLOAD_PATH = __DIR__ . '/uploads/'; $CACHE_PATH = __DIR__ . '/cache/';
             expect((await post([event(1)], {'X-Test-User': user}, '?testUserID=1', {user_id: 1})).status).toBe(403);
             expect((await post([event(1)], {'X-Test-User': user}, '?testUserID=99999999')).status).toBe(403);
         }
-        expect(fs.existsSync(logs)).toBe(false);
+        // The login check above may create the directory itself, but no account wrote to it.
+        expect(fs.existsSync(logs) ? fs.readdirSync(logs) : []).toEqual([]);
+    });
+
+    test('login does not advertise recording when the directory cannot be used', async () => {
+        const data = await new Promise((resolve, reject) => {
+            http.get({host: '127.0.0.1', port, path: '/sitrecServer/rehost.php?getuser=1',
+                headers: {'X-Test-User': 1, 'X-Test-Directory': 'relative/recordings'}}, res => {
+                let raw = ''; res.on('data', chunk => raw += chunk);
+                res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (_) { reject(new Error(raw + serverOutput)); } });
+            }).once('error', reject);
+        });
+        expect(data.inputRecording).toBe(false);
+        expect(data.inputRecordingUserID).toBeUndefined();
     });
 
     test('both authorized accounts write private JSONL; effective identity is separate', async () => {
@@ -136,6 +149,7 @@ $UPLOAD_PATH = __DIR__ . '/uploads/'; $CACHE_PATH = __DIR__ . '/cache/';
     test('disabled recording and unconfigured storage never fall back to a temp log', async () => {
         expect((await post([event(6)], {'X-Test-Enabled': 'false'})).status).toBe(403);
         expect((await post([event(6)], {'X-Test-Directory': ''})).data).toEqual({disabled: true});
+        expect((await post([event(6)], {'X-Test-Directory': 'recordings'})).data).toEqual({disabled: true});
         expect(read()).toHaveLength(5);
     });
 

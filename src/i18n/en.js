@@ -4019,7 +4019,7 @@ const en = {
         },
         relative: {
             label: "Relative Heading",
-            tooltip: "Measure Pan (Az) from the heading of the camera's track, instead of from true north.\nPan 0 looks forward along the track, and Pan 90 looks to the right. With a ground-locked track, Tilt 0 follows the ground slope. Otherwise Tilt is measured from the horizon.",
+            tooltip: "Measure Pan (Az) from the heading of the camera's track, instead of from true north.\nPan 0 looks forward along the track, and Pan 90 looks to the right. With a ground-locked track that has Road Track on, Tilt 0 follows the smoothed road's slope. Otherwise Tilt is measured from the horizon.",
         },
         satellite: {
             label: "Satellite Mode",

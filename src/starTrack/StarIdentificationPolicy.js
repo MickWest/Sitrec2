@@ -7,15 +7,15 @@ export function minimumIdentifyObservations(frames, still = false) {
 }
 
 /** A fitted triangle proposes names; it does not establish them. Require an
- * independent fourth match, a consistent fit of ALL matches, visible catalog
- * support, and separation from competing answers before changing the scene. */
+ * independent fourth match, a consistent fit of ALL matches, and separation from
+ * competing answers before changing the scene. Catalog objects that fall in frame
+ * with no detection only compare competing answers: in a bright sky most of them
+ * are too faint to show, so their count cannot reject a match by itself. */
 export function assessBrightTripleIdentification(report, width, height) {
     const best = report?.best;
     if (!report?.ok || !best) return {accepted: false, reason: report?.reason ?? 'no matching star pattern'};
     if (best.nMatched < 4) return {accepted: false,
         reason: `only ${best.nMatched} matched stars; an independent fourth match is needed`};
-    if (best.nMissing > Math.floor(best.nMatched / 2)) return {accepted: false,
-        reason: `${best.nMissing} expected bright stars are missing from the candidate field`};
     const maxRms = Math.max(2, 0.002 * height);
     const fit = fitManualPlate(best.matches.map(({star, object}) => ({
         x: star.x, y: star.y, raDeg: object.raDeg, decDeg: object.decDeg,

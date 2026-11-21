@@ -106,8 +106,10 @@ pitch and roll, and the vertical field of view. If the image has a GPS position,
 you have moved the camera.
 
 For a night-sky photograph, [Star Tracker](StarTracker.md) can identify the field without a starting
-guess. In a fresh **Star Tracker** template, **Analyze New Images** starts analysis of the first
-imported image automatically; restoring a saved scene or adding another image does not rerun it.
+guess. The **Star Tracker** template analyzes each new image or video in the main video view, and the
+new result replaces the previous one. Loading a saved scene does not start a run. Outside a template,
+**Analyze New Images** analyzes the first image imported into a fresh scene. See the
+[Star Tracker Quickstart](StarTracker.md#quickstart).
 **Register Photo in Sky** saves the solved placement so you can pan and zoom Look around the photo
 while Video's celestial annotations stay aligned. See [Registering a photo in the sky](StarTracker.md#registering-a-photo-in-the-sky).
 

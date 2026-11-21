@@ -132,6 +132,8 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         EventManager.addEventListener("elevationChanged", refreshGround);
         EventManager.addEventListener("visibleGroundChanged", () => {
             if (this.disposed) return true;
+            // The ground can gain or lose the track ground cache that Road Track needs.
+            this.updateRoadTrackControls?.();
             if (this.isAGLLockActive() && !trackGroundCache()?.records.has(this)) refreshGround();
         });
     }

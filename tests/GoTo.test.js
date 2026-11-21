@@ -4,6 +4,7 @@ jest.mock('../src/Globals', () => ({
         editTime: jest.fn(), setTimeZoneFromZone: jest.fn(),
         getTimeLocation: () => ({lat: 53.8479533, lon: -1.8384526}),
     },
+    Globals: {},
     Sit: {aFrame: 0, bFrame: 100},
     NodeMan: {get: jest.fn()},
     setRenderOne: jest.fn(),
@@ -24,10 +25,12 @@ jest.mock('../src/CoordinateInput', () => ({
     resolveLocationString: jest.fn(),
 }));
 jest.mock('../src/CFeatureManager', () => ({FeatureManager: {addLocationPin: jest.fn()}}));
+// The geoid height N, so HAE = MSL + N.
+jest.mock('../src/EGM96Geoid', () => ({meanSeaLevelOffset: jest.fn(() => -33)}));
 
 import {applyGoToString, executeGoToRequest} from '../src/GoTo';
 import {parseGoToString} from '../src/GoToParser';
-import {GlobalDateTimeNode, NodeMan} from '../src/Globals';
+import {GlobalDateTimeNode, Globals, NodeMan} from '../src/Globals';
 import {lookupTimeZone, utcOffsetHoursInZone} from '../src/TimeZoneLookup';
 import {goToLatLon, resolveLocationString} from '../src/CoordinateInput';
 import {FeatureManager} from '../src/CFeatureManager';
@@ -45,7 +48,15 @@ beforeEach(() => {
         GlobalDateTimeNode.timeZoneOffset = utcOffsetHoursInZone(zone, date);
     });
     lookupTimeZone.mockResolvedValue('Europe/London');
+    Globals.sitchEstablished = false;
+    Globals.sitchEstablishedByTrackImport = false;
 });
+
+// What setSitchEstablished(true) does.
+function establish() {
+    Globals.sitchEstablished = true;
+    Globals.sitchEstablishedByTrackImport = false;
+}
 
 function initialLookCamera() {
     const position = {_LLA: [34, -118, 10000], agl: false};
@@ -53,6 +64,8 @@ function initialLookCamera() {
         position._LLA = [lat, lon, alt];
         position.agl = agl;
         noteCameraPositionChange(position);
+        // The PositionLLA.onChange listener (CustomManagerSetup.js) establishes the sitch.
+        establish();
     });
     const nodes = {fixedCameraPosition: position, cameraTrackSwitch: {choice: 'fixedCamera'}, lookCamera: {freeLook: false}};
     NodeMan.get.mockImplementation(id => nodes[id]);
@@ -107,11 +120,39 @@ test('a camera moved while geocoding is in flight is preserved', async () => {
     expect(position.gotoLLA).not.toHaveBeenCalled();
 });
 
-test('explicit coordinate altitude wins over the default ground clearance', async () => {
+test('explicit coordinate altitude wins over the default ground clearance, converted from HAE to MSL', async () => {
     const {position} = initialLookCamera();
     resolveLocationString.mockResolvedValueOnce({lat: 40, lon: -74, alt: 300, isCoordinate: true});
     await applyGoToString('40, -74, 300');
-    expect(position.gotoLLA).toHaveBeenCalledWith(40, -74, 300, false);
+    expect(position.gotoLLA).toHaveBeenCalledWith(40, -74, 333, false);
+    // The main camera frames the point itself, which is HAE.
+    expect(goToLatLon).toHaveBeenCalledWith(40, -74, undefined, undefined, 300);
+});
+
+test('placing the starting camera from a place name does not establish the sitch', async () => {
+    const {position} = initialLookCamera();
+    expect(await applyGoToString('South Korea')).toBe(true);
+    expect(position.gotoLLA).toHaveBeenCalled();
+    expect(Globals.sitchEstablished).toBe(false);
+});
+
+test('placing the starting camera keeps a sitch that a track import established', async () => {
+    initialLookCamera();
+    Globals.sitchEstablished = true;
+    Globals.sitchEstablishedByTrackImport = true;
+    await applyGoToString('South Korea');
+    expect(Globals.sitchEstablished).toBe(true);
+    expect(Globals.sitchEstablishedByTrackImport).toBe(true);
+});
+
+test('a place with a time still establishes the sitch through the time edit', async () => {
+    const {position} = initialLookCamera();
+    GlobalDateTimeNode.editTime.mockImplementationOnce(establish);
+    await applyGoToString('South Korea, August 30, 2025, 8:09 PM');
+    expect(position.gotoLLA).toHaveBeenCalled();
+    expect(GlobalDateTimeNode.editTime).toHaveBeenCalled();
+    expect(Globals.sitchEstablished).toBe(true);
+    expect(Globals.sitchEstablishedByTrackImport).toBe(false);
 });
 
 test('Go To places one pin with the requested name', async () => {

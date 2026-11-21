@@ -115,7 +115,12 @@ export class CNodeSplineEditor extends CNodeTrack {
             }
         };
         EventManager.addEventListener("elevationChanged", refreshGround);
-        EventManager.addEventListener("visibleGroundChanged", () => { if (!trackGroundCache()?.records.has(this)) return refreshGround(); });
+        EventManager.addEventListener("visibleGroundChanged", () => {
+            if (this.disposed) return true;
+            // The ground can gain or lose the track ground cache that Road Track needs.
+            this.updateRoadTrackControls?.();
+            if (!trackGroundCache()?.records.has(this)) return refreshGround();
+        });
 
         this.recalculate()
         this.splineEditor.updatePointEditorGraphics()

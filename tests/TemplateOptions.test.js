@@ -1,14 +1,17 @@
 import {applyTemplateInference, beginTemplateSession, normalizeTemplateOptions,
     noteTemplateLocationChange, prepareTemplateSitch, shouldAnalyzeTemplateMedia,
-    templateConstraints, templateOptions} from '../src/TemplateOptions';
+    TEMPLATE_PRESETS, templateConstraints, templateOptions} from '../src/TemplateOptions';
 
-test('named legacy presets enable star analysis and defer satellite catalogs', () => {
+test('named legacy presets enable star analysis and keep the saved satellite setting', () => {
     expect(templateOptions({templateSource: {name: 'Star Tracker'}})).toMatchObject({
-        analyzeImages: true, analyzeVideos: true, findNightView: true, frameStars: true, satellites: 'manual',
+        analyzeImages: true, analyzeVideos: true, findNightView: true, frameStars: true, satellites: 'inherit',
     });
-    expect(templateOptions({templateSource: {name: 'Starlink Horizon Flares'}})).toMatchObject({
-        analyzeImages: false, satellites: 'manual',
-    });
+    for (const name of ['Starlink', 'Starlink Horizon Flares', 'Satellites']) {
+        expect(templateOptions({templateSource: {name}})).toMatchObject({analyzeImages: false, satellites: 'inherit'});
+    }
+    // Only a preset applied from the menu defers the catalogs.
+    expect(TEMPLATE_PRESETS['Star Tracker'].satellites).toBe('manual');
+    expect(TEMPLATE_PRESETS['Satellite viewing'].satellites).toBe('manual');
     expect(templateOptions({sitchName: 'Star Tracker'}).analyzeImages).toBe(false);
     expect(normalizeTemplateOptions({analyzeImages: false, findNightView: false}, 'Star Tracker'))
         .toMatchObject({analyzeImages: false, findNightView: false, analyzeVideos: true});
@@ -32,6 +35,20 @@ test('template load applies explicit options before old node settings and omits 
     const automatic = {templateOptions: {satellites: 'automatic'}, mods: {NightSkyNode: {autoloadSatellites: false}}};
     prepareTemplateSitch(automatic, 'Starlink Horizon Flares');
     expect(automatic.mods.NightSkyNode.autoloadSatellites).toBe(true);
+});
+
+test.each(['Starlink', 'Star Tracker'])('an older "%s" template keeps its satellite catalogs and Autoload, also after a re-save', name => {
+    const original = {NightSkyNode: {kind: 'DisplayNightSky', autoloadSatellites: true},
+        mods: {NightSkyNode: {autoloadSatellites: true, satelliteCatalogRequest: {key: 'old'}}},
+        loadedFiles: {sats: 'sats.parquet'}, loadedFilesMetadata: {sats: {dataType: 'tle'}}};
+    const sitch = JSON.parse(JSON.stringify(original));
+    const options = prepareTemplateSitch(sitch, name);
+    const {templateOptions: added, ...rest} = sitch;
+    expect(rest).toEqual(original);
+    expect(added.satellites).toBe('inherit');
+    // Save as Template writes these options, so a re-saved template keeps the old behavior.
+    expect(normalizeTemplateOptions(options, name)).toEqual(options);
+    expect(normalizeTemplateOptions(undefined, name).satellites).toBe('inherit');
 });
 
 test('time and location are independent constraints, including metadata and edits during analysis', () => {

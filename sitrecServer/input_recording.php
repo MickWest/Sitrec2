@@ -9,7 +9,10 @@ function inputRecordingAllowed($identity) {
 }
 
 function inputRecordingConfigured($identity) {
-    return inputRecordingAllowed($identity) && trim(getenv('INPUT_RECORDING_DIR') ?: '') !== '';
+    // The same rule as inputRecordingDirectory(): only an absolute directory turns recording
+    // on, so a relative path never lets the browser send a batch that cannot be stored.
+    $path = trim(getenv('INPUT_RECORDING_DIR') ?: '');
+    return inputRecordingAllowed($identity) && $path !== '' && $path[0] === '/';
 }
 
 function inputRecordingDirectory() {
