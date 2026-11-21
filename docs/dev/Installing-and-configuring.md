@@ -895,7 +895,7 @@ settings are stored locally, and Chrome/Edge can save files through a user-selec
 folder. The browser stores that folder's permission handle in IndexedDB so it can request
 access again on later visits.
 
-**Prerequisites:** Node.js 22 with npm to build or run the included static server. A built
+**Prerequisites:** Node.js 24 with npm to build or run the included static server. A built
 copy needs a modern browser and any static HTTP server.
 
 **Terrain:** every serverless build removes the built-in internet map and elevation sources.
@@ -944,7 +944,7 @@ internet when its application files, terrain and sitch assets are available loca
 
 Self-contained build using Node.js + your system's PHP. No separate web server needed.
 
-**Prerequisites:** Node.js 22 with npm, PHP 8.4.1+ in `PATH`, and Composer
+**Prerequisites:** Node.js 24 with npm, PHP 8.4.1+ in `PATH`, and Composer
 
 ```bash
 git clone https://github.com/MickWest/Sitrec2 sitrec-test-dev
@@ -972,7 +972,7 @@ Full development environment with Nginx/Apache + PHP. This is the setup used for
 ### Prerequisites
 
 - Web server (Nginx or Apache) with PHP 8.4.1+ and HTTPS support
-- Node.js 22 with npm
+- Node.js 24 with npm
 - Composer
 
 ### Setup

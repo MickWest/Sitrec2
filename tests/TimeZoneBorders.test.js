@@ -305,8 +305,15 @@ test("the shipped data file decodes, with the borders of an ordinary time zone m
     const {zones, counts, lonLat, faces} = borders;
     expect(zones.length).toBeGreaterThan(250);      // the 1970 set: 304 zones in 2026f
     // A zone has no standard offset only when the Node that built the file did not know it.
+    // The test Node can be newer than that Node. The file was built on Node 22.13 (IANA
+    // 2024b), which did not know America/Coyhaique (added in 2025b), and Node 24 does. So a
+    // zone without a standard offset must be unknown here too, or be one of the zones that
+    // IANA added after the file was built. A rebuild on a newer Node keeps this true.
+    const ADDED_AFTER_BUILD = ["America/Coyhaique"];
     for (const zone of zones.filter(zone => !Number.isFinite(zone.standard))) {
-        expect(utcOffsetHoursInZone(zone.name, new Date())).toBeNull();
+        if (!ADDED_AFTER_BUILD.includes(zone.name)) {
+            expect(utcOffsetHoursInZone(zone.name, new Date())).toBeNull();
+        }
     }
     expect(counts.length).toBeGreaterThan(300);
     expect(faces.length).toBeGreaterThan(300);

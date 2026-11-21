@@ -34,7 +34,7 @@ starting angles. The Anomalies v1 sets (`Anomalies_full_v1_…` and
 ## Before you start
 
 Run the commands on this page from the root of a clone of the repository, in a
-POSIX shell (macOS, Linux or WSL). You need Git and Node.js 22 with npm:
+POSIX shell (macOS, Linux or WSL). You need Git and Node.js 24 with npm:
 
 ```bash
 git clone https://github.com/MickWest/Sitrec2.git

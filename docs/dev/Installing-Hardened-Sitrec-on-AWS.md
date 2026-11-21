@@ -117,7 +117,7 @@ You need:
   revocation list(s). See section 8.2 for the format rules the balancer enforces.
 - A user map: which certificate identifiers may log in, and as which Sitrec user and groups.
   Section 7.3.
-- A machine that can build the image (Node 22, Docker or Podman) and push to ECR, or a
+- A machine that can build the image (Node 24, Docker or Podman) and push to ECR, or a
   way to carry a saved image in (section 5.3). For the image review in section 4.1, also
   install `trivy` and `syft`. To use `deploy/aws/`, install Terraform 1.9 or newer;
   `terraform init` installs the module's AWS provider constraint (`~> 6.0`).

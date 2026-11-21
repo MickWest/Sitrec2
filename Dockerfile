@@ -1,9 +1,9 @@
 # Description: Dockerfile for building Sitrec
 
 # This is a multi-stage build
-# The first stage is to build the app, using Node.js 22.13: the version in .nvmrc, which
+# The first stage is to build the app, using Node.js 24.22: the version in .nvmrc, which
 # CI and the other workflows use. Keep the two in step.
-FROM node:22.13 AS build
+FROM node:24.22 AS build
 
 # Set the working directory to /build
 # copy the needed files and run npm install
@@ -40,9 +40,10 @@ COPY site.webmanifest .
 # and we don't run the regression tests in Docker yet
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
-# Pin npm version to match local dev (node:22.13 ships npm 10, lock file was generated with npm 11)
-# Direct self-upgrade (npm i -g npm@11) can corrupt modules on some node:22
-# images, so bootstrap via npx which downloads a clean copy first.
+# Keep npm on major version 11, the version that made the lock file. node:24.22
+# already includes npm 11, so this step only takes the newest 11.x. On some node:22
+# images a direct self-upgrade (npm i -g npm@11) corrupted modules, so this step
+# bootstraps through npx, which downloads a clean copy first.
 RUN npx -y npm@11 install -g npm@11
 
 # We use npm ci (Clean Install) to install the dependencies

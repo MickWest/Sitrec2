@@ -10,7 +10,7 @@ open the build with a `file://` URL. The browser blocks the app's first request,
 
 ## Quick start
 
-Use Node.js 22 (`.nvmrc`). In a fresh clone, create the config files and install the
+Use Node.js 24 (`.nvmrc`). In a fresh clone, create the config files and install the
 dependencies:
 
 ```bash

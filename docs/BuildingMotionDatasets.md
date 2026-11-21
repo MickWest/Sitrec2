@@ -5,7 +5,7 @@ for [BOTBench](BOTBench.md): **Extreme** (high-performance maneuvers by drones,
 fast aircraft, and hypersonic vehicles), **Anomalies** (hypothetical motions),
 and **Mundane** (ordinary balloons, drones, and weather balloons). Sitrec does
 not ship these files, so you build them from a repository checkout. This needs
-Git and Node.js 22, but no build of the app. The index of all benchmark sets is
+Git and Node.js 24, but no build of the app. The index of all benchmark sets is
 [BOTBench Scenario Files](BOTBenchScenarios.md).
 
 ## Extreme and Anomalies
@@ -63,7 +63,7 @@ Earth the ends of the track are below the platform's horizon.
 
 ## Clean-machine setup
 
-Install **Git and Node.js 22 with npm** first. Use a POSIX shell on macOS, Linux,
+Install **Git and Node.js 24 with npm** first. Use a POSIX shell on macOS, Linux,
 or WSL, with an internet connection. No frontend build or server configuration
 is required.
 

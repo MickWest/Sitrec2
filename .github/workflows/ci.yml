@@ -62,7 +62,7 @@ jobs:
         # fetch-tags: true is supposed to fetch the tags without a full clone, but doesn't work ?
         fetch-depth: 0    # do a full clone instead. for now it doesn't seem to be any slower
     # Every workflow takes the Node version from .nvmrc: the version used in development
-    # (22.13). The thermal tests start Node processes that import tools/thermal/*.js as ES
+    # (24.22). The thermal tests start Node processes that import tools/thermal/*.js as ES
     # modules, and Node detects ES modules in .js files only from 22.7.
     - name: use node.js (.nvmrc)
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

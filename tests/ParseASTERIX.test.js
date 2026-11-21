@@ -229,7 +229,10 @@ describe('ParseASTERIX', () => {
     });
 
     test('rejects an unrelated buffer', () => {
-        const buf = Buffer.from('not a pcap, not asterix').buffer.slice(0);
+        // TextEncoder gives the bytes their own ArrayBuffer. Buffer.from() takes a short
+        // string from Node's shared pool, and .buffer is then the whole pool, with the bytes
+        // of earlier tests in it (on Node 24 a PCAP header at offset 0).
+        const buf = new TextEncoder().encode('not a pcap, not asterix').buffer;
         expect(isPCAP(buf)).toBe(false);
         expect(looksLikeASTERIX(buf)).toBe(false);
         expect(parseASTERIXBuffer(buf)).toBeNull();
