@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.203.1 (2026-11-22)
+
+### New Features
+- **Show FOV Editor** (Camera → Advanced → FOV (Zoom)): this new checkbox, directly under *Camera FOV*, shows or hides the FOV Editor. It is the same setting as Show → Views → FOV Editor, so the two checkboxes always agree.
+
+### Improvements
+- **Help in the FOV Editor** (Show → Views → FOV Editor): a line at the top of the editor now says *Ctrl+click to add a point. Drag points and lines to match the video.* When *Camera FOV* is not *FOV Editor*, the editor does not change the camera, and the line changes to an orange warning: *Not in use: set Camera FOV to FOV Editor*.
+
+### Bug Fixes
+- Fixed a point added with Ctrl+click in the FOV Editor not changing the camera's field of view until you dragged the point.
+- Fixed the slider at the right edge of the FOV Editor not changing the scale of the graph immediately while playback was paused.
+- Fixed the FOV Editor opening with an empty graph from Show → Views → FOV Editor. The first time it opens, it now has one point at the current frame and the current field of view, whether you open it from either checkbox or from *Camera FOV*.
+
 ## Version 2.203.0 (2026-11-21)
 
 ### New Features

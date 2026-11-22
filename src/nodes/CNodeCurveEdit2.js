@@ -24,7 +24,13 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.yLabel = config.yLabel ?? "Y";
         this.xStep = config.xStep ?? 10;
         this.yStep = config.yStep ?? 10;
-        
+
+        // One line of help in the strip above the graph (config.hint), and a warning that takes
+        // its place when there is a problem to show (config.hintWarning). Both are functions, so
+        // the text follows the current language and state. See drawHint().
+        this.hint = config.hint;
+        this.hintWarning = config.hintWarning;
+
         this.points = [];
         if (config.points) {
             for (let i = 0; i < config.points.length; i += 2) {
@@ -175,6 +181,9 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         slider.addEventListener('input', (e) => {
             e.stopPropagation();
             this.maxY = Number(e.target.value);
+            // Sitrec draws only on request when paused. Without this request the graph kept
+            // its old scale until some other change (a video frame, terrain) caused a redraw.
+            setRenderOne(true);
         });
         slider.addEventListener('pointerdown', (e) => e.stopPropagation());
 
@@ -350,7 +359,12 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             }
             
             this.points.splice(insertIndex, 0, newPoint);
-            
+            // Recalculate now: a Ctrl+click with no drag never reaches onMouseMove, and the
+            // new point used to show on the graph while the camera FOV ignored it.
+            if (this.onChange) {
+                this.onChange();
+            }
+
             this.draggedPointIndex = insertIndex;
             this.dragStartPoint = {x: newPoint.x, y: newPoint.y};
             this.lockAxis = null;
@@ -867,7 +881,9 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         ctx.rotate(-Math.PI / 2);
         ctx.fillText(this.yLabel, 0, 0);
         ctx.restore();
-        
+
+        this.drawHint(ctx, T, width, margin);
+
         // Use only active points (x < Sit.frames) for curve drawing;
         // disabled points are rendered as faded dots but don't affect the curve.
         const activePoints = this.getActivePoints();
@@ -973,6 +989,31 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         }
     }
     
+    // Draw the hint, or the warning in its place, centered in the strip between the header bar
+    // and the top of the graph. A narrow editor gets a smaller font, down to 9 px; below that,
+    // fillText's maxWidth argument compresses the text to fit.
+    drawHint(ctx, T, width, margin) {
+        const warning = this.hintWarning?.();
+        const text = warning || this.hint?.();
+        if (!text) return;
+
+        const top = this.uiBar?.bar?.offsetHeight ?? 0;
+        const maxWidth = width - 16;
+        let size = 12;
+        ctx.font = `${size}px sans-serif`;
+        while (size > 9 && ctx.measureText(text).width > maxWidth) {
+            size--;
+            ctx.font = `${size}px sans-serif`;
+        }
+
+        ctx.fillStyle = warning ? T('#fa4') : T('#bbb');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, width / 2, (top + margin) / 2, maxWidth);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+    }
+
     getPoints() {
         return this.points;
     }
@@ -981,11 +1022,15 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         return this.points.filter(p => p.x < Sit.frames);
     }
     
-    show(visible=true) {
-        if (visible) {
+    // Every way to open the editor comes here: the Camera FOV selector (through show()), and the
+    // View menu and Camera > FOV (Zoom) checkboxes, which call setVisible() directly. When the
+    // sentinel was replaced only in show(), a checkbox opened an empty graph. CNodeView's
+    // constructor calls this before this class has its points, hence the guard.
+    setVisible(visible) {
+        if (visible && this.points) {
             this.replaceDefaultSentinel();
         }
-        super.show(visible);
+        super.setVisible(visible);
     }
 
     replaceDefaultSentinel() {

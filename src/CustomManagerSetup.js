@@ -98,6 +98,11 @@ import {Vector3} from "three";
 
 import {connectTraverseOutput} from "./TraverseOutput";
 
+// Mirror key for the FOV Editor's show/hide checkbox. A plain key, not viewMenuKey(): that
+// namespace is for the view header menus, and tests/ViewUIBarMenus.test.js requires each of
+// its keys to be listed in the header registry.
+const FOV_EDITOR_SHOW_KEY = "fovEditor:show";
+
 export const setupMethods = {
     async setup() {
 
@@ -2721,7 +2726,14 @@ export const setupMethods = {
                             useRegression: true,
                             minX: 0, maxX: "Sit.frames", minY: 0, maxY: 40,
                             xLabel: "Frame", xStep: 1, yLabel: "FOV", yStep: 5,
-                            points: [99, 99]
+                            points: [99, 99],
+                            // The line of help above the graph. Ctrl+click adds a point on every
+                            // platform, including macOS (commandModifier also accepts Cmd).
+                            hint: () => t("misc.fovEditorHint"),
+                            // The editor can be open while another source sets the FOV. Then
+                            // edits change nothing, so say why in place of the help.
+                            hintWarning: () => fovSwitch.choice !== "FOV Editor"
+                                ? t("misc.fovEditorNotInUse") : null,
                         },
                         frames: -1, // -1 will inherit from Sit.frames
                     },
@@ -2729,6 +2741,24 @@ export const setupMethods = {
 
 
                 fovSwitch.addOption("FOV Editor", fovEditor);
+
+                // Camera > FOV (Zoom) > Show FOV Editor: the View menu's checkbox for this
+                // editor, mirrored (MenuMirror.js), so both rows show and set the same flag.
+                // It goes directly under the Camera FOV selector: the twin first, then the
+                // selector above it. index.js (leadSelector) moves the selector to the top
+                // again after the sitch loads, which keeps the twin second.
+                const showController = fovEditor.editorView.showHideController;
+                if (showController) {
+                    showController.shareAs(FOV_EDITOR_SHOW_KEY);
+                    guiMenus.cameraFOV.addMirror(FOV_EDITOR_SHOW_KEY, {
+                        name: t("misc.showFOVEditor.label"),
+                        tooltip: t("misc.showFOVEditor.tooltip"),
+                        onMirror: twin => {
+                            twin.moveToFirst();
+                            fovSwitch.controller?.moveToFirst();
+                        },
+                    });
+                }
             }
         }
 

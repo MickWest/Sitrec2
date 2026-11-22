@@ -199,11 +199,13 @@ entry here: an id, what the code does, where the data goes, the release, and its
   names, and scene and timing context, which can include a precise position and a time, with
   the user ID and a session identifier. Checkbox, number, range, color, date and time controls
   record their value, and a list records its selected option. A control path is a fixed path
-  or element id that the code sets, or else the control's label as the page shows it: its
-  accessible name, its title or placeholder, or the text of a button, link, menu item or
-  option. That label can be text that the user made, for example the name
-  of a sitch label in the sitch browser (an element title) or the text of a link in the sitch
-  Notes (widened 2.203.0). A URL in a label keeps only its origin and path: the recorder
+  or element id that the code sets, or else the label of the element under the pointer (or of
+  its control) as the page shows it: its accessible name, its title or placeholder, or the
+  text of a button, link, menu item or option. The element need not be a control: the title
+  of a table cell or of any other element is recorded the same way. That label can be text
+  that the user made or imported, for example the name of a sitch label in the sitch browser
+  (an element title), the text of a link in the sitch Notes, or a description in an imported
+  data table (widened 2.203.0, and again after its release check). A URL in a label keeps only its origin and path: the recorder
   removes its query, its fragment and any user name and password, and it redacts text in the
   form of an API key or a bearer token. The text typed into a text field is never recorded,
   only its length. A password field, or a control whose name or label names a password, a
@@ -215,8 +217,9 @@ entry here: an id, what the code does, where the data goes, the release, and its
   configured. With the directory set, the recorder is on when `INPUT_RECORDING_ENABLED` is
   unset or true, and any other value turns it off. Recording for another account or a visitor,
   the text typed into a text field, a password, a URL query or fragment, text taken from
-  anything other than a control's own path, label or value as described above, a directory inside
-  the web root or a public mount, or a send to another host is a finding.
+  anything other than the path, label or value of the element under the pointer or of its
+  control as described above, a directory inside the web root or a public mount, or a send to
+  another host is a finding.
 
 ### `ground-locked-track-tiles` — accepted 2.203.0 (contract widened)
 - **Code:** `src/TrackGroundCache.js` (`TrackLoadRegion`, `TrackGroundCache`), used by

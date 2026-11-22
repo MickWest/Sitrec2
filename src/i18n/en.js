@@ -5304,6 +5304,14 @@ const en = {
             label: "Default Snap",
             tooltip: "On: a dragged point moves only horizontally or only vertically, set by your first movement.\nOff: a dragged point moves freely, and snaps to the height of other points and to the current frame.\nHold Shift while you drag to use the other mode",
         },
+        fovEditorHint: "Ctrl+click to add a point. Drag points and lines to match the video.",
+        fovEditorNotInUse: "Not in use: set Camera FOV to FOV Editor",
+        showFOVEditor: {
+            label: "Show FOV Editor",
+            tooltip: "Show or hide the FOV Editor: a graph of the field of view (FOV) against the frame number.\n" +
+                "The editor sets the zoom only when Camera FOV is FOV Editor.\n" +
+                "Show > Views > FOV Editor is the same checkbox.",
+        },
         recalcNodeGraph: {
             label: "Recalc Node Graph",
             tooltip: "Lay out the node graph view again from the current nodes, for example after a track is loaded.",

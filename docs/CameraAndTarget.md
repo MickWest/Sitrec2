@@ -83,7 +83,7 @@ source. **Lock Forward Vector** is also greyed out while **Relative Heading** is
 | Choice | What it does |
 |---|---|
 | **Manual** | The field of view comes from **VFOV (deg)** (or HFOV, or 35mm Equiv, which edit the same value). This is the default. |
-| **FOV Editor** | The field of view comes from the FOV Editor curve (field of view against frame). Open the editor from **Show → Views → FOV Editor**. |
+| **FOV Editor** | The field of view comes from the FOV Editor curve (field of view against frame). Selecting this choice opens the editor. See [The FOV Editor](#the-fov-editor). |
 | *A track or file with FOV* | An imported file with an `fov` or `zoom` column, or a track that carries a field of view, adds its own choice. An `fov` or `zoom` column is selected as soon as it loads. |
 | **Star Track** | Appears after the Star Tracker syncs the camera. |
 
@@ -183,8 +183,9 @@ wins, because it is applied last.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Export for FOV Editor** | — | Samples the current FOV source on every frame and saves it as a `.fov.json` file of keyframes. Drop that file on Sitrec to load it into the FOV Editor. See [Tracks](Tracks.md). |
 | **Camera FOV** | Manual | The FOV source. See [Field of view sources](#field-of-view-sources-camera--fov-zoom--camera-fov). |
+| **Show FOV Editor** | Off | Shows or hides the FOV Editor window. It is the same setting as **Show → Views → FOV Editor**, so the two checkboxes always agree. See [The FOV Editor](#the-fov-editor). |
+| **Export for FOV Editor** | — | Samples the current FOV source on every frame and saves it as a `.fov.json` file of keyframes. Drop that file on Sitrec to load it into the FOV Editor. See [Tracks](Tracks.md). |
 | **VFOV (deg)** | 30 | Vertical field of view, across the full height of the frame. This is the value the camera stores. |
 | **HFOV (deg)** | from VFOV | Horizontal field of view, across the full width of the frame. It is VFOV read through the **Aspect Ratio**. Editing it sets VFOV to match. |
 | **35mm Equiv (mm)** | from VFOV | The lens that would give this field of view on a 36×24 mm full-frame camera, measured across the long side of the frame. Editing it sets HFOV and VFOV to match. The slider range grows when you push past its right end. |
@@ -198,6 +199,68 @@ VFOV, HFOV and 35mm Equiv only work when **Camera FOV** is **Manual**.
 
 **Lock Aspect** is not the same as **Match Video Aspect** (below). Lock Aspect changes what
 the FOV numbers mean. Match Video Aspect changes how the look view is drawn.
+
+#### The FOV Editor
+
+The FOV Editor is a graph of the vertical field of view, in degrees, against the frame
+number. Use it when the camera in the video zooms: put points at the frames where the zoom
+starts and stops, and the look camera follows the line through them.
+
+![The FOV Editor window. A line of help at the top says "Ctrl+click to add a point. Drag points and lines to match the video." Below it, a graph of FOV from 0 to 40 against Frame from 0 to 900 has a blue line through six points: flat at 30 until frame 180, down to 12 at frame 260, flat until frame 520, up to 22 at frame 600, then flat to the end. A yellow vertical line is at frame 390. A vertical slider is at the right edge.](docimages/camera-fov-editor.jpg)
+*The FOV Editor with six points. The camera zooms in from 30° to 12° between frames 180 and
+260, holds that zoom, then zooms out to 22° between frames 520 and 600. The yellow line is
+the current frame. The green and red lines at the left and right edges of the graph are the
+In and Out frames.*
+
+To open the editor, set **Camera → FOV (Zoom) → Camera FOV** to **FOV Editor**, or tick
+**Camera → FOV (Zoom) → Show FOV Editor**. In a custom sitch, the FOV (Zoom) folder is under
+**Advanced** in the Camera menu. **Show FOV Editor** and **Show → Views → FOV Editor** are
+the same setting, and the ✕ on the editor's header clears both.
+
+![The FOV (Zoom) folder, open under Advanced in the Camera menu. Camera FOV is set to FOV Editor, and the Show FOV Editor checkbox under it is ticked. Below are the Export for FOV Editor button and the VFOV, HFOV and 35mm Equiv rows, which are grayed out.](docimages/camera-fov-zoom-menu.jpg)
+*Camera → Advanced → FOV (Zoom). With **Camera FOV** set to **FOV Editor**, the manual VFOV,
+HFOV and 35mm Equiv rows are grayed out, and show the value that the editor gives at the
+current frame.*
+
+The editor changes the look camera only when **Camera FOV** is **FOV Editor**. When it is
+open with another source selected, the line at the top changes to **Not in use: set Camera
+FOV to FOV Editor**, in orange.
+
+**To match the zoom of a video:**
+
+1. Set **Camera FOV** to **FOV Editor**. The first time the editor opens, it has one point,
+   at the current frame and the current field of view.
+2. Drag that point to frame 0, then up or down until the look view matches the first frame
+   of the video.
+3. Find a frame where the zoom in the video starts to change. The yellow line in the editor
+   follows the current frame. **Ctrl+click** in the graph at that frame to add a point, and
+   add another point at the frame where the zoom stops changing.
+4. Drag each new point up or down until the look view matches the video at that frame.
+5. Do steps 3 and 4 again for each zoom change.
+
+A flat line is a constant zoom, and a sloped line is a zoom change. Between two points,
+the field of view changes linearly with the frame. Before the first point and after the
+last point, it stays at the value of that point.
+
+| To do this | Do this |
+|---|---|
+| Add a point | **Ctrl+click** in the graph. On a Mac, **Cmd+click** also works. |
+| Move a point | Drag it. A point cannot move past the points on each side of it. |
+| Move a line | Drag it, and the points at its two ends move together. If you drag a flat line up or down and the line next to it is also flat, Sitrec adds a point one frame in from that end, so the next line stays where it is. |
+| Delete a point | Right-click it and select **Delete Point**. You cannot delete the only point. |
+| Snap a point | With **Default Snap** off (the default), a dragged point snaps to the height of another point and to the current frame when it comes near them, and a red dashed line shows the snap. Hold **Shift** while you drag to move only horizontally or only vertically instead. **Default Snap**, in the menu on the editor's header, swaps the two modes. |
+| Change the current frame | Drag the yellow line. |
+| Change the In or Out frame | Drag the green (In) or red (Out) line. |
+| Change the FOV scale | Drag the slider at the right edge. It sets the top of the FOV scale, from 1° to 170°. It changes only the graph, not the points. |
+| Move the window | Drag its header, or drag in the margin around the graph. |
+| Undo an edit | **Ctrl+Z** (**Cmd+Z** on a Mac). |
+
+A point after the last frame of the sitch, for example after you shorten the video, is drawn
+faded and is not used.
+
+The points are saved with the sitch. To copy them to a different sitch, click **Export for
+FOV Editor**, then drop the `.fov.json` file on Sitrec in the other sitch. See
+[Sitrec Camera FOV in Tracks](Tracks.md#sitrec-camera-fov-fovjson).
 
 ### Camera → Lens
 
