@@ -92,7 +92,11 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
     
     setupMouseHandlers() {
         this.unregisterInteraction = registerSurfaceInteraction(this.canvas, {
-            model: this, view: this, profile: "curve",
+            // The right button too: a right press must start a router session, and the router
+            // opens the point menu on its release. The browser's contextmenu event cannot do it,
+            // because the global blocker in index.js stops that event for every canvas. Only a
+            // left press edits (onMouseDown returns on any other button).
+            model: this, view: this, profile: "curve", buttons: [0, 2],
             hitTest: e => this.isMenuInteraction(e) ? null : {},
             begin: e => { this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 8; this.onMouseDown(e); }, move: e => this.onMouseMove(e),
             hover: e => { if (e) this.onMouseMove(e); },

@@ -171,6 +171,44 @@ test("current curve right-click opens a point menu; only Delete Point removes it
     } finally { delete Globals.menuBar; }
 });
 
+// In the page, the global blocker in index.js stops every contextmenu event aimed at a canvas in
+// the capture phase, so the router never sees it. A mouse right-click must reach the point menu
+// through the router's own right-button session, which this sequence exercises.
+test("current curve mouse right-click opens the point menu although the page blocks canvas contextmenu", () => {
+    const e = currentCurve();
+    const blocker = event => {
+        if (event.target.tagName === "CANVAS") { event.preventDefault(); event.stopPropagation(); }
+    };
+    document.addEventListener("contextmenu", blocker, {capture: true});
+    const titles = [], actions = [];
+    Globals.menuBar = {createStandaloneMenu: jest.fn(title => {
+        titles.push(title);
+        return {destroy: jest.fn(), open: jest.fn(), add: (data, key) => {
+            const action = {run: data[key]}; actions.push(action);
+            const controller = {name: label => { action.label = label; return controller; }, disable: jest.fn()};
+            return controller;
+        }};
+    })};
+    const rightClick = (x, y) => {
+        send(e.canvas, "pointerdown", x, y, {button: 2, buttons: 2});
+        send(e.canvas, "contextmenu", x, y, {button: 2, buttons: 2});
+        send(document, "pointerup", x, y, {button: 2});
+    };
+    try {
+        rightClick(20, 20);                 // empty graph area
+        expect(titles).toHaveLength(0);
+        rightClick(200, 200);               // the middle point
+        expect(titles).toEqual(["Curve Point"]);
+        expect(actions.map(a => a.label)).toEqual(["Delete Point"]);
+        expect(e.points).toHaveLength(3);   // the press itself edits nothing
+        actions[0].run();
+        expect(e.points).toEqual([{x: 0, y: 0}, {x: 100, y: 100}]);
+    } finally {
+        document.removeEventListener("contextmenu", blocker, {capture: true});
+        delete Globals.menuBar;
+    }
+});
+
 test("current curve grab offset is retained through final release", () => {
     const e = currentCurve();
     send(e.canvas, "pointerdown", 206, 200); send(document, "pointerup", 220, 200);
