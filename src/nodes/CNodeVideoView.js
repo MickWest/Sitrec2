@@ -1,3 +1,4 @@
+import {VIDEO_OPTIONAL_INPUTS} from "../VideoControlDefinitions";
 import {shouldAnalyzeImportedStarImage} from "../starTrack/StarChartPolicy";
 import {shouldAnalyzeTemplateMedia} from "../TemplateOptions";
 import {wheelZoomFactor} from "../GestureActions";
@@ -145,12 +146,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         });
         // this.canvas.addEventListener( 'wheel', e => this.handleMouseWheel(e) );
 
-        // these no longer work with the new rendering pipeline
-        // TODO: reimplement them as effects?
-        this.optionalInputs(["brightness", "contrast", "levels", "levelsInputBlack", "levelsMidpoint", "levelsInputWhite", "levelsOutputBlack", "levelsOutputWhite", "showHistogram", "histogramOnScreen", "curves", "showCurves", "shadows", "highlights", "dehaze", "blur", "hue", "invert", "saturate", "enableVideoEffects", "convolutionFilter", "elaJpegQuality", "elaErrorScale", "elaOpacity", "elaExpandMethod", "elaContrastClipPercent", "noiseBlockSize", "noiseScale", "noiseOpacity", "noiseDisplayMode"])
-        //
-
-        //  if (this.overlayView === undefined)
+        this.optionalInputs(VIDEO_OPTIONAL_INPUTS);
         addFiltersToVideoNode(this)
         this.setupHistogramView();
         this.setupLevelsView();

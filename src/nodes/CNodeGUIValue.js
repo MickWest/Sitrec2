@@ -465,3 +465,41 @@ export function makeCNodeGUIFlag(id, value, desc, guiMenu, change) {
     }, guiMenu)
 
 }
+
+// A drop-down list whose value is one of v.options (an array of values, or an object of
+// label: value). The value is saved with the sitch. desc and tip are used as given, so the
+// caller translates them.
+export class CNodeGUISelect extends CNodeConstant {
+
+    constructor(v, _guiMenu) {
+        super(v);
+        this.setGUI(v, _guiMenu)
+        this.onChange = v.onChange;
+        this.guiEntry = this.gui.add(this, "value", v.options).onChange(() => {
+            this.recalculateCascade()
+            if (this.onChange !== undefined) {
+                this.onChange()
+            }
+            markSitchDirty();
+            setRenderOne(true);
+        }).name(v.desc ? v.desc : "<no desc>").listen()
+        if (v.tip) this.guiEntry.tooltip(v.tip);
+    }
+
+    modSerialize() {
+        return {
+            ...super.modSerialize(),
+            value: this.value,
+        }
+    }
+
+    // The value is restored through the menu, so onChange runs: controls and results that
+    // depend on the selection follow the loaded value. A save made before the value was
+    // saved has no value, and keeps the default.
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (v.value !== undefined && this.value !== v.value) {
+            this.guiEntry.setValue(v.value);
+        }
+    }
+}

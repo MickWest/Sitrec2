@@ -32,6 +32,7 @@ import {
 import {CUIBar} from "../src/CUIBar";
 import {CustomManager, setCustomManager} from "../src/Globals";
 import en from "../src/i18n/en";
+import {VIDEO_CONTROL_DEFINITIONS} from "../src/VideoControlDefinitions";
 
 const SRC_DIR = path.resolve(__dirname, "..", "src");
 
@@ -133,6 +134,12 @@ function collectRegistrations() {
         }
     };
     walk(SRC_DIR);
+    // Video controls publish their slots from data; the setup integration test also
+    // checks that these definitions produce usable mirrors at runtime.
+    for (const definition of VIDEO_CONTROL_DEFINITIONS) {
+        if (definition.share) calls.push({file: "VideoControlDefinitions.js",
+            view: "video", slot: definition.share, shared: false});
+    }
     return calls;
 }
 
