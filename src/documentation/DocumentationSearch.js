@@ -64,7 +64,17 @@ export function createDocumentationSearch(index) {
             if (section.text) score += 4 / (1 + section.text.length / 500);
             return {...section, ...document, score, id};
         }).sort((a, b) => b.score - a.score || a.id - b.id);
-        return {total: ranked.length, results: ranked.slice(0, limit).map(result => ({...result,
+        const guides = [], changelogs = new Map();
+        for (const result of ranked) {
+            if (!result.changelog) guides.push(result);
+            // Keep the best matching section, with its anchor and excerpt, once per changelog.
+            else if (!changelogs.has(result.document)) changelogs.set(result.document, result);
+        }
+        // Registry order puts What's New before the detailed changelog. Reserve
+        // their places at the end even when the guide matches fill the result limit.
+        const releaseNotes = [...changelogs.values()].sort((a, b) => a.document - b.document).slice(0, limit);
+        const results = [...guides.slice(0, Math.max(0, limit - releaseNotes.length)), ...releaseNotes];
+        return {total: guides.length + changelogs.size, results: results.map(result => ({...result,
             snippet: documentationSnippet(result.text, terms)}))};
     };
 }

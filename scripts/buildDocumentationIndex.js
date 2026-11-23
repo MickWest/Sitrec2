@@ -9,6 +9,7 @@ const {addHeadingIds, stripTags} = require('./docHeadings');
 const {searchTerms} = require('../src/documentation/SearchTerms.cjs');
 
 const INDEX_ASSET = 'docs/search-index.json';
+const CHANGELOG_FILES = new Set(['docs/WhatsNew', 'docs/WhatsNew-Details']);
 
 function registeredFiles(root) {
     const registry = path.join(root, 'src/docsRegistry.js');
@@ -44,7 +45,13 @@ function buildDocumentationIndex(root = path.resolve(__dirname, '..')) {
         const headings = [...html.matchAll(/<h([1-6])(?: id="([^"]*)")?>([\s\S]*?)<\/h\1>/g)];
         const title = plain(headings.find(h => h[1] === '1')?.[3] || file.split('/').at(-1));
         const document = documents.length;
-        documents.push({file, title});
+        const changelog = CHANGELOG_FILES.has(file);
+        documents.push({file, title, ...(changelog ? {changelog: true} : {})});
+        // Release notes are newest-first. Older releases stay in the full pages,
+        // but must not compete with current instructions in documentation search.
+        const releases = changelog ? headings.filter(h => h[1] === '2' && /^Version\s/.test(plain(h[3]))) : [];
+        const start = releases[0]?.index ?? 0;
+        const end = releases[1]?.index ?? html.length;
         const hierarchy = [];
         const addSection = (heading, anchor, text) => {
             if (!heading && !text) return;
@@ -54,11 +61,12 @@ function buildDocumentationIndex(root = path.resolve(__dirname, '..')) {
                 (postings[term] ??= []).push(id);
             }
         };
-        addSection('', '', plain(html.slice(0, headings[0]?.index ?? html.length)));
+        if (!changelog) addSection('', '', plain(html.slice(0, headings[0]?.index ?? html.length)));
         headings.forEach((h, i) => {
             const level = Number(h[1]);
             hierarchy.length = level - 1;
             hierarchy[level - 1] = plain(h[3]);
+            if (h.index < start || h.index >= end) return;
             const heading = hierarchy.slice(1).filter(Boolean).join(' › ');
             const text = plain(html.slice(h.index + h[0].length, headings[i + 1]?.index ?? html.length));
             addSection(heading, h[2] || '', text);

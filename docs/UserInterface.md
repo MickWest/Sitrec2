@@ -37,6 +37,10 @@ letters: `wing flap` also finds `wings flapping`. All meaningful search words mu
 the same section or its title. Try fewer words if there are no results. Typing a phrase gives
 nearby words a higher rank; quotation marks are not required.
 
+Guide matches come first. **What's New in Sitrec** and the **Detailed Changelog** each
+search only the latest release and show at most one matching section, at the end of the
+results in that order. Older releases are not included in search results.
+
 The **Search menus…** field at the top of Help finds controls in the current menus.
 **Search Documentation** finds explanations in the guides, including features that are not
 currently visible as controls.
