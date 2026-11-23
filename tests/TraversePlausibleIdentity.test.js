@@ -55,6 +55,23 @@ function hashFloats(arr) {
     return h.toString(16);
 }
 
+// Round every number in a plain value to 12 significant digits. The range-search
+// scores and ranges go through Math library functions (atan2 in trackMetrics,
+// exp and log for the range grid). IEEE 754 does not require those to round
+// correctly, so their last bit can depend on the platform: the same Node 24.22.3
+// scores one range 5.589142780978013 on an arm64 Mac and 5.589142780978012 on
+// x86-64 Linux CI. 12 digits removes that one-ULP difference and still catches a
+// real change, which moves many more digits. 13 digits is too many: one snapshot
+// value is less than 2 ULPs from a rounding boundary there.
+function roundFloats(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? Number(value.toPrecision(12)) : value;
+    if (Array.isArray(value)) return value.map(roundFloats);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, roundFloats(field)]));
+    }
+    return value;
+}
+
 const CASES = [
     {label: "default sweep cell", opts: {K: 25, iters: 3, minDist: 120}},
     {label: "with range floor", opts: {K: 25, iters: 3, minDist: 120, rangeFloor: true}},
@@ -101,7 +118,9 @@ describe("traversePlausible is bit-stable across refactors", () => {
     });
 
     test("range search preserves its profiles and final fit", () => {
+        // The track and lam hashes stay bit-exact: they are identical on arm64 and
+        // x86-64. Only the scores and ranges in the metadata are rounded.
         const {track, lam, ...metadata} = fitPlausibleBestRange(dataset);
-        expect({track: hashFloats(track), lam: hashFloats(lam), metadata}).toMatchSnapshot();
+        expect({track: hashFloats(track), lam: hashFloats(lam), metadata: roundFloats(metadata)}).toMatchSnapshot();
     });
 });
