@@ -5,7 +5,6 @@ import {getInteractionRouter} from "../InteractionRouter";
 // Synthetic 3D Building/Object Node
 // Uses a mesh-based data structure (vertices, edges, faces) for extensibility
 // to arbitrary 3D geometry editing (like SketchUp/Blender)
-
 import {CNode3DGroup} from "./CNode3DGroup";
 import {showConfirm} from "../showError";
 import {
@@ -19,7 +18,6 @@ import {
     MeshLambertMaterial,
     MeshPhongMaterial,
     MeshStandardMaterial,
-    Plane,
     Raycaster,
     SphereGeometry,
     Vector3
@@ -27,12 +25,17 @@ import {
 import * as LAYER from "../LayerMasks";
 import {getLocalUpVector} from "../SphericalMath";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
-import {screenToNDC} from "../mouseMoveView";
-import {ViewMan} from "../CViewManager";
-import {CustomManager, Globals, guiMenus, markShadowCastersDirty, setRenderOne, Synth3DManager, UndoManager} from "../Globals";
-import {worldUnitsPerPixel, withDisplayedCamera} from "../ViewUtils";
+import {
+    CustomManager,
+    Globals,
+    guiMenus,
+    markShadowCastersDirty,
+    setRenderOne,
+    Synth3DManager,
+    UndoManager
+} from "../Globals";
+import {withDisplayedCamera, worldUnitsPerPixel} from "../ViewUtils";
 import {getVisiblePointBelow, patchMaterialForLinearOutput, pointAbove} from "../threeExt";
-import {EventManager} from "../CEventManager";
 import {isInLeftSidebar, isInRightSidebar} from "../PageStructure";
 import {t} from "../i18n";
 import {eventMethods} from "./CNodeSynthBuildingEvents";
@@ -629,7 +632,6 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         // roof2: midpoint between top corners 6 and 7
         const roof2Base = roofCorners[2].clone().add(roofCorners[3]).multiplyScalar(0.5);
         
-        const roof1Up = getLocalUpVector(roof1Base);
         const roof1Pos = pointAbove(roof1Base, this.rooflineHeightAGL);
         
         this.vertices.push({
@@ -640,7 +642,6 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             linkedVertex: 9
         });
         
-        const roof2Up = getLocalUpVector(roof2Base);
         const roof2Pos = pointAbove(roof2Base, this.rooflineHeightAGL);
         
         this.vertices.push({
@@ -1659,6 +1660,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
                 roofAGL: data.roofAGL !== undefined ? data.roofAGL : 4,
                 rooflineHeightAGL: data.rooflineHeightAGL !== undefined ? data.rooflineHeightAGL : 0,
                 ridgelineInset: data.ridgelineInset !== undefined ? data.ridgelineInset : 0,
+                roofEaves: data.roofEaves,
                 material: data.material,
                 wallColor: data.wallColor,
                 roofColor: data.roofColor,
