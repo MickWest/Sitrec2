@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.204.0 (2026-11-23)
+
+### New Features
+- **Heading Editor** (Camera → Heading → Heading Editor): animates pan and tilt offsets on top of the selected *Camera Heading* source. Tick *Use Heading Editor*, the folder's title checkbox, to apply the offsets, and *Show Heading Editor* (also Show → Views → Heading Editor) to open the graph. The graph has a *Pan / Az* curve and a *Tilt / El* curve, each with its own on/off checkbox and scale. Zero keeps the heading that the source gives.
+- **Heading edits in the Look View**: while *Use Heading Editor* is on, dragging in the Look View sets the pan and tilt offsets at the current frame, in place of *Pan (Az)* and *Tilt (El)*, and pauses playback. Each drag is one undo step.
+
+### Improvements
+- **FOV Editor offsets** (Camera → FOV (Zoom) → FOV Editor): the FOV Editor now adds an animated offset to the selected *Camera FOV* source, and is no longer one of the *Camera FOV* choices. Tick *Use FOV Editor*, the folder's title checkbox, to apply it, and *Show FOV Editor* to open the graph. The graph now shows *FOV Offset (deg)*, from −40 to 40 by default. A file saved with *Export for FOV Editor* and dropped on Sitrec now loads as offsets from the selected source and turns on *Use FOV Editor*.
+- A sitch saved by an earlier version with *Camera FOV* set to *FOV Editor* now loads with *Camera FOV* set to *Manual* and *Use FOV Editor* on, and its zoom on each frame does not change.
+- **Clear and timeline keys in the FOV Editor and the Heading Editor**: a *Clear* button on the editor's header, also in its menu, removes all the points and sets the offsets to zero, and Undo restores them. While an editor is shown, its points show as yellow diamonds on the timeline. Click one, or press Shift+, or Shift+. to go to the previous or next timeline stop.
+- **Location, Heading and FOV (Zoom)** (Camera): in a custom sitch, these three folders are now directly in the Camera menu, above *Advanced*, not inside it. They now start closed.
+- **Sitch Chapters** (File → Sitch Chapters): a chapter's camera settings now include the FOV Editor and Heading Editor curves and their *Use* settings, so each chapter can have its own.
+
 ## Version 2.203.2 (2026-11-23)
 
 ### Improvements
