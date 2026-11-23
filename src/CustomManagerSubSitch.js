@@ -147,7 +147,7 @@ export const subSitchMethods = {
         // The timeline markers are not nodes, so their kind has no patterns.
         this.subIncludes = {
             views: [1, "mainView", "lookView", "video", "chatView", "*View*"],
-            cameras: [1, "mainCamera", "lookCamera", "fixedCameraPosition", "ptzAngles", "fovUI", "fovSwitch", "anglesSwitch", "angelsSwitch", "*Camera*"],
+            cameras: [1, "mainCamera", "lookCamera", "fixedCameraPosition", "ptzAngles", "fovUI", "fovSwitch", "fovEditor", "headingEditor", "anglesSwitch", "angelsSwitch", "*Camera*"],
             dateTime: [1, "dateTimeStart", "*DateTime*"],
             measurement: [1, "globalMeasureA", "globalMeasureB"],
             markers: [1],

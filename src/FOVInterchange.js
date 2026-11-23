@@ -301,7 +301,7 @@ export function exportFOVForEditor() {
 }
 
 /**
- * Load keyframes into the FOV Editor and make it the active FOV source.
+ * Load absolute FOV keyframes as offsets from the selected camera source.
  * Returns the editor node, or null if the file or the sitch can't support it.
  */
 export function importFOVJSON(filename, json) {
@@ -321,24 +321,28 @@ export function importFOVJSON(filename, json) {
     // Work everything out BEFORE touching the editor, so nothing can fail partway
     // and leave it holding new points with a stale axis and no recalculate.
     const points = new Array(json.keyframes.length);
+    const fovSwitch = NodeMan.get("fovSwitch", false);
+    const layered = typeof fovSwitch?.getBaseValue === "function";
     // A plain loop rather than Math.max(...array): spreading blows the argument
     // limit (~125k) and a dense per-frame source over a long sitch gets there.
     let maxFOV = 0;
     for (let i = 0; i < json.keyframes.length; i++) {
         const k = json.keyframes[i];
-        points[i] = {x: k[0], y: k[1]};
-        if (k[1] > maxFOV) maxFOV = k[1];
+        const offset = layered ? k[1] - extractFOV(fovSwitch.getBaseValue(k[0])) : k[1];
+        points[i] = {x: k[0], y: offset};
+        maxFOV = Math.max(maxFOV, Math.abs(offset));
     }
 
     // Widen the editor's y axis if the data needs it, and tighten it for a
     // narrow-FOV sitch — the default 0..40 makes Aguadilla's sub-degree zoom
     // track a flat line pinned to the bottom of the graph.
-    const niceMax = maxFOV <= 1 ? Math.ceil(maxFOV * 10) / 10
+    const niceMax = maxFOV <= 1 ? Math.max(0.1, Math.ceil(maxFOV * 10) / 10)
         : maxFOV <= 10 ? Math.ceil(maxFOV)
         : Math.ceil(maxFOV / 5) * 5;
 
     fovEditor.editorView.setPoints(points);
     fovEditor.editorView.maxY = niceMax;
+    if (layered) fovEditor.editorView.minY = -niceMax;
     if (fovEditor.editorView.yRangeSlider) {
         fovEditor.editorView.yRangeSlider.value = niceMax;
     }
@@ -347,8 +351,10 @@ export function importFOVJSON(filename, json) {
     fovEditor.recalculateCascade();
 
     // Make it the live FOV source, otherwise the import appears to do nothing.
-    const fovSwitch = NodeMan.get("fovSwitch", false);
-    if (fovSwitch && fovSwitch.inputs["FOV Editor"] !== undefined) {
+    if (layered) {
+        fovEditor.useEditor = true;
+        fovSwitch.recalculateCascade();
+    } else if (fovSwitch && fovSwitch.inputs["FOV Editor"] !== undefined) {
         fovSwitch.selectOption("FOV Editor");
     }
 

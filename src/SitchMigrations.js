@@ -157,6 +157,62 @@ export function migrateFovSwitchLabel(obj) {
     if (fov.labels.userFOV === undefined) fov.labels.userFOV = "Manual";
 }
 
+// Old FOV curves specified the final angle. Use a constant Manual source and
+// subtract it from every key so interpolation and flat endpoints stay identical.
+// The useEditor field marks the new format; reloading never converts it twice.
+export function migrateCameraEditorLayers(obj) {
+    if (!obj || typeof obj !== "object") return;
+    const legacy = obj.fovSwitch?.kind !== "FOVSwitch" && obj.mods?.fovEditor?.useEditor === undefined;
+    const defaultEditor = obj.fovSwitch?.default === "FOV Editor";
+    if (defaultEditor && !obj.mods?.fovSwitch) {
+        obj.mods = {...obj.mods, fovSwitch: {choice: "FOV Editor"}};
+    }
+    if (obj.fovSwitch && typeof obj.fovSwitch === "object") {
+        obj.fovSwitch.kind = "FOVSwitch";
+        if (obj.fovSwitch.inputs) delete obj.fovSwitch.inputs["FOV Editor"];
+        if (obj.fovSwitch.default === "FOV Editor") obj.fovSwitch.default = "userFOV";
+    }
+    const originalEditor = obj.mods?.fovEditor ? JSON.parse(JSON.stringify(obj.mods.fovEditor)) : undefined;
+    const mainBase = obj.mods?.fovUI?.value ?? obj.fovUI?.value ?? obj.mods?.ptzAngles?.fov ?? 30;
+    const migrate = mods => {
+        if (!mods) return;
+        const selected = mods.fovSwitch?.choice === "FOV Editor";
+        if (selected && !mods.fovEditor) mods.fovEditor = originalEditor
+            ? JSON.parse(JSON.stringify(originalEditor)) : {points: [0, mainBase]};
+        // Old chapters switched the editor off simply by selecting another source.
+        // They often omitted the curve itself from their camera snapshot.
+        if (legacy && mods.fovSwitch && !mods.fovEditor) mods.fovEditor = {useEditor: false};
+        const editor = mods.fovEditor;
+        if (editor && editor.useEditor === undefined) {
+            const base = mods.fovUI?.value ?? mainBase;
+            editor.useEditor = selected;
+            const points = editor.points;
+            if (Array.isArray(points)) {
+                if (!selected && points.length === 2 && points[0] === 99 && points[1] === 99) {
+                    editor.points = [0, 0];
+                } else {
+                    let extent = 1;
+                    for (let i = 1; i < points.length; i += 2) {
+                        points[i] -= base;
+                        extent = Math.max(extent, Math.abs(points[i]));
+                    }
+                    editor.maxY = Math.max(editor.maxY ?? 40, Math.ceil(extent));
+                }
+            }
+            if (selected) mods.fovUI = {...mods.fovUI, value: base};
+        }
+        if (selected) mods.fovSwitch.choice = "userFOV";
+        // Preserve the in-progress heading prototype when updating an open scene.
+        if (mods.CameraLOSController?.choice === "Heading Editor") {
+            mods.CameraLOSController.choice = mods.headingEditor?.baseSource ?? "Manual";
+            mods.headingEditor = {...mods.headingEditor, useEditor: true};
+        }
+        if (mods.headingEditor) delete mods.headingEditor.baseSource;
+    };
+    migrate(obj.mods);
+    for (const chapter of obj.subSitchesData?.subSitches ?? []) migrate(chapter.state?.mods);
+}
+
 /**
  * Route an OLD saved custom sitch's camera controls into the new Camera-menu
  * sub-folders (Location / Heading / FOV (Zoom)). A save embeds each node's `gui`

@@ -144,8 +144,11 @@ export class CNode3D extends CNode {
         // assuming all the keys are non-numeric strings
         // and your browser is reasonable (ES2015+)
         // see https://www.stefanjudis.com/today-i-learned/property-order-is-predictable-in-javascript-objects-since-es2015/
-        for (const inputID in this.inputs) {
-            const input = this.inputs[inputID]
+        // Additive camera layers run after absolute pose sources, including sources
+        // attached later by a track import. Stable sorting preserves the normal order.
+        const controllers = Object.values(this.inputs).filter(input => input.isController && input.enabled)
+            .sort((a, b) => (a.controllerOrder ?? 0) - (b.controllerOrder ?? 0));
+        for (const input of controllers) {
             if (input.isController && input.enabled) {
 
                 if (par.paused) {

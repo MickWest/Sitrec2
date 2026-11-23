@@ -942,7 +942,7 @@ export class CNodeFrameSlider extends CNode {
         );
 
         // Poll the registry once per redraw check and only invalidate when
-        // the keyframe set actually changed (length + first + middle + last).
+        // the keyframe set actually changed, including moved interior keys.
         // This keeps the slider responsive without redrawing on every tick.
         const kfSig = KeyframeRegistry.signature();
         const keyframesChanged = (kfSig !== this.lastKeyframeSignature);

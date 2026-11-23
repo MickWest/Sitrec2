@@ -4,7 +4,8 @@ import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {HANDLE_STYLE} from "../HandleStyle";
 import {CNodeTrack} from "./CNodeTrack";
 import {EventManager} from "../CEventManager";
-import {NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
+import {markSitchDirty, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
+import {KeyframeRegistry} from "../CKeyframeRegistry";
 import {par} from "../par";
 import {CNodeTabbedCanvasView} from "./CNodeTabbedCanvasView";
 import {assert} from "../assert";
@@ -20,6 +21,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         this.maxX = config.maxX ?? 100;
         this.minY = config.minY ?? 0;
         this.maxY = config.maxY ?? 100;
+        this.symmetricY = config.symmetricY ?? false;
         this.xLabel = config.xLabel ?? "X";
         this.yLabel = config.yLabel ?? "Y";
         this.xStep = config.xStep ?? 10;
@@ -75,6 +77,48 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.onChange();
         }
         setRenderOne(true);
+    }
+
+    // Camera editors share a reset action and the existing timeline navigation.
+    // Register once and read live state: edits, undo and visibility need no copies.
+    enableCameraEditorTools(label) {
+        this.keyframeProviderId = `curveEditor:${this.id}`;
+        KeyframeRegistry.register(this.keyframeProviderId, {
+            getFrames: () => this.visible ? this.getKeyframeFrames() : [],
+        });
+        const tooltip = `Clear all ${label} keyframes and reset the offsets to zero. Undo restores them.`;
+        this.tabMenu.add(this, "clearKeyframes").name("Clear").tooltip(tooltip);
+        this.uiBar?.addIcon("Clear", () => this.clearKeyframes(), tooltip, "clear-keyframes", true);
+        this.tabMenu.tooltip("Visible editors publish yellow diamonds on the timeline. Click a diamond, or use Shift+, / Shift+. to jump to the previous / next timeline stop.");
+    }
+
+    getKeyframeFrames() {
+        return this.getPoints().map(p => Math.round(p.x))
+            .filter(f => Number.isFinite(f) && f >= 0 && f < Sit.frames);
+    }
+
+    clearedState() {
+        return [];
+    }
+
+    clearKeyframes() {
+        const before = this.captureState(), after = this.clearedState();
+        if (JSON.stringify(before) === JSON.stringify(after)) return;
+        const restore = state => {
+            this.restoreState(state);
+            markSitchDirty();
+        };
+        restore(after);
+        UndoManager?.add({
+            description: `Clear ${this.menuName ?? "editor"} keyframes`,
+            undo: () => restore(before),
+            redo: () => restore(after),
+        });
+    }
+
+    dispose() {
+        if (this.keyframeProviderId) KeyframeRegistry.unregister(this.keyframeProviderId);
+        super.dispose();
     }
     
     isMenuInteraction(e) {
@@ -185,6 +229,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         slider.addEventListener('input', (e) => {
             e.stopPropagation();
             this.maxY = Number(e.target.value);
+            if (this.symmetricY) this.minY = -this.maxY;
             // Sitrec draws only on request when paused. Without this request the graph kept
             // its old scale until some other change (a video frame, terrain) caused a redraw.
             setRenderOne(true);
@@ -1724,6 +1769,7 @@ export class CNodeCurveEditor2 extends CNodeTrack {
 
         if (v.maxY !== undefined) {
             this.editorView.maxY = v.maxY;
+            if (this.editorView.symmetricY) this.editorView.minY = -v.maxY;
             if (this.editorView.yRangeSlider) {
                 this.editorView.yRangeSlider.value = v.maxY;
             }

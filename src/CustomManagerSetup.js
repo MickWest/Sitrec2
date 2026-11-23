@@ -28,6 +28,8 @@ import {importADSBTraceDialog} from "./ADSBTraceFetch";
 import {LIVE_FEEDS} from "./livefeeds/LiveFeedRegistry";
 import {CNodeEffect} from "./nodes/CNodeEffect";
 import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
+import {setupHeadingEditor} from "./CameraHeadingEditor";
+import {setupCameraEditorMenu} from "./CameraEditorMenu";
 import {autoAnalyzeStarImage, makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {noteTemplateLocationChange} from "./TemplateOptions";
 import {setupTemplateOptionsMenu} from "./TemplateOptionsMenu";
@@ -97,11 +99,6 @@ import {sharedMenuKey, viewMenuKey} from "./ViewUIBarMenus";
 import {Vector3} from "three";
 
 import {connectTraverseOutput} from "./TraverseOutput";
-
-// Mirror key for the FOV Editor's show/hide checkbox. A plain key, not viewMenuKey(): that
-// namespace is for the view header menus, and tests/ViewUIBarMenus.test.js requires each of
-// its keys to be listed in the header registry.
-const FOV_EDITOR_SHOW_KEY = "fovEditor:show";
 
 export const setupMethods = {
     async setup() {
@@ -181,6 +178,8 @@ export const setupMethods = {
                 azElController.enableController(false);
             }
 
+            setupHeadingEditor();
+
             // "Tracking Wobble": simulated manual-tracking drift/recenter noise,
             // layered on the final pointing. Attached DIRECTLY to lookCamera
             // (deliberately after the pose controllers, so insertion order puts
@@ -229,8 +228,9 @@ export const setupMethods = {
             const headSwitch = NodeMan.get("CameraLOSController", false);
             const ptz = NodeMan.get("ptzAngles", false);
             if (headSwitch && ptz) {
-                const manual = headSwitch.choice === "Manual";
-                const consumesRoll = manual || headSwitch.choice === "To Target";
+                const heading = headSwitch.choice;
+                const manual = heading === "Manual";
+                const consumesRoll = manual || heading === "To Target";
                 set(ptz.azController, manual);
                 set(ptz.pan360Controller, manual);
                 set(ptz.elController, manual);
@@ -467,6 +467,10 @@ export const setupMethods = {
         const lookCamera = NodeMan.get("lookCamera", false);
         if (lookCamera && ptzController) {
             lookCamera.postApplyControllers = () => {
+                // The slider shows the composed FOV even when a non-PTZ heading
+                // owns the camera, so a later heading-only edit cannot feed a stale
+                // displayed FOV back into the Manual source.
+                ptzController.fov = lookCamera.camera.fov;
                 if (!ptzController.enabled && !Globals.deserializing) {
                     // When "Roll View with Bank" is on, CameraBankRollController
                     // is actively writing ptz.roll = -bankAngle each frame so
@@ -478,8 +482,10 @@ export const setupMethods = {
                     // Skip the sync while bank-roll is on so our write persists.
                     const bankRollOn = NodeMan.list.lookCameraBankRoll?.data?.value;
                     if (bankRollOn) return;
-                    const targetRoll = NodeMan.get("CameraLOSController", false)?.choice === "To Target";
-                    ptzController.syncFromCamera(lookCamera.camera, targetRoll);
+                    const source = NodeMan.get("CameraLOSController", false)?.choice;
+                    const editor = NodeMan.get("headingEditor", false);
+                    const targetRoll = source === "To Target";
+                    ptzController.syncFromCamera(lookCamera.camera, targetRoll, editor?.getBaseQuaternion(lookCamera.camera));
                 }
             };
 
@@ -502,7 +508,9 @@ export const setupMethods = {
                 if (choice !== "Manual") return;
                 if (Globals.deserializing) return;
                 lookCamera.camera.updateMatrixWorld();
-                ptzController.syncFromCamera(lookCamera.camera);
+                ptzController.syncFromCamera(lookCamera.camera, false,
+                    NodeMan.get("headingEditor", false)?.getBaseQuaternion(lookCamera.camera));
+                ptzController.fov = lookCamera.camera.fov;
                 ptzController.refresh();
                 setRenderOne(true);
             });
@@ -595,14 +603,14 @@ export const setupMethods = {
                 // by fovController from whichever source is selected, so it is the one
                 // reading that is always live.
                 const fov = (choice === "userFOV")
-                    ? lookCamera.camera.fov
-                    : extractFOV(fovSwitchNode.getValue(par.frame));
+                    ? lookCamera.camera.fov - (fovSwitchNode.getEditorOffset?.(par.frame) ?? 0)
+                    : extractFOV(fovSwitchNode.getBaseValue?.(par.frame) ?? fovSwitchNode.getValue(par.frame));
                 if (!(fov > 0)) return;
 
                 if (Math.abs(fovUI.value - fov) > 1e-9) fovUI.setValue(fov);
                 // The Zoom slider is bound to ptzAngles.fov (listened), so it shows a
                 // stale number until this lands even though fovUI is now correct.
-                if (ptzController) ptzController.fov = fov;
+                if (ptzController) ptzController.fov = fov + (fovSwitchNode.getEditorOffset?.(par.frame) ?? 0);
                 setRenderOne(true);
             });
         }
@@ -2707,7 +2715,7 @@ export const setupMethods = {
             });
         }
 
-        // Set up the fovEditor and add it to fovSwitch
+        // The FOV editor is an optional offset over the selected source.
         if (!NodeMan.exists("fovEditor")) {
 
             // only currently makes sense if we have a fovSwitch
@@ -2724,41 +2732,31 @@ export const setupMethods = {
                         draggable: true, resizable: true, freeAspect: true, shiftDrag: false,
                         editorConfig: {
                             useRegression: true,
-                            minX: 0, maxX: "Sit.frames", minY: 0, maxY: 40,
-                            xLabel: "Frame", xStep: 1, yLabel: "FOV", yStep: 5,
-                            points: [99, 99],
+                            minX: 0, maxX: "Sit.frames", minY: -40, maxY: 40, symmetricY: true,
+                            xLabel: "Frame", xStep: 1, yLabel: "FOV Offset (deg)", yStep: 5,
+                            points: [0, 0],
                             // The line of help above the graph. Ctrl+click adds a point on every
                             // platform, including macOS (commandModifier also accepts Cmd).
                             hint: () => t("misc.fovEditorHint"),
                             // The editor can be open while another source sets the FOV. Then
                             // edits change nothing, so say why in place of the help.
-                            hintWarning: () => fovSwitch.choice !== "FOV Editor"
-                                ? t("misc.fovEditorNotInUse") : null,
+                            hintWarning: () => !fovEditor.useEditor
+                                ? "Not in use: enable Use FOV Editor in Camera → FOV" : null,
                         },
                         frames: -1, // -1 will inherit from Sit.frames
                     },
                 )
 
 
-                fovSwitch.addOption("FOV Editor", fovEditor);
-
-                // Camera > FOV (Zoom) > Show FOV Editor: the View menu's checkbox for this
-                // editor, mirrored (MenuMirror.js), so both rows show and set the same flag.
-                // It goes directly under the Camera FOV selector: the twin first, then the
-                // selector above it. index.js (leadSelector) moves the selector to the top
-                // again after the sitch loads, which keeps the twin second.
-                const showController = fovEditor.editorView.showHideController;
-                if (showController) {
-                    showController.shareAs(FOV_EDITOR_SHOW_KEY);
-                    guiMenus.cameraFOV.addMirror(FOV_EDITOR_SHOW_KEY, {
-                        name: t("misc.showFOVEditor.label"),
-                        tooltip: t("misc.showFOVEditor.tooltip"),
-                        onMirror: twin => {
-                            twin.moveToFirst();
-                            fovSwitch.controller?.moveToFirst();
-                        },
-                    });
-                }
+                fovEditor.useEditor = false;
+                fovEditor.simpleSerials.push("useEditor");
+                // The effective switch reads this curve without adding it to the source
+                // selector. Propagate edits to all FOV consumers, including LOS tracks.
+                fovEditor.editorView.onChange = () => {
+                    fovEditor.onPointsChanged();
+                    fovSwitch.recalculateCascade();
+                };
+                setupCameraEditorMenu(guiMenus.cameraFOV, fovEditor, "FOV", () => fovSwitch.recalculateCascade());
             }
         }
 

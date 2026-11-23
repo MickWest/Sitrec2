@@ -115,4 +115,6 @@ test('frame data with no converter yet is found in a saved sitch, defaults are n
         mods: {fovSwitch: {choice: 'FOV Editor'}, LOSFitAnalysisResult: {analysisResult: {}},
             groundTrack: {keyframes: [{frame: 3}]}, track: {elevationCache: [[0]]}}}))
         .toEqual(['chapters', 'groundTrack', 'fovEditor']);
+    expect(unsupportedFrameData({mods: {fovEditor: {useEditor: true}, headingEditor: {useEditor: true}}}))
+        .toEqual(['fovEditor', 'headingEditor']);
 });

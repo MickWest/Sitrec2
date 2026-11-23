@@ -52,6 +52,26 @@ function applyAt(position) {
     return camera.quaternion.clone();
 }
 
+test("heading refresh preserves the base FOV even when an editor offset clamps the result", () => {
+    const base = {setValue: jest.fn()};
+    const source = {getEditorOffset: () => -40, getValue: () => 0.0001};
+    NodeMan.get.mockImplementation(id => ({fovUI: base, fovSwitch: source})[id]);
+    ptz.fov = 0.0001;
+    ptz.recalculateCascade = jest.fn();
+    ptz.refresh();
+    expect(base.setValue).not.toHaveBeenCalled();
+});
+
+test("editing the displayed FOV writes the base minus the current editor offset", () => {
+    const base = {setValue: jest.fn()};
+    const source = {getEditorOffset: () => -5, getValue: () => 25};
+    NodeMan.get.mockImplementation(id => ({fovUI: base, fovSwitch: source})[id]);
+    ptz.fov = 20;
+    ptz.recalculateCascade = jest.fn();
+    ptz.refresh();
+    expect(base.setValue).toHaveBeenCalledWith(25);
+});
+
 test("moving the camera keeps its orientation in space and changes Pan and Tilt", () => {
     const q1 = applyAt(P1);
     const q2 = applyAt(P2);

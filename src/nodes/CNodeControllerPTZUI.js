@@ -10,6 +10,7 @@ import {
 } from "../SphericalMath";
 import {guiMenus, NodeMan, Sit} from "../Globals";
 import {ViewMan} from "../CViewManager";
+import {par} from "../par";
 
 import {CNodeController} from "./CNodeController";
 import {V3} from "../threeUtils";
@@ -1006,7 +1007,13 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         // the FOV UI node is also updated, It's a hidden UI element that remains for backwards compatibility.
         const fovUINode = NodeMan.get("fovUI", false)
         if (fovUINode) {
-            fovUINode.setValue(this.fov);
+            const source = NodeMan.get("fovSwitch", false);
+            // Heading/roll edits also call refresh. Preserve the stored base unless
+            // the displayed FOV was edited, including when its sum hits a FOV limit.
+            if (!source?.getEditorOffset || Math.abs(this.fov - this.frameFOV(par.frame)) > 1e-9) {
+                const offset = source?.getEditorOffset?.(par.frame) ?? 0;
+                fovUINode.setValue(this.fov - offset);
+            }
         }
 
         // don't think this is needed
@@ -1016,13 +1023,13 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // Extract az/el/roll from the camera's current orientation and update this controller's values.
     // Called when another controller (e.g. a track) is driving the camera,
     // so switching back to Manual PTZ preserves the current view.
-    syncFromCamera(camera, targetRoll = false) {
+    syncFromCamera(camera, targetRoll = false, baseQuaternion) {
         camera.updateMatrixWorld();
 
         // Tracking noise belongs to the rendered pose, not the PTZ settings
         // that drive the next controller pass (or a switch back to Manual).
         // Build a separate matrix so syncing never changes the displayed camera.
-        const unperturbed = NodeMan.get("trackingWobbleController", false)?.getUnperturbedQuaternion(camera);
+        const unperturbed = baseQuaternion ?? NodeMan.get("trackingWobbleController", false)?.getUnperturbedQuaternion(camera);
         let matrixWorld = camera.matrixWorld;
         if (unperturbed) {
             matrixWorld = new Matrix4().compose(camera.position, unperturbed, camera.scale);

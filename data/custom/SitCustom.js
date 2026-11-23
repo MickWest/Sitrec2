@@ -527,7 +527,7 @@ sitch = {
         tooltip: "Stored vertical field of view, in degrees, for the Manual Camera FOV source. Set it with VFOV (deg)."},
 
     fovSwitch: {
-        kind: "Switch",
+        kind: "FOVSwitch",
         inputs: {
             "userFOV": "fovUI",
         },
@@ -539,7 +539,7 @@ sitch = {
         },
         desc: "Camera FOV",
         gui: "cameraFOV",
-        tooltip: "Choose what sets the look camera's vertical field of view.\nManual: VFOV (deg) below.\nFOV Editor: the FOV curve drawn in the FOV Editor.\nLoaded tracks with FOV data, and Fit Camera to Points, add their own options.",
+        tooltip: "Choose what sets the look camera's vertical field of view.\nManual: VFOV (deg) below.\nLoaded tracks with FOV data, and Fit Camera to Points, add their own options.\nThe optional FOV Editor adds an animated offset to this source.",
     },
 
     fovController: {

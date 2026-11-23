@@ -828,6 +828,8 @@ class CameraMapControls {
 
 		this.updateStateFromEvent(event)
 		this.lastStartHitSphere = true;
+		this.headingEdit = getInteractiveHeadingEditor(this.view.cameraNode);
+		this.headingEdit?.beginViewDrag();
 		this.lastEndHitSphere = true;
 		const [x, y] = mouseToView(this.view, event.clientX, event.clientY)
 		this.mouseStart.set(x, y);
@@ -856,6 +858,8 @@ class CameraMapControls {
 
 
 	handleMouseUp(event, allowTap = true) {
+		this.headingEdit?.endViewDrag();
+		this.headingEdit = null;
 
 
 		// if not paused, then removed the cursor's LLA label
@@ -927,6 +931,8 @@ class CameraMapControls {
 	}
 
 	handlePointerCancel(event) {
+		this.headingEdit?.endViewDrag(true);
+		this.headingEdit = null;
 		// Handle pointer interruptions (e.g., browser gestures, context menus)
         if (this.view.cursorSprite) this.view.cursorSprite.visible = false;
 		this.state = STATE.NONE;
@@ -1011,7 +1017,9 @@ class CameraMapControls {
 		// button rather than this.state, because updateStateFromEvent forces every button to
 		// STATE.PAN whenever a PTZ controller is driving the camera — which, during a fit, it
 		// always is. Middle and right keep their normal meaning, so the camera is still reachable.
-		if (this.button === 0 && fitViewSyncActive(this.view)) {
+		// Heading Editor authors the camera's pointing at this frame. It owns the
+		// drag even when the camera-fit tool's video-framing sync is still on.
+		if (this.button === 0 && !getInteractiveHeadingEditor(this.view.cameraNode) && fitViewSyncActive(this.view)) {
 			fitViewSyncPan(this.view, this.mouseEnd.x - this.mouseStart.x, this.mouseEnd.y - this.mouseStart.y);
 			// Consumed here, so the shared copy at the end of this handler is never reached.
 			this.mouseStart.copy(this.mouseEnd);
@@ -1048,7 +1056,13 @@ class CameraMapControls {
 
 
 				// if we have ptzControls in this view, then update them
-				if (ptzControls !== undefined) {
+				const headingEditor = getInteractiveHeadingEditor(this.view.cameraNode);
+				if (headingEditor) {
+					const dragFov = isPanoramicCamera(this.camera) ? panoramic.vfov
+						: (fisheyeEquivalentFOVDeg(this.camera) ?? this.camera.fov);
+					headingEditor.dragView(-degrees(xRotate) * dragFov / 45, degrees(yRotate) * dragFov / 45);
+					this.deferCascade(headingEditor);
+				} else if (ptzControls !== undefined) {
 
 					// Drag rate follows the field on screen: under the fisheye that is the
 					// equivalent pinhole FOV (same degrees-per-pixel at the image centre),
@@ -1777,6 +1791,13 @@ class CameraMapControls {
 function getInteractivePTZController(cameraNode) {
 	if (NodeMan.get(cameraNode).freeLook) return undefined;
 	return getPTZController(cameraNode);
+}
+
+function getInteractiveHeadingEditor(cameraNode) {
+	const node = NodeMan.get(cameraNode);
+	if (node.freeLook || node.id !== "lookCamera") return undefined;
+	const editor = NodeMan.get("headingEditor", false);
+	return editor?.isActive() ? editor : undefined;
 }
 
 export function getPTZController(cameraNode) {

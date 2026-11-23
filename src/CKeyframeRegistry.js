@@ -44,14 +44,10 @@ class CKeyframeRegistry {
         return Array.from(set).sort((a, b) => a - b);
     }
 
-    // Cheap fingerprint the slider compares each tick to decide whether to
-    // redraw the diamond layer. Length + first + last + a tail-sample is
-    // good enough — false positives only cost one extra redraw.
+    // Include every frame: dragging an interior curve key must move its diamond
+    // even when the count, endpoints and middle key have not changed.
     signature() {
-        const frames = this.getAllFrames();
-        const n = frames.length;
-        if (n === 0) return "0";
-        return `${n}:${frames[0]}:${frames[n - 1]}:${frames[(n - 1) >> 1]}`;
+        return this.getAllFrames().join(",");
     }
 }
 

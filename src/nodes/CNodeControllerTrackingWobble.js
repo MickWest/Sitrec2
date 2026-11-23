@@ -28,6 +28,7 @@ import {generateWobbleOffsets} from "../TrackingWobbleMath";
 export class CNodeControllerTrackingWobble extends CNodeController {
     constructor(v) {
         super(v);
+        this.controllerOrder = 200;
 
         // "wobbleEnabled" (not "enabled") — the base CNode "enabled" flag is
         // the applyControllers gate, and it must stay true so the un-apply

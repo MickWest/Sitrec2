@@ -5,7 +5,7 @@ import {rememberSitchText} from './release/sitchSource';
 import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
-import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders,
+import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders, migrateCameraEditorLayers,
     migrateMaskOverlayId, migrateLegacyMeasurements, migrateChapterEventsToMarkers} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -126,6 +126,7 @@ export function textSitchToObject(text, canMod = true) {
         migrateCameraHeadingReorg(obj);
         // Relabel the Camera FOV switch's "userFOV" option as "Manual" (display only).
         migrateFovSwitchLabel(obj);
+        migrateCameraEditorLayers(obj);
         // Route old saves' camera controls into the new Location/Heading/FOV folders.
         migrateCameraMenuFolders(obj);
         // Carry a mask painted when the mask belonged to Motion Analysis onto the shared node.

@@ -2101,17 +2101,17 @@ async function initializeOnce() {
     addTranslatedGUIMenu("camera", "menus.camera.title")
         .tooltip(t("menus.camera.tooltip"));
 
-    // Three permanent, open sub-folders that organize the look-camera controls by
+    // Three permanent, initially closed folders organize the look-camera controls by
     // aspect: Location (position), Heading (orientation), FOV (Zoom). Each is led by
     // its Source selector (Position / Camera Heading / Camera FOV), then the relevant
     // manual controls — which grey out when a computed source drives that aspect.
     // Created as permanent shells so they survive menuBar.destroy(false); their
     // contents are routed in per sitch by the camera nodes/switches (gui: "cameraX").
-    addGUIFolder("cameraLocation", "Location", "camera").open()
+    addGUIFolder("cameraLocation", "Location", "camera").close()
         .tooltip("The position of the look camera. Position selects what sets it.\nThe manual controls (latitude, longitude, altitude and others) are grayed out unless Position is Manual.");
-    addGUIFolder("cameraHeading", "Heading", "camera").open()
+    addGUIFolder("cameraHeading", "Heading", "camera").close()
         .tooltip("The direction in which the look camera points. Camera Heading selects what sets it.\nThe manual pan, tilt and similar controls are grayed out unless Camera Heading is Manual.");
-    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open()
+    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").close()
         .tooltip("The field of view (FOV) of the look camera. Camera FOV selects what sets it.\nThe manual zoom controls are grayed out unless Camera FOV is Manual.");
     // The LENS - what maps a field angle to a pixel radius, which FOV alone cannot say. Sitrec
     // assumes a pinhole everywhere until something measures otherwise, and the only thing that

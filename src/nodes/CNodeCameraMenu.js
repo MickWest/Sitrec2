@@ -31,7 +31,10 @@ export class CNodeCameraMenu extends CNode {
         this.advanced.className = "camera-menu-advanced";
         const summary = document.createElement("summary");
         summary.textContent = t("satelliteEditor.advanced");
-        this.advanced.append(summary, ...Array.from(menu.$children.children));
+        const directFolders = [guiMenus.cameraLocation, guiMenus.cameraHeading, guiMenus.cameraFOV];
+        const directElements = new Set(directFolders.map(folder => folder.domElement));
+        this.advanced.append(summary, ...Array.from(menu.$children.children).filter(el => !directElements.has(el)));
+        directFolders.forEach(folder => folder.close());
         this.host = document.createElement("div");
         this.host.className = "camera-menu widget-body sitrec-modern";
         this.host.dataset.interactionNative = "true";
@@ -53,7 +56,7 @@ export class CNodeCameraMenu extends CNode {
             this.host.append(body);
             this.parts.push(definition.mount({body, context: this, scope: this.createScope(body)}));
         }
-        menu.$children.prepend(this.host, this.advanced);
+        menu.$children.prepend(this.host, ...directElements, this.advanced);
         this.layoutMenu = guiMenus.view.addFolder(t("panels.widgets.viewLayout.title")).close();
         this.layoutMenu._folderId = "view-layout";
         this.layoutMenu.add({sky: () => this.action("sky")}, "sky").name(t("panels.widgets.viewLayout.sky"));
