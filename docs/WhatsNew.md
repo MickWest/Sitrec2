@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.203.2 (2026-11-23)
+
+### Improvements
+- **Search Documentation** (Help → Documentation → Search Documentation): guide results now come first. The release notes, What's New and What's New (Details), now search only the latest release. Each adds at most one result, at the end of the list, also when there are many guide results.
+
+### Bug Fixes
+- Fixed the *Convolution Filter* (Video → Video Adjustments), *Expand Output* (Video → Forensics → Error Level Analysis) and *Display Mode* (Video → Forensics → Noise Analysis) selections not being saved with the sitch. A loaded sitch now applies the saved selection and shows the controls that go with it, such as *Sharpen Amount*. A sitch saved by an earlier version loads with the defaults.
+- Fixed a right-click on a point in the FOV Editor (Show → Views → FOV Editor) not opening the point menu, so you could not delete the point. Right-click the point and choose *Delete Point*.
+- Fixed a synthetic building losing its roof overhang (*Roof Eaves*, Objects → Building → Height) when its sitch was loaded. The fix also applies to sitches saved by earlier versions, unless they were saved again after a load had removed the overhang.
+
 ## Version 2.203.1 (2026-11-22)
 
 ### New Features
