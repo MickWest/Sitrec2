@@ -4,6 +4,7 @@ jest.mock('../src/GoTo', () => ({
 
 jest.mock('../src/Globals', () => ({
     guiMenus: {},
+    NodeMan: {get: jest.fn()},
 }));
 
 jest.mock('../src/CSitrecAPI', () => ({
@@ -27,6 +28,34 @@ import {clientNLU} from '../src/CClientNLU';
 import {sitrecAPI} from '../src/CSitrecAPI';
 import {executeGoToRequest} from '../src/GoTo';
 import {parseDateTimeString} from '../src/DateTimeParser';
+import {NodeMan} from '../src/Globals';
+
+describe('chat satellite pointing', () => {
+    afterEach(() => NodeMan.get.mockReset());
+    test.each([
+        ['point at ISS', 'pointCameraAtNamedObject', 'ISS'],
+        ['point the camera at ISS', 'pointCameraAtNamedObject', 'ISS'],
+        ['look at the International Space Station', 'pointCameraAtNamedObject', 'International Space Station'],
+        ['point at 25544', 'pointCameraAtNamedObject', '25544'],
+        ['lock on ISS', 'lockCameraOnObject', 'ISS'],
+        ['follow NORAD 25544', 'lockCameraOnObject', 'NORAD 25544'],
+        ['point at STARLINK-38128', 'pointCameraAtNamedObject', 'STARLINK-38128'],
+        ['track STARLINK-38128', 'lockCameraOnObject', 'STARLINK-38128'],
+    ])('%s uses orbital pointing without an AI coordinate lookup', async (command, fn, target) => {
+        NodeMan.get.mockReturnValue({TLEData: {
+            getRecordFromName: name => name === 'STARLINK-38128' ? {number: 100001} : null,
+        }});
+        sitrecAPI.call.mockClear();
+        await clientNLU.execute(clientNLU.parse(command));
+        expect(sitrecAPI.call).toHaveBeenCalledWith(fn, {object: target});
+    });
+    test('unloaded ISS still reaches the API, which can explain the missing data', async () => {
+        NodeMan.get.mockReturnValue(undefined);
+        sitrecAPI.call.mockReturnValueOnce({success: false, error: 'Load valid orbital data'});
+        const result = await clientNLU.execute(clientNLU.parse('point at ISS'));
+        expect(result).toEqual({success: false, error: 'Load valid orbital data'});
+    });
+});
 
 describe('CClientNLU parsing', () => {
     describe('map source commands', () => {

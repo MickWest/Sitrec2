@@ -67,7 +67,7 @@ it back to **Manual**. **Alt+Shift+C** also puts the camera 7 ft above the groun
 |---|---|
 | **Manual** | You aim the camera with **Pan (Az)**, **Tilt (El)** and **Roll**. This is the default. Pan 0 is north, unless **Relative Heading** is on. Tilt 0 is level. |
 | **To Target** | The camera points at the target, which is set in the [Target menu](#c-the-target-menu). **Roll** still applies. When one file sets up both the camera and the target, Sitrec selects **To Target** for you. |
-| **Celestial Lock** | The camera follows a sky object. Type its name (Moon, Sun, a planet or a named star) into **Celestial Object**, lower in the Heading folder. |
+| **Celestial Lock** | The camera follows a sky object. Type its name (Moon, Sun, a planet, a named star or a loaded satellite) into **Celestial Object**, lower in the Heading folder. For satellites, a name prefix or NORAD number also works, for example `ISS` or `25544`. Load orbital data for the viewing date first. |
 | **Horizon Flare Region** | The camera points toward the Sun's azimuth, just above the horizon, where Starlink horizon flares appear. |
 | **Custom Az/El** | The camera follows azimuth and elevation columns from a CSV file. This choice appears only after you import a file with `az` or `el` columns. See [Camera Angle Tracks in Tracks](Tracks.md). |
 | *A track with angles* | A track that carries its own pointing angles (a MISB file, for example) adds its own choice. |

@@ -5,6 +5,7 @@ import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne, Sit} from "../Globa
 import {EventManager} from "../CEventManager";
 import {bestSat} from "../TLEUtils";
 import {CNodeDisplayTrack} from "./CNodeDisplayTrack";
+import {satelliteTracksFolder} from "../SatelliteMenus";
 
 // TODO - consider flagging this as not smoothable for use as a camera track
 // the TLE calculation should give a smooth curve, and the smoothing will shift the position slightly
@@ -26,8 +27,7 @@ export class CNodeSatelliteTrack extends CNodeTrack {
 
          const name = v.name ?? "Satellite To Track";
 
-         const tracksGUI = guiMenus.satellites.getFolder("Tracks & Guides")
-             ?? guiMenus.satellites.addFolder("Tracks & Guides").close();
+         const tracksGUI = satelliteTracksFolder(guiMenus.satellites);
          tracksGUI.add(this, "satelliteText").name(name).onFinishChange(v => {
              this.setSatelliteText(this.satelliteText);
          }).listen().tooltip("Name or NORAD catalog number of a satellite. Sitrec makes its orbit into a track for the whole sitch. The start of a name is enough, for example ISS.\nThe satellite must be in the loaded satellite data, or the field shows \"not found\".");

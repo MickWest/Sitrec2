@@ -416,6 +416,12 @@ to that satellite.
 
 **Satellites → Advanced → Tracks & Guides → Satellite to Track / Satellite to Track 2**
 
+To aim at a satellite without making a track, set **Camera → Heading → Camera Heading** to
+**Celestial Lock**, then enter `ISS`, `25544`, or another loaded satellite's name in
+**Celestial Object**. The camera follows it as time and camera position change. Chat also
+accepts `point at ISS` for a one-time aim and `lock on ISS` to keep following it. Both require
+loaded orbital data for the viewing date; simulated Starlinks cannot be selected this way.
+
 In a custom sitch, these two text fields each turn one satellite's orbit into a track for the
 whole sitch, named **Satellite** and **Satellite 2**. Type a name or a catalog number. The start
 of a name is enough, for example `ISS`. The default is the ISS (catalog number 25544).

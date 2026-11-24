@@ -12,7 +12,8 @@ import {
 } from "../SphericalMath";
 import {CNode3D} from "./CNode3D";
 import {MV3} from "../threeUtils";
-import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getNamedSkyDirection} from "../NamedSkyTarget";
 import {applyRefractionToDirection} from "../atmosphere/refraction";
 import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {lookAtDrawnPosition, turnToGeometricAim} from "../atmosphere/refractionAim";
@@ -899,7 +900,7 @@ export class CNodeCamera extends CNode3D {
         if (!this.isCameraSample && poseIsComputed && this.celestialLock) {
             let dir = null;
             if (this.celestialLock.type === "named") {
-                dir = getCelestialDirection(this.celestialLock.object, GlobalDateTimeNode.dateNow);
+                dir = getNamedSkyDirection(this.celestialLock.object, GlobalDateTimeNode.dateNow, this.camera.position);
             } else if (this.celestialLock.type === "radec") {
                 const raRad = this.celestialLock.ra * (Math.PI / 12);
                 const decRad = this.celestialLock.dec * (Math.PI / 180);
@@ -1052,8 +1053,9 @@ export class CNodeCamera extends CNode3D {
     }
 
     lockOnObject(objectName) {
-        const dir = getCelestialDirection(objectName, GlobalDateTimeNode.dateNow);
+        const dir = getNamedSkyDirection(objectName, GlobalDateTimeNode.dateNow, this.camera.position);
         if (!dir) return false;
+        if (this.freeLook) this.freeLook = false;
         const menu = this.celestialMenu();
         if (menu) {
             this.celestialLock = null;
@@ -1062,7 +1064,7 @@ export class CNodeCamera extends CNode3D {
         } else {
             // Fallback for sitches without the menu: drive PTZ angles each frame.
             this.celestialLock = { type: "named", object: objectName };
-            this.setFromDirection(dir, true);
+            this.setFromDirection(applyRefractionToDirection(dir, this.camera.position, currentRefractionOpts()), true);
         }
         return true;
     }
@@ -1168,12 +1170,11 @@ export class CNodeCamera extends CNode3D {
         // If this is a manual point-at (not from the lock update loop), clear any active lock
         if (!fromLock) {
             this.celestialLock = null;
-            // If a menu-driven Celestial Lock is active, drop back to "Manual"
-            // so this one-shot point actually holds (otherwise the lock controller
-            // would re-point the camera on the next frame).
-            const menu = this.celestialMenu();
-            if (menu && menu.sw.choice === "Celestial Lock") {
-                menu.sw.selectOption("Manual");
+            if (this.freeLook) this.freeLook = false;
+            // Any driven heading would overwrite this one-shot point next frame.
+            const heading = NodeMan.get("CameraLOSController", false);
+            if (heading?.inputs.Manual && heading.choice !== "Manual") {
+                heading.selectOption("Manual");
             }
         }
 
@@ -1189,6 +1190,10 @@ export class CNodeCamera extends CNode3D {
         // get the PTZ Controller and set the az/el
         const ptzController = NodeMan.get("ptzAngles", false);
         if (ptzController) {
+            // The direction above is absolute, even after using relative heading
+            // or the quaternion-based Satellite Mode controls.
+            ptzController.relativeController?.setValue(false);
+            ptzController.satelliteController?.setValue(false);
             ptzController.az = az;
             ptzController.el = el;
             // Only cascade for one-shot pointing (user/API action).
@@ -1207,12 +1212,12 @@ export class CNodeCamera extends CNode3D {
 // set the camera orientation based on a named celestial object
     // e.g. "Sun", "Moon", "Mars"
     setFromNamedObject(objectName) {
-        const dir = getCelestialDirection(objectName, GlobalDateTimeNode.dateNow);
+        const dir = getNamedSkyDirection(objectName, GlobalDateTimeNode.dateNow, this.camera.position);
         if (!dir) {
             console.warn("CNodeCamera:setFromNamedObject No direction found for object " + objectName);
             return false;
         }
-        this.setFromDirection(dir);
+        this.setFromDirection(applyRefractionToDirection(dir, this.camera.position, currentRefractionOpts()));
         return true;
     }
 

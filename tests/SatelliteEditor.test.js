@@ -2,7 +2,27 @@
 import GUI from "../src/js/lil-gui.esm";
 import "../src/lil-gui-extras";
 import {SatelliteEditor} from "../src/SatelliteEditor";
+import {satelliteTracksFolder} from "../src/SatelliteMenus";
 window.matchMedia = () => ({matches: false, addListener() {}, removeListener() {}});
+
+test("satellite guides and both track fields share one folder inside Advanced", () => {
+    const menu = new GUI({autoPlace: false});
+    const guides = satelliteTracksFolder(menu);
+    guides.add({arrows: false}, "arrows");
+    const advanced = document.createElement("details");
+    advanced.append(guides.domElement);
+    menu.$children.append(advanced);
+    // Header decorations must not change folder identity.
+    guides.$title.append(document.createTextNode(" extra control"));
+    for (const satellite of ["ISS", "STARLINK-38128"]) {
+        satelliteTracksFolder(menu).add({satellite}, "satellite");
+    }
+    expect(menu.folders).toEqual([guides]);
+    expect(guides.controllers).toHaveLength(3);
+    expect(advanced.contains(guides.domElement)).toBe(true);
+    expect(menu.getFolder("Tracks & Guides")).toBe(guides);
+    menu.destroy();
+});
 
 test("menu and panel share filters, brightness defaults and independent view labels", () => {
     jest.useFakeTimers();

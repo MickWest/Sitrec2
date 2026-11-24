@@ -8,7 +8,8 @@ import {adjustHeightAboveGround, clampAboveGround, clampAboveGroundAlongLine, De
 import {CNodeController} from "./CNodeController";
 
 import {MISB} from "../MISBUtils";
-import {getCelestialDirection, getCelestialDirectionFromRaDec, getStarDirectionECEF} from "../CelestialMath";
+import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
+import {getNamedSkyDirection} from "../NamedSkyTarget";
 import {applyRefractionToDirection} from "../atmosphere/refraction";
 import {currentRefractionOpts} from "../atmosphere/refractionSettings";
 import {lookAtDrawnPosition} from "../atmosphere/refractionAim";
@@ -738,20 +739,7 @@ export class CNodeControllerCelestial extends CNodeController {
     }
 
     getDirection(name, date, pos) {
-        const capitalizedName = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
-        try {
-            const dir = getCelestialDirection(capitalizedName, date, pos);
-            if (dir) return dir;
-        } catch (e) {
-        }
-        const nightSky = NodeMan.get("NightSkyNode", false);
-        if (nightSky && nightSky.starField) {
-            const star = nightSky.starField.findStarByName(name);
-            if (star) {
-                return getStarDirectionECEF(star.ra, star.dec, date);
-            }
-        }
-        return null;
+        return getNamedSkyDirection(name, date, pos);
     }
 
     validateAndUpdate() {

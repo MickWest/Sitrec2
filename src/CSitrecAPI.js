@@ -725,29 +725,29 @@ class CSitrecAPI {
             },
 
             pointCameraAtNamedObject: {
-                doc: "Point the camera at a named solar-system object: Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune. For stars, star clusters, or constellations (e.g. M45, Polaris, Orion), use pointCameraAtRaDec instead.",
+                doc: "Point the camera once at the Sun, Moon, a planet, a named star, or a loaded satellite. Satellites accept a name, a name prefix, or a NORAD catalog number (e.g. ISS, International Space Station, 25544, STARLINK-1008). Satellite orbit data must be loaded for the viewing date; do not substitute fixed RA/Dec for a moving satellite. Use pointCameraAtRaDec for other fixed sky objects.",
                 params: {
-                    object: "Name of the solar-system object (string)"
+                    object: "Body/star name or loaded satellite name or NORAD number (string)"
                 },
                 fn: (v) => {
                     const camera = NodeMan.get("lookCamera");
                     if (!camera) return { success: false, error: "lookCamera node not found" };
                     const ok = camera.setFromNamedObject(v.object);
-                    if (!ok) return { success: false, error: `Unknown object '${v.object}'. Only solar-system bodies are supported (Sun, Moon, planets). For stars or deep-sky objects, use pointCameraAtRaDec with RA/Dec coordinates.` };
+                    if (!ok) return { success: false, error: `Cannot locate '${v.object}'. Use a Sun/Moon/planet/star name, or a loaded satellite name or NORAD number. For satellites, load valid orbital data for the viewing date in the Satellites menu. For other fixed sky objects, use pointCameraAtRaDec.` };
                     return { success: true };
                 }
             },
 
             lockCameraOnObject: {
-                doc: "Lock (continuously track) the camera onto a solar-system object so it follows the object as time changes. Supported: Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune. Use lockCameraOnRaDec for stars or deep-sky objects.",
+                doc: "Lock the camera onto the Sun, Moon, a planet, a named star, or a loaded satellite as time and camera position change. Satellites accept names, name prefixes or NORAD catalog numbers (e.g. ISS or 25544), and need orbital data for the viewing date. Use lockCameraOnRaDec for other fixed sky objects, never for a satellite.",
                 params: {
-                    object: "Name of the solar-system object (string)"
+                    object: "Body/star name or loaded satellite name or NORAD number (string)"
                 },
                 fn: (v) => {
                     const camera = NodeMan.get("lookCamera");
                     if (!camera) return { success: false, error: "lookCamera node not found" };
                     const ok = camera.lockOnObject(v.object);
-                    if (!ok) return { success: false, error: `Unknown object '${v.object}'. Only solar-system bodies are supported. For stars or deep-sky objects, use lockCameraOnRaDec.` };
+                    if (!ok) return { success: false, error: `Cannot locate '${v.object}'. Use a Sun/Moon/planet/star name, or a loaded satellite name or NORAD number. For satellites, load valid orbital data for the viewing date in the Satellites menu. For other fixed sky objects, use lockCameraOnRaDec.` };
                     return { success: true, locked: v.object };
                 }
             },
@@ -1106,7 +1106,7 @@ class CSitrecAPI {
                     return {
                         planets: ["Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"],
                         other: ["Sun", "Moon"],
-                        note: "Use pointCameraAtNamedObject/lockCameraOnObject for these. For stars and deep-sky objects, use pointCameraAtRaDec/lockCameraOnRaDec with RA/Dec coordinates. 'lock' functions continuously track; 'point' functions are one-shot."
+                        note: "Use pointCameraAtNamedObject/lockCameraOnObject for these, named stars and loaded satellites by name or NORAD number (e.g. ISS or 25544). Satellites need orbital data for the viewing date. For other fixed sky objects use pointCameraAtRaDec/lockCameraOnRaDec. 'lock' functions continuously track; 'point' functions are one-shot."
                     };
                 }
             },

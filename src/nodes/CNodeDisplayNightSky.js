@@ -1,4 +1,5 @@
 import {satelliteAutoloadDefault} from "../SatelliteCatalogLoader";
+import {satelliteTracksFolder} from "../SatelliteMenus";
 import {SIMULATED_SATELLITE_COLOR, simulateUnavailableDefault} from "../SatelliteSimulation";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
@@ -146,7 +147,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const satGUI = guiMenus.satellites;
         const selectionGUI = satGUI.addFolder("Selection & Filters").close();
         const satelliteLabelsGUI = this.satelliteLabelsGUI = satGUI.addFolder("Labels").close();
-        const tracksGUI = satGUI.getFolder("Tracks & Guides") ?? satGUI.addFolder("Tracks & Guides").close();
+        const tracksGUI = satelliteTracksFolder(satGUI);
         const orbitDataGUI = satGUI.addFolder("Orbit Data").close();
         const brightnessGUI = satGUI.addFolder("Brightness").close();
         const modelsGUI = brightnessGUI.addFolder("Lighting & Flare Models").close();

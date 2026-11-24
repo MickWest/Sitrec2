@@ -5,6 +5,7 @@ import GUI from "./js/lil-gui.esm";
 import {ModelFiles} from "./nodes/CNode3DObject";
 import {parseGoToString} from "./GoToParser";
 import {executeGoToRequest} from "./GoTo";
+import {findLoadedSatellite, satelliteTargetIdentifier} from "./NamedSkyTarget";
 // number-only mathjs entry (see CNodeMath.js). create(math.all) below would re-pull
 // the full ~2.4MB mathjs (BigNumber/Complex/Fraction/units) if this used 'mathjs'.
 // The degrees-trig calculator only needs scalar number functions.
@@ -773,7 +774,7 @@ class CClientNLU {
             },
             {
                 name: "point_at_object",
-                regex: /^(?:point|look)\s+(?:at|towards?)\s+(?:the\s+)?(.+)$/i,
+                regex: /^(?:point|look)\s+(?:(?:the\s+)?camera\s+)?(?:at|towards?)\s+(?:the\s+)?(.+)$/i,
                 extract: (match) => ({intent: "POINT_AT", slots: {target: match[1].trim()}}),
                 confidence: 0.8
             },
@@ -1052,7 +1053,8 @@ class CClientNLU {
                     return sitrecAPI.call("pointCameraAtNamedObject", {object: pointAlias});
                 }
                 // Solar system bodies use the named-object function
-                if (SOLAR_SYSTEM_BODIES.has(target.toLowerCase())) {
+                if (SOLAR_SYSTEM_BODIES.has(target.toLowerCase())
+                    || typeof satelliteTargetIdentifier(target) === "number" || findLoadedSatellite(target)) {
                     return sitrecAPI.call("pointCameraAtNamedObject", {object: target});
                 }
                 // Check the sky catalog + IAU star names
@@ -1071,7 +1073,8 @@ class CClientNLU {
                 if (lockAlias) {
                     return sitrecAPI.call("lockCameraOnObject", {object: lockAlias});
                 }
-                if (SOLAR_SYSTEM_BODIES.has(target.toLowerCase())) {
+                if (SOLAR_SYSTEM_BODIES.has(target.toLowerCase())
+                    || typeof satelliteTargetIdentifier(target) === "number" || findLoadedSatellite(target)) {
                     return sitrecAPI.call("lockCameraOnObject", {object: target});
                 }
                 const lockCoords = lookupSkyObject(target);

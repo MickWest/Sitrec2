@@ -5081,7 +5081,7 @@ const en = {
         },
         celestialObject: {
             label: "Celestial Object",
-            tooltip: "Name of the body or star that the camera points at, for example Moon, Venus, Jupiter or Sirius.\nUsed only when Camera Heading is Celestial Lock",
+            tooltip: "Name of the body, star or loaded satellite that the camera follows, for example Moon, Sirius, ISS or STARLINK-1008. Satellites also accept a NORAD number, such as 25544, and need orbital data for the viewing date.\nUsed only when Camera Heading is Celestial Lock",
         },
     },
 
