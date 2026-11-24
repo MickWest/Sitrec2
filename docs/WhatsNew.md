@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.205.1 (2026-11-23)
+
+### New Features
+- **Transparent water** (Terrain → Sea Level): this new option lets you see the terrain and buildings under the Sea Level surface. The *Transparency (%)* slider sets how much, from 0% (opaque) to 100% (invisible), with 50% as the default. The water level does not change, and reflections on the water fade with it. Turning the option off makes the water opaque again and keeps the slider value. Both settings save with the sitch.
+
 ## Version 2.205.0 (2026-11-23)
 
 ### New Features
