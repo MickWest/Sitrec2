@@ -149,7 +149,8 @@ export class CNodeTerrainUI extends CNode {
         this.glintTransparency = v.glintTransparency ?? 0;
         this.glintBlink = v.glintBlink ?? false;
         this.glintUseLookCamera = v.glintUseLookCamera ?? false;
-        this.addSimpleSerials(["highlightSunReflection", "glintTolerance", "glintColor", "glintTransparency", "glintBlink", "glintUseLookCamera"]);
+        this.showSunArrows = v.showSunArrows ?? false;
+        this.addSimpleSerials(["highlightSunReflection", "glintTolerance", "glintColor", "glintTransparency", "glintBlink", "glintUseLookCamera", "showSunArrows"]);
         // Global tile-LOD detail for 3D buildings (screen-space-error target, px). Admin-only
         // control (cost: lower = more billed tile fetches). Not serialized.
         this.buildingErrorTarget = 20;
@@ -1589,6 +1590,9 @@ export class CNodeTerrainUI extends CNode {
         folder.add(this, "glintUseLookCamera").name("Use Look Camera").listen()
             .tooltip("Test reflections toward the Look Camera in both views. When off, each view uses its own camera.")
             .onChange(changed);
+        folder.add(this, "showSunArrows").name("Show Sun Arrows").listen()
+            .tooltip("Show a yellow 3D arrow toward the Sun where each view camera's forward ray meets the ellipsoid. No arrow is shown when the ray misses the Earth.")
+            .onChange(() => setRenderOne(true));
         this.updateGlints();
     }
 
@@ -1649,7 +1653,7 @@ export class CNodeTerrainUI extends CNode {
         }
         super.modDeserialize(v);
         for (const [key, fallback] of Object.entries({highlightSunReflection: false, glintTolerance: 5, glintColor: 0xff00ff,
-            glintTransparency: 0, glintBlink: false, glintUseLookCamera: false})) {
+            glintTransparency: 0, glintBlink: false, glintUseLookCamera: false, showSunArrows: false})) {
             this[key] = v[key] ?? this.props[key] ?? fallback;
         }
         this.updateGlints();

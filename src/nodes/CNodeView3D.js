@@ -88,6 +88,7 @@ import {isLocal, SITREC_APP} from "../configUtils"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {glintUniforms, updateGlintCamera} from "../js/map33/material/TerrainGlints";
+import {SunGlintArrow} from "../SunGlintArrow";
 import {CameraMapControls} from "../js/CameraControls";
 import {ViewMan} from "../CViewManager";
 import * as LAYER from "../LayerMasks";
@@ -1285,6 +1286,12 @@ export class CNodeView3D extends CNodeViewCanvas {
                     updateGlintCamera(camera, NodeMan.get("lookCamera", false)?.camera,
                         NodeMan.get("terrainUI", false)?.glintUseLookCamera);
                 }
+                if (NodeMan.get("terrainUI", false)?.showSunArrows && !reflectionPlane) {
+                    this.sunGlintArrow ??= new SunGlintArrow(this.id);
+                    return this.sunGlintArrow.render(this, camera, scene, GlobalDateTimeNode?.dateNow,
+                        () => this.renderer.render(scene, camera));
+                }
+                this.sunGlintArrow?.dispose();
                 return this.renderer.render(scene, camera);
             });
         }));
@@ -3364,6 +3371,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     dispose() {
+        this.sunGlintArrow?.dispose();
         disposeThermalView(this, true);
         // Also covers individual view removal outside a full sitch teardown.
         if (this.raytracedRefraction) {
