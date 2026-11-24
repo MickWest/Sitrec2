@@ -19,6 +19,8 @@
 
 import {CanvasTexture, ClampToEdgeWrapping, LinearFilter} from "three";
 import {loadVectorWaterTile, vectorWaterMaxZoom, vectorWaterTileUrl} from "./WaterMaskTiles";
+import {clampLatitude, mercatorX, mercatorY} from "./WaterMaskMath";
+export {clampLatitude, mercatorX, mercatorY} from "./WaterMaskMath";
 
 // Mask resolution. Over the 12 km default span this is 5.9 m per texel, which
 // is about what the source polygons resolve anyway, and 16 MB of texture —
@@ -41,13 +43,6 @@ const TARGET_TILES_ACROSS = 2;
 // a 2048-square rasterise, so not every frame.
 const RECENTRE_FRACTION = 0.25;
 
-// Web Mercator's own latitude limit. Also a guard with teeth: the region's width
-// in mercator is span / (world * cos(lat)), so a centre at an exact pole would
-// divide by zero, blow the square up to the whole planet, and fire thousands of
-// requests at a metered key. Clamping here fixes the tile count too, because
-// maskZoomForSpan divides by the same cosine.
-const MAX_MASK_LATITUDE = 85.05;
-
 // Backstop on the tile count, in case some future span/zoom combination gets
 // past the clamp above. At the zoom this module picks, a region is two or three
 // tiles across, so nine is the working number and sixteen is already slack.
@@ -65,25 +60,6 @@ const MAX_RETRIES = 3;
 
 const DEG2RAD = Math.PI / 180;
 
-/** Normalised Web Mercator x (0 at 180W, 1 at 180E) for a longitude in degrees. */
-export function mercatorX(lonDeg) {
-    return (lonDeg + 180) / 360;
-}
-
-/**
- * Normalised Web Mercator y (0 at the north edge, 1 at the south) for a
- * GEODETIC latitude in degrees.
- *
- * Geodetic, not geocentric: Web Mercator is defined on geodetic latitude, and
- * the two differ by up to 0.19 degrees — 21 km — on WGS84. The shader takes its
- * latitude from the ellipsoid normal, which is geodetic by definition, so the
- * two ends agree.
- */
-export function mercatorY(latDeg) {
-    const lat = clampLatitude(latDeg) * DEG2RAD;
-    return 0.5 - Math.log(Math.tan(Math.PI / 4 + lat / 2)) / (2 * Math.PI);
-}
-
 /**
  * The vector zoom whose tiles are about TARGET_TILES_ACROSS across the region.
  *
@@ -99,11 +75,6 @@ export function maskZoomForSpan(spanMetres, latDeg) {
     let z = vectorWaterMaxZoom();
     while (z > 6 && groundPerTile(z) * TARGET_TILES_ACROSS < spanMetres) z--;
     return z;
-}
-
-/** Latitude, held inside the range Web Mercator is defined on. */
-export function clampLatitude(latDeg) {
-    return Math.max(-MAX_MASK_LATITUDE, Math.min(MAX_MASK_LATITUDE, latDeg));
 }
 
 /**
