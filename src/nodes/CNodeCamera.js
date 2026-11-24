@@ -1214,7 +1214,9 @@ export class CNodeCamera extends CNode3D {
     setFromNamedObject(objectName) {
         const dir = getNamedSkyDirection(objectName, GlobalDateTimeNode.dateNow, this.camera.position);
         if (!dir) {
-            console.warn("CNodeCamera:setFromNamedObject No direction found for object " + objectName);
+            // Do not log the name: it can be typed text, and the console goes
+            // into the exported debug log.
+            console.warn("CNodeCamera:setFromNamedObject No direction found for the named object");
             return false;
         }
         this.setFromDirection(applyRefractionToDirection(dir, this.camera.position, currentRefractionOpts()));

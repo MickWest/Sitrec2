@@ -753,7 +753,9 @@ export class CNodeControllerCelestial extends CNodeController {
             this.lastValidObject = this.celestialObject;
             this.recalculateCascade();
         } else {
-            console.warn("Invalid celestial object: " + this.celestialObject + ", using " + this.lastValidObject);
+            // Do not log the names: Celestial Object is typed text, and the
+            // console goes into the exported debug log.
+            console.warn("Invalid celestial object; using the last valid object");
         }
     }
 

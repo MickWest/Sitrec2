@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.207.1 (2026-11-24)
+
+### Bug Fixes
+- Fixed Help → Export Debug Log saving the name typed in *Celestial Object* (Camera → Heading → Camera Heading → Celestial Lock), or given in a chat *point at* command, in the warning for an object that Sitrec cannot find, for example a satellite with no orbital data for the viewing date.
+
 ## Version 2.207.0 (2026-11-24)
 
 ### New Features
