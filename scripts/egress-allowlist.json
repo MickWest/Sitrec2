@@ -118,7 +118,7 @@
     {
       "host": "api.maptiler.com",
       "purpose": "map and water-mask tiles",
-      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map; water-mask tiles for the Coverage square also while the Sea Level surface is shown with Inundation on (accepted pattern sea-level-inundation-tiles)",
       "mayReceive": ["coarse-area"]
     },
     {

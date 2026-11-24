@@ -171,10 +171,27 @@ It follows large camera moves. **Effects → Water Reflection** applies the same
 and ocean shading used by the existing water renderer; its reflection level follows this
 surface. Reflections of scenery still use a local tangent plane.
 
-This is geometric inundation: enclosed low areas fill too. It does not yet model tides,
-flow, drainage or barriers to the arrival of water. The separate **Physics → Scenarios →
-Flood Sim** provides the existing particle and heightmap flow simulations. Lowering this
-surface does not reveal seafloor geometry that the terrain provider/clamp has removed.
+**Inundation** is on by default. Water starts in mapped ocean and spreads through adjacent
+terrain below the selected level. An isolated basin stays dry until the level reaches a
+connecting pass or channel. Lakes do not start a flood. Lowering the level recalculates
+the extent rather than leaving water trapped from a previous higher setting. Turn
+Inundation off to show the unrestricted surface, including enclosed low areas.
+
+The **Calculation** field shows progress. **Recalculate inundation** retries missing data.
+Coverage must include both the ocean and the connecting route; routes outside it are not
+considered. The calculation uses the selected elevation source and mapped ocean polygons,
+independent of camera detail. Missing elevation blocks flow. It samples at roughly 10 m,
+up to 2048 cells across (about 20 m at the default 40 km Coverage); a smaller Coverage
+can resolve narrower passages, provided it still includes their connection to the ocean.
+The source elevation resolution still limits accuracy. 3D buildings intersect the rendered
+surface, but connectivity uses terrain heights, not building walls, culverts or drainage.
+An ocean polygon source must be configured (the same vector water source used by Water
+Reflection); an unavailable source is reported in Calculation and does not flood inland areas.
+
+This shows the final ocean-connected extent, without flow timing, waves overtopping
+barriers or tides. The separate **Physics → Scenarios → Flood Sim** provides the existing
+particle and heightmap flow simulations. Lowering this surface does not reveal seafloor
+geometry that the terrain provider/clamp has removed.
 
 Note the asymmetry: "Flat" terrain is built at HAE = 0 (the ellipsoid), while the ocean mesh
 is built at the geoid. Two surfaces both reasonably called "sea level", separated by the geoid

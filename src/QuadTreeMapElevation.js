@@ -5,6 +5,7 @@ import {ServiceAvailability} from "./ServiceAvailability";
 import {identifyServiceFromUrl} from "./TileUsageTracker";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
+import {sampleElevationTile} from "./ElevationSampling";
 
 export class QuadTreeMapElevation extends QuadTreeMap {
     constructor(terrainNode, geoLocation, options = {}) {
@@ -533,27 +534,7 @@ export class QuadTreeMapElevation extends QuadTreeMap {
 //    const tile = this.tileCache[`${this.zoom}/${intX}/${intY}`]
         const tile = this.getTile(intX, intY, zoom)
         if (tile && tile.elevation) {
-            const nElevation = Math.sqrt(tile.elevation.length)
-            const xIndex = (x - tile.x) * nElevation
-            const yIndex = (y - tile.y) * nElevation
-            let x0 = Math.floor(xIndex)
-            let x1 = Math.ceil(xIndex)
-            let y0 = Math.floor(yIndex)
-            let y1 = Math.ceil(yIndex)
-
-            // clamp to the bounds of the elevation map 0 ... nElevation-1
-            x0 = Math.max(0, Math.min(nElevation - 1, x0))
-            x1 = Math.max(0, Math.min(nElevation - 1, x1))
-            y0 = Math.max(0, Math.min(nElevation - 1, y0))
-            y1 = Math.max(0, Math.min(nElevation - 1, y1))
-
-            const f00 = tile.elevation[y0 * nElevation + x0]
-            const f01 = tile.elevation[y0 * nElevation + x1]
-            const f10 = tile.elevation[y1 * nElevation + x0]
-            const f11 = tile.elevation[y1 * nElevation + x1]
-            const f0 = f00 + (f01 - f00) * (xIndex - x0)
-            const f1 = f10 + (f11 - f10) * (xIndex - x0)
-            const elevation = f0 + (f1 - f0) * (yIndex - y0)
+            const elevation = sampleElevationTile(tile, x - tile.x, y - tile.y);
             return elevation * this.options.zScale;
         }
         return meanSeaLevelOffset(lat, lon)  // default to geoid sea level if elevation data not loaded
@@ -569,26 +550,7 @@ export class QuadTreeMapElevation extends QuadTreeMap {
         const intY = Math.floor(y)
         const tile = this.getTile(intX, intY, zoom)
         if (tile && tile.elevation) {
-            const nElevation = Math.sqrt(tile.elevation.length)
-            const xIndex = (x - tile.x) * nElevation
-            const yIndex = (y - tile.y) * nElevation
-            let x0 = Math.floor(xIndex)
-            let x1 = Math.ceil(xIndex)
-            let y0 = Math.floor(yIndex)
-            let y1 = Math.ceil(yIndex)
-
-            x0 = Math.max(0, Math.min(nElevation - 1, x0))
-            x1 = Math.max(0, Math.min(nElevation - 1, x1))
-            y0 = Math.max(0, Math.min(nElevation - 1, y0))
-            y1 = Math.max(0, Math.min(nElevation - 1, y1))
-
-            const f00 = tile.elevation[y0 * nElevation + x0]
-            const f01 = tile.elevation[y0 * nElevation + x1]
-            const f10 = tile.elevation[y1 * nElevation + x0]
-            const f11 = tile.elevation[y1 * nElevation + x1]
-            const f0 = f00 + (f01 - f00) * (xIndex - x0)
-            const f1 = f10 + (f11 - f10) * (xIndex - x0)
-            const elevation = f0 + (f1 - f0) * (yIndex - y0)
+            const elevation = sampleElevationTile(tile, x - tile.x, y - tile.y);
             return {elevation: elevation * this.options.zScale, tileZ: zoom, tileX: intX, tileY: intY};
         }
         return {elevation: meanSeaLevelOffset(lat, lon), tileZ: -1, tileX: -1, tileY: -1};

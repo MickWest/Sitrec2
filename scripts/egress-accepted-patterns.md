@@ -234,6 +234,24 @@ entry here: an id, what the code does, where the data goes, the release, and its
   locked to the ground. A wider region, tiles for a track that is not locked to the ground,
   another tile host, or any other data in the requests is a finding.
 
+### `sea-level-inundation-tiles` — accepted 2.206.0 (contract widened)
+- **Code:** `src/water/SeaLevelInundation.js`, `src/water/InundationTerrain.js` and
+  `src/WaterMaskGeo.js` (`loadOceanMaskRegion`), used by `src/nodes/CNodeTerrainUI.js`. While
+  the Sea Level surface is shown with *Inundation* on (the default when Sea Level is shown),
+  the application loads the vector water tiles and the elevation tiles for the whole Coverage
+  square around the look camera, offscreen parts included, to find the low ground that
+  connects to the ocean. This also happens when a saved sitch with the Sea Level surface shown
+  opens, and again when the user selects *Recalculate inundation*.
+- **Data:** tile coordinates only (coarse-area). Vector water tiles at zoom 6 to the source's
+  maximum zoom (14 by default), to the vector water source: `api.maptiler.com` by default, or
+  the host that the operator sets in `SITREC_VECTOR_WATER_URL`. Elevation tiles for the same
+  square, to the selected elevation source. No other field.
+- **Limits:** loading starts only while the Sea Level surface is shown with Inundation on, and
+  only for the Coverage square, which is at most 100 km wide. A request that starts while Sea
+  Level is hidden or Inundation is off, a wider region, a position finer than a tile, a
+  destination other than the configured vector water source and the selected elevation source,
+  or any other data in the requests is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

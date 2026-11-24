@@ -18,6 +18,7 @@ import {addAlignedGlobe, updateAlignedGlobe} from "../Globe";
 import {showHider} from "../KeyBoardHandler";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {SeaLevelSurface} from "../water/SeaLevelSurface";
+import {SeaLevelInundation} from "../water/SeaLevelInundation";
 import {roundIfClose, scaleF2M} from "../utils";
 import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {
@@ -841,8 +842,10 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? 40;
         this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? false;
         this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? 50;
+        this.oceanSurfaceInundation = v.oceanSurfaceInundation ?? true;
+        this.inundationStatus = "Off";
         this.addSimpleSerials(["showOceanSurface", "oceanSurfaceLevelFeet", "oceanSurfaceDatumOffset", "oceanSurfaceWidthKm",
-            "oceanSurfaceTransparent", "oceanSurfaceTransparency"]);
+            "oceanSurfaceTransparent", "oceanSurfaceTransparency", "oceanSurfaceInundation"]);
         this.oceanSurfaceGroup = null;
         this.buildSeaLevelGUI();
 
@@ -1589,6 +1592,7 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? this.props.oceanSurfaceWidthKm ?? 40;
         this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? this.props.oceanSurfaceTransparent ?? false;
         this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? this.props.oceanSurfaceTransparency ?? 50;
+        this.oceanSurfaceInundation = v.oceanSurfaceInundation ?? this.props.oceanSurfaceInundation ?? true;
         this.setOceanSurfaceVisible(this.showOceanSurface);
         if (v.treeFlattenParams) {
             Object.assign(this.treeFlattenParams, v.treeFlattenParams);
@@ -1621,7 +1625,7 @@ export class CNodeTerrainUI extends CNode {
 
     buildSeaLevelGUI() {
         const folder = this.gui.addFolder("Sea Level").close()
-            .tooltip("A continuous sea surface intersecting terrain and buildings. Heights are relative to EGM96 mean sea level. This shows geometric inundation, including enclosed low areas; it does not simulate water flow.");
+            .tooltip("Sea surface heights are relative to EGM96 mean sea level. Inundation fills only low ground connected to mapped ocean within Coverage. Terrain data determines the connecting routes; this shows the final extent, not flow speed.");
         const changed = () => {
             this.setOceanSurfaceVisible(this.showOceanSurface);
             setRenderOne(true);
@@ -1651,6 +1655,12 @@ export class CNodeTerrainUI extends CNode {
         addDistance("oceanSurfaceWidthKm", "Coverage", "big", 1000, 1, 100, 1)
             .tooltip("Width of the sea surface, centered near the look camera. Follows large camera moves. Reflections use Effects > Water Reflection.")
             .onFinishChange(changed);
+        folder.add(this, "oceanSurfaceInundation").name("Inundation").listen()
+            .tooltip("Start at mapped ocean and fill adjacent ground below the chosen level. Isolated basins stay dry until a connecting barrier is overtopped. Turn off for an unrestricted sea-level surface.")
+            .onChange(changed);
+        this.inundationStatusController = folder.add(this, "inundationStatus").name("Calculation").listen().disable();
+        folder.add(this, "recalculateInundation").name("Recalculate inundation")
+            .tooltip("Reload the ocean and elevation grid. Increase Coverage if the route from the ocean lies outside it. Unknown elevation blocks flow.");
         folder.add(this, "oceanSurfaceTransparent").name("Transparent water").listen()
             .tooltip("Show terrain and buildings beneath the water. Turn off to restore opaque water without losing the transparency setting.")
             .onChange(changed);
@@ -1697,12 +1707,37 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceGroup.updateSurface(center.x, center.y, Math.max(1, Math.min(100, width)) * 1000,
             level * scaleF2M + datum);
         this.oceanSurfaceGroup.setTransparency(this.oceanSurfaceTransparent, this.oceanSurfaceTransparency);
+        if (this.oceanSurfaceInundation) {
+            this.inundation ??= new SeaLevelInundation(() => {
+                this.inundationStatus = this.inundation.status;
+                this.inundationStatusController.tooltip(this.inundationStatus);
+                setRenderOne(true);
+            });
+            const texture = this.inundation.update(this.oceanSurfaceGroup.mesh.geometry,
+                NodeMan.get("TerrainModel", false)?.elevationMap, this.oceanSurfaceGroup.widthMeters,
+                this.oceanSurfaceGroup.levelMeters);
+            this.inundationStatus = this.inundation.status;
+            this.oceanSurfaceGroup.setInundation(true, texture);
+        } else {
+            this.inundation?.suspend();
+            this.inundationStatus = "Off";
+            this.oceanSurfaceGroup.setInundation(false);
+        }
+    }
+
+    recalculateInundation() {
+        this.inundation?.dispose();
+        if (this.showOceanSurface) this.updateOceanSurface();
+        setRenderOne(true);
     }
 
     setOceanSurfaceVisible(visible) {
         if (visible) {
             this.ensureOceanSurface();
             this.updateOceanSurface();
+        } else {
+            this.inundation?.suspend();
+            this.inundationStatus = "Off";
         }
         if (this.oceanSurfaceGroup) this.oceanSurfaceGroup.visible = visible;
     }
@@ -1741,6 +1776,8 @@ export class CNodeTerrainUI extends CNode {
     }
 
     disposeOceanSurface() {
+        this.inundation?.dispose();
+        this.inundation = null;
         if (!this.oceanSurfaceGroup) return;
         GlobalScene.remove(this.oceanSurfaceGroup);
         this.oceanSurfaceGroup.dispose();

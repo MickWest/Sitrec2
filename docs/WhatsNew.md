@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.206.0 (2026-11-24)
+
+### New Features
+- **Inundation** (Terrain → Sea Level): this new option, on by default, shows the water only on low ground that the mapped ocean can reach within *Coverage*. A low area that is cut off from the sea stays dry until the level reaches the lowest point between it and the sea, and lowering the level makes it dry again. Inland lakes and rivers do not start a flood, and ground with no elevation data stops the water. It shows where the water stops, not how fast it arrives. It does not include tides or drainage, and 3D buildings do not block the water. Turn *Inundation* off to show the earlier surface, which covers all ground below the level. The setting saves with the sitch, and a sitch saved by an earlier version opens with *Inundation* on.
+- **Calculation** and **Recalculate inundation** (Terrain → Sea Level): *Calculation* shows the progress of the inundation calculation, or why it cannot finish, for example when there is no ocean in *Coverage* or the terrain is Flat. Until the calculation finishes, no water shows. *Recalculate inundation* starts it again and retries data that did not load. While *Inundation* is on, the map credits include the source of the ocean data.
+
 ## Version 2.205.1 (2026-11-23)
 
 ### New Features

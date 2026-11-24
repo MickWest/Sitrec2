@@ -667,7 +667,9 @@ export class CNodeWaterReflection extends CNode {
     // updateCombineAvailability above, because this runs every frame and render()
     // touches the DOM.
     updateWaterAttribution() {
-        const inUse = (this.enabled && this.vectorWaterMask) || this._tileWaterApplied === true;
+        const terrainUI = NodeMan.get("terrainUI", false);
+        const inUse = (this.enabled && this.vectorWaterMask) || this._tileWaterApplied === true
+            || (terrainUI?.showOceanSurface && terrainUI.oceanSurfaceInundation);
         const source = inUse ? vectorWaterSource() : null;
         const key = source ? `${source.attribution}|${source.termsURL}` : "";
         if (key === this._waterAttributionKey) return;

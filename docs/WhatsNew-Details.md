@@ -9,6 +9,104 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.206.0 (2026-11-24)
+
+A minor release with no commits after tag 2.205.1. All of its content is uncommitted changes in the release pair, which ship in the release commit. It adds *Inundation* to Terrain → *Sea Level*: with it on, the Sea Level surface shows only where low ground connects to the mapped ocean. It also moves the bilinear tile sampling into a shared module and records no-data pixels on elevation tiles. No change comes from a forum thread. No language file changes: the new labels and tooltips are English literals in `src/nodes/CNodeTerrainUI.js`, like the other Sea Level controls. The release changes `src/`, `tests/` and `docs/`. It also changes two records of the egress review in `scripts/`, which are not product code. `scripts/egress-accepted-patterns.md` adds the accepted pattern `sea-level-inundation-tiles` (contract widened). The `api.maptiler.com` trigger in `scripts/egress-allowlist.json` now names the water-mask tiles for the Coverage square while the Sea Level surface is shown with Inundation on. That change is in the Inundation entry and has no entry of its own. No npm or PHP dependency changes, and no file in `sitrecServer/` and no Dockerfile changes.
+
+### New Features
+- **Inundation: the Sea Level surface fills only ground connected to the mapped ocean**: Terrain → *Sea Level* → *Inundation*, *Calculation* and *Recalculate inundation* (uncommitted release-pair changes; new `src/water/SeaLevelInundation.js` `SeaLevelInundation`; new `src/water/InundationGrid.js` `connectedInundation`, `latitudeAtMercatorY`; new `src/water/InundationTerrain.js` `loadInundationTerrain`; `src/WaterMaskGeo.js` new `loadOceanMaskRegion`; `src/WaterMaskTiles.js` `decodeWaterPolygons`, `loadVectorWaterTile`; `src/water/SeaLevelSurface.js` `SeaLevelGeometry`, new `SeaLevelSurface.setInundation`; `src/water/SeaLevelMaterial.js` `createSeaLevelMaterial`; `src/nodes/CNodeTerrainUI.js` constructor, `buildSeaLevelGUI`, `updateOceanSurface`, new `recalculateInundation`, `setOceanSurfaceVisible`, `disposeOceanSurface`, `modDeserialize`; `src/nodes/CNodeWaterReflection.js` `updateWaterAttribution`; `scripts/egress-accepted-patterns.md`; `scripts/egress-allowlist.json`; `docs/Terrain.md`).
+  - **Menu.** `buildSeaLevelGUI` adds three rows after *Coverage* and before *Transparent water*.
+    - *Inundation* (`oceanSurfaceInundation`, default true) uses `.listen()` and the folder's `changed` handler. Its tooltip is *Start at mapped ocean and fill adjacent ground below the chosen level. Isolated basins stay dry until a connecting barrier is overtopped. Turn off for an unrestricted sea-level surface.*
+    - *Calculation* is a disabled, listening text field on `inundationStatus`. Each status change from the calculation also becomes its tooltip, so you can read a long message in full. It reads *Off* while *Inundation* is off or *Sea Level* is hidden.
+    - *Recalculate inundation* calls `recalculateInundation()`. Its tooltip is *Reload the ocean and elevation grid. Increase Coverage if the route from the ocean lies outside it. Unknown elevation blocks flow.*
+    - The folder tooltip is now *Sea surface heights are relative to EGM96 mean sea level. Inundation fills only low ground connected to mapped ocean within Coverage. Terrain data determines the connecting routes; this shows the final extent, not flow speed.* The 2.205.0 tooltip said that the surface fills enclosed low areas.
+  - **Ocean seeds.** `decodeWaterPolygons` now returns `oceanPolygons` beside `polygons`: the polygons of the `water` layer whose `class` is `ocean`.
+    - Lakes, rivers, ponds and docks stay in `polygons` for the reflection masks, but they are not seeds. A 404 tile gives `{extent: 4096, polygons: [], oceanPolygons: []}`.
+    - `loadOceanMaskRegion(rect, size)` uses the vector zoom `min(vectorWaterMaxZoom(), max(6, floor(log2(2 / du))))` and loads the tiles through `loadRegionTiles`. It then rasterizes only `oceanPolygons` (`rasterise(…, size, true)`) into a canvas of the grid size. A pixel with red ≥ 250 is a seed.
+    - It throws *Ocean map could not be loaded. Recalculate to retry.* if a tile fails to load. It throws *Ocean map source is not configured.* when there is no vector water source (no `SITREC_VECTOR_WATER_URL` and no usable `MAPTILER_KEY`). It throws *Ocean map coverage is too large at this latitude.* above 16 tiles (`MAX_MASK_TILES`).
+    - The reflection masks and the seeds share the decoded-tile cache and the in-flight dedup, so a tile decoded for one is not fetched again for the other.
+  - **Elevation grid.** `loadInundationTerrain(map, rect, size, signal, progress)` samples the selected elevation source (`TerrainModel.elevationMap`) on a `size × size` grid over `maskRect`.
+    - It uses one fixed zoom, `ceil(log2(size / (256 × du)))`, clamped to the map's zoom range and to at most 20. So the grid does not depend on the camera LOD or on which tiles are on screen.
+    - It reuses a loaded map tile at that zoom when the tile has its own elevation (not `elevationLoadFailed`, not `usingParentData`). Otherwise it fetches a temporary `QuadTreeTile`, six at a time, and disposes those tiles at the end. Progress shows as *Loading terrain n/m…*.
+    - A cell's height is `sampleElevationTile(tile, fx, fy, true) × zScale − meanSeaLevelOffset(lat, lon)`, a height above EGM96 mean sea level. A cell is `Infinity` and counts as `missing` when its tile did not load or one of its four interpolation pixels is no-data.
+    - `size` is `max(64, min(2048, ceil(Coverage / 10 m)))`. That gives 10 m cells up to about 20 km *Coverage*, about 20 m at the default 40 km, and about 49 m at 100 km.
+    - It throws *Select an elevation source for inundation.* for Flat or missing elevation, and *Reduce Coverage to calculate inundation with this elevation source.* above 256 tiles. It yields to the browser every 32 rows.
+  - **Fill.** `connectedInundation(heights, ocean, width, height, level, wet)` clears `wet` and marks every seed cell wet, whatever its height. Then it runs a breadth-first 4-neighbor flood fill: a neighbor becomes wet when its height is finite and ≤ `level`.
+    - Four neighbors, not eight, keep water from passing a closed diagonal corner, and a row end does not wrap to the next row.
+    - `level` is the surface's `levelMeters`, which is *Level above MSL* plus *Datum correction*.
+    - The fill runs from the start at each level, so lowering the level dries any basin that is no longer connected.
+  - **Updates.** `updateOceanSurface()` runs each frame while the surface is visible and calls `SeaLevelInundation.update(geometry, elevationMap, widthMeters, levelMeters)`.
+    - Three things start a new calculation (abort the `AbortController`, increment `generation`):
+      - the surface geometry changes, that is, *Coverage* or the Earth model changes, or the look camera moves more than a quarter of the Coverage from the mesh origin;
+      - the elevation map changes;
+      - its `zScale` (Elevation Scale) changes.
+    - The ocean loads first, so a region with no seed does not start the elevation download.
+    - A level change only runs the fill again on the stored heights.
+    - `generation` stops a late result for an old region from replacing a newer one.
+    - `suspend()` runs when *Inundation* is turned off or *Sea Level* is hidden. It keeps a finished grid, so turning *Inundation* off and on again is immediate. It cancels a calculation that has not finished.
+    - `recalculateInundation()` discards the grid and starts again. Decoded vector tiles and loaded map tiles are reused, and the rest are fetched again. `disposeOceanSurface()` disposes it.
+    - In a sitch whose look camera travels, each move of a quarter of the Coverage starts a new calculation, and no water shows until it finishes.
+  - **Status.** The *Calculation* text is one of:
+    - *Loading ocean and terrain…*
+    - *Loading terrain n/m…*
+    - *Ready*
+    - *Ready — missing terrain blocks flow; recalculate to retry.* (some cells are `missing`)
+    - *No ocean in Coverage — increase Coverage.* (no seed)
+    - *Inundation is outside the ocean map coverage.* (the grid square passes the Web Mercator latitude limit)
+    - the error text from the loaders above.
+  - **Drawing.**
+    - `SeaLevelGeometry` adds a `seaMaskUv` attribute: the Web Mercator position of each vertex, calculated in double precision on the CPU and normalized to `maskRect`, the Mercator square that bounds the mesh. x stays continuous around the center longitude. The code comment explains the CPU calculation: lat/lon derived from float32 ECEF in the fragment shader loses city detail.
+    - `createSeaLevelMaterial` adds the uniforms `seaInundation`, `seaInundationReady` and `seaInundationMask`, kept in `material.userData.inundationUniforms`. After `#include <clipping_planes_fragment>`, it discards the fragment when inundation is on and either the mask is not ready or the mask texel is below 0.5.
+    - The mask is a single-channel `DataTexture` (255 wet, 0 dry) with nearest filtering and no mipmaps. The program cache key changes from `seaLevel.v1` to `seaLevel.v2`. `SeaLevelSurface.setInundation(enabled, texture)` sets the uniforms.
+    - So no water draws while the grid loads, after an error, or with no ocean in Coverage. It never falls back to the unrestricted surface.
+    - A discarded fragment writes no color and no depth, so no reflection or transparency shows there.
+    - Inside a wet cell, the depth test against the terrain and building meshes still makes the waterline.
+    - With *Inundation* off, the surface draws everywhere, as in 2.205.1.
+  - **Attribution.** `CNodeWaterReflection.updateWaterAttribution()` now counts the vector water source as in use while `showOceanSurface` and `oceanSurfaceInundation` are both true. So the water credit (*Water: © MapTiler © OpenStreetMap contributors* for the default source) shows even when Effects → Water Reflection is off. With no source configured there is no credit.
+  - **Network.** While the Sea Level surface is shown with *Inundation* on, Sitrec requests tiles for the whole square that bounds the Coverage around the look camera, offscreen parts included. Coverage is at most 100 km wide.
+    - Vector water tiles come from `api.maptiler.com`, or from the host in `SITREC_VECTOR_WATER_URL`. They use the zoom given under Ocean seeds: 6 to 14 with the default maximum zoom of 14.
+    - Elevation tiles come from the selected elevation source: those at the grid zoom that are not already loaded.
+    - The only user data in the requests is the tile coordinates (coarse area).
+    - The requests start when the surface is shown, when a saved sitch with the surface shown opens, after each new-calculation trigger above, and on *Recalculate inundation*.
+    - Hiding the surface or turning *Inundation* off stops new elevation tile requests. Requests already sent finish, and their result is dropped.
+    - The egress records cover this. `scripts/egress-accepted-patterns.md` has the new accepted pattern `sea-level-inundation-tiles` — accepted 2.206.0 (contract widened). The `api.maptiler.com` trigger in `scripts/egress-allowlist.json` now ends *water-mask tiles for the Coverage square also while the Sea Level surface is shown with Inundation on (accepted pattern sea-level-inundation-tiles)*, and its `mayReceive` stays `coarse-area`. No other host entry changes.
+  - **Saving.** `oceanSurfaceInundation` is a simple serial. `modDeserialize` falls back to the constructor props, then to true. So a sitch saved by 2.205.x with *Sea Level* on opens with *Inundation* on. It shows only the ocean-connected area, and no water at all if there is no ocean in Coverage, the terrain is Flat, or no vector water source is configured. The status and the grid are not saved.
+  - **Limits.** Connectivity uses only the elevation grid: 3D buildings, culverts and drainage do not change it. There is no flow timing, no waves over a barrier and no tides. A route outside *Coverage* is not seen. The resolution of the elevation source limits the accuracy.
+  - **Docs.** In `docs/Terrain.md`, new text replaces the Sea Level paragraph that called the surface geometric inundation with enclosed low areas filled. The new text describes:
+    - *Inundation*: on by default, ocean seeds, isolated basins, lakes, and lowering the level;
+    - *Calculation* and *Recalculate inundation*;
+    - the need for *Coverage* to include the route to the ocean;
+    - the grid of about 10 m (2048 cells across at most, about 20 m at 40 km);
+    - the limits;
+    - the need for the vector water source that Water Reflection uses.
+  - **Tests.**
+    - New `tests/InundationGrid.test.js`:
+      - *an enclosed basin floods only when its connecting pass is overtopped, and dries when the level falls*
+      - *low map edges, diagonal corners and lakes are not independent flood sources*
+      - *unknown terrain blocks propagation and row ends cannot wrap*
+      - *a channel admits water at negative and zero datum levels*
+      - *height-grid sampling shares the terrain interpolation but can reject filled no-data pixels*
+    - New `tests/SeaLevelInundation.test.js`, with both loaders mocked:
+      - *reuses height data for level edits and restores a dry region when lowering the level*
+      - *discarded asynchronous terrain loads cannot replace a more recent region*
+      - *missing ocean coverage stays dry and does not start an elevation download*
+      - *failed ocean data is reported without reverting to unrestricted flooding*
+    - `tests/SeaLevelUnits.test.js` only adds the new fields to its fixture.
+    - No test runs `loadInundationTerrain`, `loadOceanMaskRegion` or the shader.
+
+### Improvements
+- **Shared tile elevation sampling, and no-data flags on elevation tiles** (internal; no change to the drawn terrain or to terrain queries; new `src/ElevationSampling.js` `sampleElevationTile`; `src/QuadTreeMapElevation.js` `getElevationInterpolated`, `getElevationWithTileInfo`; `src/QuadTreeTile.js` `computeElevationFromRGBA`, `computeElevationFromRGBA_MB`, `computeElevationFromGeoTIFF`; `src/WaterMaskGeo.js` `CGeoWaterMask`, `loadRegionTiles`, `rasterise`).
+  - **Sampling.** `sampleElevationTile(tile, x, y, rejectNoData = false)` is the clamped bilinear interpolation that `getElevationInterpolated` and `getElevationWithTileInfo` had inline, with x and y as fractions of the tile (0..1).
+    - It takes the grid size from `tile.shape` when that is set, and otherwise from `sqrt(elevation.length)` as before. So a square tile gives the same result.
+    - It returns null for a tile with no elevation or with `elevationLoadFailed`. Both callers still test `tile.elevation` first, and the one place that sets `elevationLoadFailed = true` also sets `elevation = null`. So their results do not change.
+    - With `rejectNoData`, it also returns null when one of its four pixels is no-data or the result is not finite. Only the inundation grid uses that.
+  - **No-data flags.** The three elevation decoders now record `elevationNoData`, a per-pixel `Uint8Array` that stays null when a tile has no gap. They flag:
+    - Terrarium pixels of −32768 or alpha 0, which are still filled from an ancestor tile or the geoid for drawing;
+    - Mapbox RGB pixels of alpha 0;
+    - GeoTIFF NaN values, which are still written as 0.
+    Only the inundation grid reads it.
+  - **Region mask.** The vector tile walk in `CGeoWaterMask` (the region water mask for Google Photorealistic tiles) moved into `loadRegionTiles`, which `loadOceanMaskRegion` shares. `rasterise` now takes the canvas size and an ocean-only flag. The region mask still uses `MASK_SIZE` (2048) and every water class except swimming pools.
+
 ## Version 2.205.1 (2026-11-23)
 
 A patch release of one commit after tag 2.205.0, with no merge commit. `b9e91f93` adds a *Transparent water* checkbox and a *Transparency (%)* slider to Terrain → *Sea Level*. The working tree is clean. No change comes from a forum thread. No language file changes: the two new labels and tooltips are English literals in `src/nodes/CNodeTerrainUI.js`, like the other Sea Level controls. The commit changes only `src/`, `tests/` and `docs/`: no npm or PHP dependency, no file in `sitrecServer/`, and no Dockerfile.
