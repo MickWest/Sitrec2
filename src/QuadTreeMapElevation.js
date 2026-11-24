@@ -270,6 +270,8 @@ export class QuadTreeMapElevation extends QuadTreeMap {
                         }
                         this.terrainNode.elevationTileLoaded(tile);
                     }).catch(error => {
+                        // A request cancelled with this map is not a failed tile.
+                        if (this.controller.signal.aborted) return;
                         console.warn(`Failed to load elevation tile ${key}:`, error.message);
                         // Mark tile as having no elevation data so it doesn't keep trying
                         tile.elevation = null;

@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.206.1 (2026-11-24)
+
+### Bug Fixes
+- Fixed elevation tiles that could still download from a GeoTIFF elevation source after *Sea Level* was hidden or *Inundation* was turned off (Terrain → Sea Level), or after the terrain reloaded.
+- Fixed Help → Export Debug Log saving the map position of each GeoTIFF elevation tile that loaded.
+
 ## Version 2.206.0 (2026-11-24)
 
 ### New Features

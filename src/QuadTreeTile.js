@@ -62,7 +62,7 @@ const GEOTIFF_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 let geoTiffActiveCount = 0;
 const geoTiffQueue = [];
 
-async function geoTiffFetchWithLimit(url) {
+async function geoTiffFetchWithLimit(url, signal) {
     // Check cache first (no concurrency slot needed)
     try {
         const cached = await indexedDBManager.getCachedData(`geotiff:${url}`);
@@ -77,6 +77,16 @@ async function geoTiffFetchWithLimit(url) {
     // Acquire a concurrency slot
     return new Promise((resolve, reject) => {
         const run = () => {
+            // A queued request can wait behind others. If its caller cancelled
+            // meanwhile (for example, inundation was turned off), do not send it,
+            // and pass the free slot on to the next queued request.
+            if (signal?.aborted) {
+                reject(new Error('Aborted'));
+                if (geoTiffActiveCount < GEOTIFF_MAX_CONCURRENT && geoTiffQueue.length > 0) {
+                    geoTiffQueue.shift()();
+                }
+                return;
+            }
             geoTiffActiveCount++;
             fetch(url)
                 .then(async (response) => {
@@ -2218,13 +2228,19 @@ export class QuadTreeTile {
             if (elevationURL.endsWith('.png') || elevationURL.includes('.pngraw')) {
                 await this.handlePNGElevation(elevationURL);
             } else {
-                await this.handleGeoTIFFElevation(elevationURL);
+                await this.handleGeoTIFFElevation(elevationURL, signal);
             }
             ServiceAvailability.recordSuccessByUrl(elevationURL);
             this.isLoadingElevation = false; // Clear elevation loading state
             this.updateDebugGeometry(); // Update debug geometry to remove elevation loading indicator
             return this;
         } catch (error) {
+            // A cancelled request is not a failure of the elevation service.
+            if (signal?.aborted) {
+                this.isLoadingElevation = false;
+                this.updateDebugGeometry();
+                throw error;
+            }
             // "Local" elevation tiles are served from our own origin (SITREC_TERRAIN),
             // so a load failure means the data isn't present (e.g. no sitrec-terrain
             // volume mounted) rather than a transient outage. Drop "Local" quietly
@@ -2242,12 +2258,12 @@ export class QuadTreeTile {
         }
     }
 
-    async handleGeoTIFFElevation(url) {
+    async handleGeoTIFFElevation(url, signal) {
         // Use plain fetch with concurrency limiting instead of quickFetch.
         // GeoTIFF elevation tiles are small (~130KB) and don't need chunked downloads.
         // quickFetch's Range requests multiply connections to the server, which overwhelms
         // dynamic rendering endpoints like USGS exportImage.
-        const response = await geoTiffFetchWithLimit(url);
+        const response = await geoTiffFetchWithLimit(url, signal);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -2259,7 +2275,8 @@ export class QuadTreeTile {
 
         const width = image.getWidth();
         const height = image.getHeight();
-        console.log(`GeoTIFF x = ${this.x} y = ${this.y}, z = ${this.z}, width=${width}, height=${height}`);
+        // No tile coordinates here: the console goes into the exported debug log.
+        console.log(`GeoTIFF elevation tile: width=${width}, height=${height}`);
 
         const processedElevation = await convertTIFFToElevationArray(image);
         this.computeElevationFromGeoTIFF(processedElevation, width, height);
