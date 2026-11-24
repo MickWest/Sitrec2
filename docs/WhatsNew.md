@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.205.0 (2026-11-23)
+
+### New Features
+- **Sea Level** (Terrain → Sea Level): shows a water surface at a height that you set relative to mean sea level, in both 3D views. Within its coverage, all terrain and buildings lower than that height are under water, including enclosed low areas; it does not simulate tides or the flow of water. *Level above MSL* sets the height, *Datum correction* adds a local height correction to match a surveyed waterline, and *Coverage* sets the width of the surface around the look camera. These values show in the selected units, and the settings save with the sitch.
+
+### Improvements
+- **Sea Level replaces Ocean Surface (Beta)** (Terrain): the sea surface now works with all terrain and 3D buildings, not only with Google Photorealistic tiles. A sitch saved with *Ocean Surface (Beta)* on opens with *Sea Level* on at mean sea level.
+- **Water Reflection** (Effects → Water Reflection): while *Sea Level* is on, the Sea Level surface gets the water shading and reflections at its own height, in both 3D views.
+
 ## Version 2.204.0 (2026-11-23)
 
 ### New Features

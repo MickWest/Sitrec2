@@ -148,17 +148,20 @@ level too, in the drawn terrain and in every query.
 **Terrain → Sea Level** adds a continuous, curved water surface in both 3D views. It works
 with ordinary terrain, Google Photorealistic tiles, and Cesium OSM or synthetic buildings.
 The loaded geometry determines the waterline; the surface is not restricted to the current
-coastline. **Level (ft MSL)** raises or lowers it relative to EGM96 mean sea level. For
-example, **40 ft** raises the water by **12.192 m**. These settings save with the sitch.
+coastline. **Level above MSL** raises or lowers it relative to EGM96 mean sea level. For
+example, **40 ft** raises the water by **12.192 m**. Level and **Datum correction** use the
+selected small units (feet or meters); **Coverage** uses the selected large units (nautical
+miles, miles, kilometers, or feet). Changing units preserves the physical heights and width.
+These settings save with the sitch.
 
-**Datum correction (m)** adds a local vertical offset separately from the simulated level.
+**Datum correction** adds a local vertical offset separately from the simulated level.
 Use it to align a surveyed reference waterline with a dataset using a different vertical
 datum. For city-scale comparisons, use the ellipsoid Earth model, Elevation Scale 1, and
 wait for detailed terrain/building tiles to load. Surface tessellation and local coordinates
-retain centimetre-scale height changes, but source geometry and datum errors still limit
+retain centimeter-scale height changes, but source geometry and datum errors still limit
 the accuracy of a real-world waterline.
 
-**Coverage (km)** is the width of the surface, initially 40 km, centred near the look camera.
+**Coverage** is the width of the surface, initially 40 km, centered near the look camera.
 It follows large camera moves. **Effects → Water Reflection** applies the same sky, scenery
 and ocean shading used by the existing water renderer; its reflection level follows this
 surface. Reflections of scenery still use a local tangent plane.

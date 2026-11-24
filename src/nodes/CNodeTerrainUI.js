@@ -1,6 +1,6 @@
 import {CNode} from "./CNode";
 import {getCachedKey} from "../BYOKKeyStore";
-import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {assert} from "../assert";
 import {configParams} from "../runtimeConfig";
@@ -18,7 +18,7 @@ import {addAlignedGlobe, updateAlignedGlobe} from "../Globe";
 import {showHider} from "../KeyBoardHandler";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {SeaLevelSurface} from "../water/SeaLevelSurface";
-import {scaleF2M} from "../utils";
+import {roundIfClose, scaleF2M} from "../utils";
 import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {
     defaultSourcesEnabled,
@@ -1319,7 +1319,6 @@ export class CNodeTerrainUI extends CNode {
         }
 
         this.markOceanSurfaceDirty();
-        this.rebuildOceanSurfaceTiles(true);
 
         // World coords for a given lat/lon/alt change with the radii, so rebuild
         // the manual-edit dab cache and re-apply at the new positions.
@@ -1624,16 +1623,46 @@ export class CNodeTerrainUI extends CNode {
         };
         folder.add(this, "showOceanSurface").name("Sea Level").listen()
             .onChange(changed).asFolderToggle();
-        folder.add(this, "oceanSurfaceLevelFeet", -100, 200, 0.1).name("Level (ft MSL)").listen()
+        // Display-unit proxies keep the existing saved feet/metres/km fields
+        // independent of the current unit system, including during load.
+        const display = {};
+        this.seaLevelUnitControls = [];
+        const addDistance = (property, label, unitType, storedToMeters, min, max, step) => {
+            Object.defineProperty(display, property, {
+                get: () => roundIfClose(this[property] * storedToMeters / Units[unitType].toM),
+                set: value => { this[property] = value * Units[unitType].toM / storedToMeters; },
+            });
+            const scale = storedToMeters / Units[unitType].toM;
+            const controller = folder.add(display, property, min * scale, max * scale, step * scale).listen();
+            this.seaLevelUnitControls.push({controller, label, unitType, storedToMeters, min, max, step});
+            return controller;
+        };
+        addDistance("oceanSurfaceLevelFeet", "Level above MSL", "small", scaleF2M, -100, 200, 0.1)
             .tooltip("Height above mean sea level. +40 ft = +12.192 m. The surface intersects the loaded geometry at this height.")
             .onChange(changed);
-        folder.add(this, "oceanSurfaceDatumOffset", -100, 100, 0.01).name("Datum correction (m)").listen()
+        addDistance("oceanSurfaceDatumOffset", "Datum correction", "small", 1, -100, 100, 0.01)
             .tooltip("Local height correction added to EGM96 and the sea level. Use a surveyed waterline to align a dataset with a different vertical datum. Terrain and 3D tile accuracy still limit the result.")
             .onChange(changed);
-        folder.add(this, "oceanSurfaceWidthKm", 1, 100, 1).name("Coverage (km)").listen()
-            .tooltip("Width of the sea surface, centred near the look camera. Follows large camera moves. Reflections use Effects > Water Reflection.")
+        addDistance("oceanSurfaceWidthKm", "Coverage", "big", 1000, 1, 100, 1)
+            .tooltip("Width of the sea surface, centered near the look camera. Follows large camera moves. Reflections use Effects > Water Reflection.")
             .onFinishChange(changed);
+        this.changeUnits();
     }
+
+    changeUnits() {
+        for (const {controller, label, unitType, storedToMeters, min, max, step} of this.seaLevelUnitControls ?? []) {
+            const unit = Units[unitType];
+            const scale = storedToMeters / unit.toM;
+            for (const control of [controller, ...(controller._mirrorControllers ?? [])]) {
+                control.name(`${label} (${unit.abbrev})`)
+                    .min(roundIfClose(min * scale)).max(roundIfClose(max * scale)).step(roundIfClose(step * scale));
+                control.updateDisplay();
+            }
+        }
+    }
+
+    // Loading the unit system uses updateDesc rather than changeUnits.
+    updateDesc() { this.changeUnits(); }
 
     ensureOceanSurface() {
         if (this.oceanSurfaceGroup) return;
