@@ -263,7 +263,7 @@ export function loadVectorWaterTile(url) {
             return response.arrayBuffer();
         })
         .then((buffer) => (buffer === null
-            ? {extent: 4096, polygons: []}
+            ? {extent: 4096, polygons: [], oceanPolygons: []}
             : decodeWaterPolygons(buffer)))
         .then((decoded) => {
             rememberVectorTile(url, decoded);
@@ -289,6 +289,7 @@ function decodeWaterPolygons(buffer) {
     return loadMvtDecoder().then(({VectorTile, PbfReader}) => {
         const tile = new VectorTile(new PbfReader(buffer));
         const polygons = [];
+        const oceanPolygons = [];
         let extent = 4096;
 
         for (const layerName of WATER_LAYERS) {
@@ -300,11 +301,14 @@ function decodeWaterPolygons(buffer) {
                 const feature = layer.feature(i);
                 if (feature.type !== 3) continue;      // 3 = polygon; ignore stray points/lines
                 if (EXCLUDED_WATER_CLASSES.has(feature.properties?.class)) continue;
-                polygons.push(feature.loadGeometry());
+                const rings = feature.loadGeometry();
+                polygons.push(rings);
+                // Inland lakes and rivers must not seed coastal inundation.
+                if (feature.properties?.class === "ocean") oceanPolygons.push(rings);
             }
         }
 
-        return {extent, polygons};
+        return {extent, polygons, oceanPolygons};
     });
 }
 

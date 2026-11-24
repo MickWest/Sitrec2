@@ -234,29 +234,9 @@ export class CGeoWaterMask {
         const cy = mercatorY(lat);
         const rect = {u0: cx - du / 2, v0: cy - du / 2, du};
 
-        // Every vector tile the square touches. x is deliberately NOT clamped:
-        // a region straddling the antimeridian runs off one edge of the grid and
-        // back on at the other, so the index is kept unwrapped for PLACEMENT on
-        // the canvas and wrapped only when the URL is formed. y is clamped —
-        // there is no tile row past the pole to wrap to.
-        const tx0 = Math.floor(rect.u0 * n);
-        const tx1 = Math.floor((rect.u0 + du) * n);
-        const ty0 = Math.max(0, Math.floor(rect.v0 * n));
-        const ty1 = Math.min(n - 1, Math.floor((rect.v0 + du) * n));
-
-        if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > MAX_MASK_TILES) return;
-
-        const jobs = [];
-        for (let tx = tx0; tx <= tx1; tx++) {
-            for (let ty = ty0; ty <= ty1; ty++) {
-                const url = vectorWaterTileUrl(z, ((tx % n) + n) % n, ty);
-                if (url === null) return;      // no vector source configured
-                jobs.push(loadVectorWaterTile(url)
-                    .then((decoded) => ({tx, ty, decoded}))
-                    .catch(() => null));
-            }
-        }
-        if (jobs.length === 0) return;
+        let loading;
+        try { loading = loadRegionTiles(rect, z); }
+        catch { return; } // no source or out-of-range coverage
 
         this._building = true;
         // A build the camera asked for gets a fresh budget; one the retry timer
@@ -265,7 +245,7 @@ export class CGeoWaterMask {
         if (this._retryAt === 0) this._retriesLeft = MAX_RETRIES;
         const generation = this._generation;
 
-        Promise.all(jobs).then((results) => {
+        loading.then((results) => {
             if (generation !== this._generation) return;   // disposed while loading
             const loaded = results.filter(Boolean);
             const texture = rasterise(loaded, rect, n);
@@ -294,39 +274,59 @@ export class CGeoWaterMask {
     }
 }
 
-/**
- * Draw the decoded water polygons of several vector tiles into one mask canvas.
- *
- * Each tile gets a scale-and-offset transform of its own, derived from where
- * that tile sits in the region's mercator square. Doing it per tile rather than
- * once for the region is what keeps mercator's latitude-dependent scale from
- * mattering: a tile is small enough that the projection is affine across it.
- */
-function rasterise(tiles, rect, n) {
+// Ocean seeds for inundation, sharing the reflection mask's decoder and cache.
+export async function loadOceanMaskRegion(rect, size) {
+    const z = Math.min(vectorWaterMaxZoom(), Math.max(6, Math.floor(Math.log2(2 / rect.du))));
+    const tiles = await loadRegionTiles(rect, z);
+    if (tiles.some(tile => tile === null)) throw new Error("Ocean map could not be loaded. Recalculate to retry.");
+    return rasterise(tiles, rect, 2 ** z, size, true);
+}
+
+function loadRegionTiles(rect, z) {
+    const n = 2 ** z;
+    const tx0 = Math.floor(rect.u0 * n), tx1 = Math.floor((rect.u0 + rect.du) * n);
+    const ty0 = Math.max(0, Math.floor(rect.v0 * n));
+    const ty1 = Math.min(n - 1, Math.floor((rect.v0 + rect.du) * n));
+    if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > MAX_MASK_TILES) {
+        throw new Error("Ocean map coverage is too large at this latitude.");
+    }
+    const jobs = [];
+    // Keep x unwrapped for placement, wrapping only the requested tile URL.
+    for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+        const url = vectorWaterTileUrl(z, ((tx % n) + n) % n, ty);
+        if (!url) throw new Error("Ocean map source is not configured.");
+        jobs.push(loadVectorWaterTile(url).then(decoded => ({tx, ty, decoded})).catch(() => null));
+    }
+    return Promise.all(jobs);
+}
+
+// Rasterise each tile with its own transform into one geographic mask.
+function rasterise(tiles, rect, n, size = MASK_SIZE, oceanOnly = false) {
     const canvas = document.createElement("canvas");
-    canvas.width = MASK_SIZE;
-    canvas.height = MASK_SIZE;
+    canvas.width = size;
+    canvas.height = size;
     const ctx = canvas.getContext("2d", {willReadFrequently: false});
 
     ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, MASK_SIZE, MASK_SIZE);
+    ctx.fillRect(0, 0, size, size);
     ctx.fillStyle = "#ffffff";
 
     for (const {tx, ty, decoded} of tiles) {
-        if (decoded.polygons.length === 0) continue;
+        const polygons = oceanOnly ? decoded.oceanPolygons : decoded.polygons;
+        if (!polygons?.length) continue;
         const extent = decoded.extent;
         // Tile-local coordinate p (0..extent) sits at mercator (tx + p/extent)/n,
         // and mercator u maps to canvas pixel (u - rect.u0) / rect.du * MASK_SIZE.
-        const scale = MASK_SIZE / (extent * n * rect.du);
-        const ox = (tx / n - rect.u0) / rect.du * MASK_SIZE;
-        const oy = (ty / n - rect.v0) / rect.du * MASK_SIZE;
+        const scale = size / (extent * n * rect.du);
+        const ox = (tx / n - rect.u0) / rect.du * size;
+        const oy = (ty / n - rect.v0) / rect.du * size;
 
         ctx.save();
         ctx.setTransform(scale, 0, 0, scale, ox, oy);
         // One path per feature, so two lakes overlapping in the tile's buffer
         // zone cannot cancel each other out under the nonzero fill rule — see
         // WaterMaskTiles.rasteriseMask, which has the same requirement.
-        for (const rings of decoded.polygons) {
+        for (const rings of polygons) {
             const path = new Path2D();
             for (const ring of rings) {
                 if (ring.length < 3) continue;

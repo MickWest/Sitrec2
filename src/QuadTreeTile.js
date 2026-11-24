@@ -2302,6 +2302,7 @@ export class QuadTreeTile {
         const xScale = width > 1 ? 1 / (width - 1) : 0;
         const yScale = height > 1 ? 1 / (height - 1) : 0;
         let missing = 0, minimum = Infinity, maximum = -Infinity;
+        this.elevationNoData = null;
         let ancestorData;
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -2315,6 +2316,8 @@ export class QuadTreeTile {
                 const geoid = interpolateGeoidOffset(geoidCorners, x * xScale, y * yScale);
                 let value = raw + geoid;
                 if (raw === -32768 || pixels.data[rgba + 3] === 0) {
+                    this.elevationNoData ??= new Uint8Array(width * height);
+                    this.elevationNoData[ij] = 1;
                     // Terrarium's empty pixels are not 32 km deep terrain. Use
                     // valid ancestor data at the same location, retaining a
                     // count so diagnostics can distinguish fallback from data.
@@ -2372,6 +2375,7 @@ export class QuadTreeTile {
         const width = pixels.shape[1];
         this.shape = [width, height];
         const elevation = new Float32Array(width * height);
+        this.elevationNoData = null;
         const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
         const xScale = width > 1 ? 1 / (width - 1) : 0;
         const yScale = height > 1 ? 1 / (height - 1) : 0;
@@ -2379,6 +2383,10 @@ export class QuadTreeTile {
             for (let x = 0; x < width; x++) {
                 const ij = x + width * y;       // row-major, x fastest
                 const rgba = ij * 4;
+                if (pixels.data[rgba + 3] === 0) {
+                    this.elevationNoData ??= new Uint8Array(width * height);
+                    this.elevationNoData[ij] = 1;
+                }
                 elevation[ij] =
                     (pixels.data[rgba] * 256.0 * 256.0 +
                         pixels.data[rgba + 1] * 256 +
@@ -2405,12 +2413,15 @@ export class QuadTreeTile {
         const yScale = height > 1 ? 1 / (height - 1) : 0;
 
         const stats = { min: Infinity, max: -Infinity, nanCount: 0 };
+        this.elevationNoData = null;
 
         for (let i = 0; i < width; i++) {
             for (let j = 0; j < height; j++) {
                 const idx = j * width + i;
                 let value = elevationData[idx];
                 if (Number.isNaN(value)) {
+                    this.elevationNoData ??= new Uint8Array(width * height);
+                    this.elevationNoData[idx] = 1;
                     stats.nanCount++;
                     elevationData[idx] = 0;
                 } else {

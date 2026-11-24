@@ -18,6 +18,9 @@ import {addAlignedGlobe, updateAlignedGlobe} from "../Globe";
 import {showHider} from "../KeyBoardHandler";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {SeaLevelSurface} from "../water/SeaLevelSurface";
+import {SeaLevelInundation} from "../water/SeaLevelInundation";
+import {inundationBuildingMeshes} from "../water/InundationBuildings";
+import {InundationArrows} from "../water/InundationArrows";
 import {roundIfClose, scaleF2M} from "../utils";
 import {setupRefractionGUI} from "../atmosphere/refractionSettings";
 import {
@@ -841,8 +844,12 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? 40;
         this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? false;
         this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? 50;
+        this.oceanSurfaceInundation = v.oceanSurfaceInundation ?? true;
+        this.oceanSurfaceUse3D = v.oceanSurfaceUse3D ?? false;
+        this.oceanSurfaceFlowArrows = v.oceanSurfaceFlowArrows ?? false;
+        this.inundationStatus = "Off";
         this.addSimpleSerials(["showOceanSurface", "oceanSurfaceLevelFeet", "oceanSurfaceDatumOffset", "oceanSurfaceWidthKm",
-            "oceanSurfaceTransparent", "oceanSurfaceTransparency"]);
+            "oceanSurfaceTransparent", "oceanSurfaceTransparency", "oceanSurfaceInundation", "oceanSurfaceUse3D", "oceanSurfaceFlowArrows"]);
         this.oceanSurfaceGroup = null;
         this.buildSeaLevelGUI();
 
@@ -1589,6 +1596,9 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? this.props.oceanSurfaceWidthKm ?? 40;
         this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? this.props.oceanSurfaceTransparent ?? false;
         this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? this.props.oceanSurfaceTransparency ?? 50;
+        this.oceanSurfaceInundation = v.oceanSurfaceInundation ?? this.props.oceanSurfaceInundation ?? true;
+        this.oceanSurfaceUse3D = v.oceanSurfaceUse3D ?? this.props.oceanSurfaceUse3D ?? false;
+        this.oceanSurfaceFlowArrows = v.oceanSurfaceFlowArrows ?? this.props.oceanSurfaceFlowArrows ?? false;
         this.setOceanSurfaceVisible(this.showOceanSurface);
         if (v.treeFlattenParams) {
             Object.assign(this.treeFlattenParams, v.treeFlattenParams);
@@ -1621,7 +1631,7 @@ export class CNodeTerrainUI extends CNode {
 
     buildSeaLevelGUI() {
         const folder = this.gui.addFolder("Sea Level").close()
-            .tooltip("A continuous sea surface intersecting terrain and buildings. Heights are relative to EGM96 mean sea level. This shows geometric inundation, including enclosed low areas; it does not simulate water flow.");
+            .tooltip("Sea surface heights are relative to EGM96 mean sea level. Inundation fills only low ground connected to mapped ocean within Coverage. Terrain data determines the connecting routes; this shows the final extent, not flow speed.");
         const changed = () => {
             this.setOceanSurfaceVisible(this.showOceanSurface);
             setRenderOne(true);
@@ -1651,6 +1661,18 @@ export class CNodeTerrainUI extends CNode {
         addDistance("oceanSurfaceWidthKm", "Coverage", "big", 1000, 1, 100, 1)
             .tooltip("Width of the sea surface, centered near the look camera. Follows large camera moves. Reflections use Effects > Water Reflection.")
             .onFinishChange(changed);
+        folder.add(this, "oceanSurfaceInundation").name("Inundation").listen()
+            .tooltip("Start at mapped ocean and fill adjacent ground below the chosen level. Isolated basins stay dry until a connecting barrier is overtopped. Turn off for an unrestricted sea-level surface.")
+            .onChange(changed);
+        folder.add(this, "oceanSurfaceUse3D").name("Use 3D geometry").listen()
+            .tooltip("Use loaded 3D tiles and synthetic buildings as barriers. Cached tiles still count off screen. With Google Photorealistic, missing detailed coverage blocks flow; view the connecting coastline to load it. Terrain supplies base heights.")
+            .onChange(changed);
+        folder.add(this, "oceanSurfaceFlowArrows").name("Flow arrows").listen()
+            .tooltip("Large red arrows mark ocean entry routes into flooded areas of at least one hectare, and significant downhill connections inland. Requires Inundation. These are potential routes at the chosen level, not simulated flow speed or timing.")
+            .onChange(changed);
+        this.inundationStatusController = folder.add(this, "inundationStatus").name("Calculation").listen().disable();
+        folder.add(this, "recalculateInundation").name("Recalculate inundation")
+            .tooltip("Reload the ocean and elevation grid. Increase Coverage if the route from the ocean lies outside it. Unknown elevation blocks flow.");
         folder.add(this, "oceanSurfaceTransparent").name("Transparent water").listen()
             .tooltip("Show terrain and buildings beneath the water. Turn off to restore opaque water without losing the transparency setting.")
             .onChange(changed);
@@ -1678,6 +1700,8 @@ export class CNodeTerrainUI extends CNode {
     ensureOceanSurface() {
         if (this.oceanSurfaceGroup) return;
         this.oceanSurfaceGroup = new SeaLevelSurface();
+        this.inundationArrows = new InundationArrows(this.oceanSurfaceGroup.layers.mask);
+        this.oceanSurfaceGroup.add(this.inundationArrows);
         this.oceanSurfaceGroup.visible = false;
         GlobalScene.add(this.oceanSurfaceGroup);
     }
@@ -1697,12 +1721,58 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceGroup.updateSurface(center.x, center.y, Math.max(1, Math.min(100, width)) * 1000,
             level * scaleF2M + datum);
         this.oceanSurfaceGroup.setTransparency(this.oceanSurfaceTransparent, this.oceanSurfaceTransparency);
+        if (this.oceanSurfaceInundation) {
+            this.inundation ??= new SeaLevelInundation(() => {
+                this.inundationStatus = this.inundation.status;
+                this.inundationStatusController.tooltip(this.inundationStatus);
+                setRenderOne(true);
+            });
+            const texture = this.inundation.update(this.oceanSurfaceGroup.mesh.geometry,
+                NodeMan.get("TerrainModel", false)?.elevationMap, this.oceanSurfaceGroup.widthMeters,
+                this.oceanSurfaceGroup.levelMeters, this.oceanSurfaceUse3D ? this.inundationMeshes() : null,
+                this.oceanSurfaceFlowArrows);
+            this.inundationStatus = this.inundation.status;
+            this.oceanSurfaceGroup.setInundation(true, texture);
+            this.inundationArrows.update(texture && this.oceanSurfaceFlowArrows ? this.inundation.flowRoutes : null,
+                this.inundation.geometry.maskRect, this.inundation.size, this.oceanSurfaceGroup.levelMeters);
+        } else {
+            this.inundation?.suspend();
+            this.inundationStatus = "Off";
+            this.oceanSurfaceGroup.setInundation(false);
+            this.inundationArrows.visible = false;
+        }
+    }
+
+    recalculateInundation() {
+        this.inundation?.dispose();
+        if (this.showOceanSurface) this.updateOceanSurface();
+        setRenderOne(true);
+    }
+
+    inundationMeshes() {
+        const synthetic = [];
+        NodeMan.iterate((id, node) => {
+            if (node.buildingID && node.solidMesh) synthetic.push(node.solidMesh);
+        });
+        const requireCoverage = this.showBuildings && this.buildingsSource === "google-photorealistic";
+        const renderers = this.showBuildings ? Object.values(this.buildingsNode?._perView ?? {}).map(pv => pv.renderer) : [];
+        // Coarse tiles can omit a seawall even when their footprint covers it.
+        // Require several geometry samples per grid cell, capped at 5 m error
+        // so increasing Coverage never admits broad coastal placeholders.
+        const cellMeters = Math.max(10, this.oceanSurfaceGroup.widthMeters / 2048);
+        const maxError = requireCoverage ? Math.min(5, cellMeters / 4) : Infinity;
+        const meshes = inundationBuildingMeshes(renderers, synthetic, maxError);
+        meshes.requireCoverage = requireCoverage;
+        return meshes;
     }
 
     setOceanSurfaceVisible(visible) {
         if (visible) {
             this.ensureOceanSurface();
             this.updateOceanSurface();
+        } else {
+            this.inundation?.suspend();
+            this.inundationStatus = "Off";
         }
         if (this.oceanSurfaceGroup) this.oceanSurfaceGroup.visible = visible;
     }
@@ -1741,6 +1811,10 @@ export class CNodeTerrainUI extends CNode {
     }
 
     disposeOceanSurface() {
+        this.inundation?.dispose();
+        this.inundation = null;
+        this.inundationArrows?.dispose();
+        this.inundationArrows = null;
         if (!this.oceanSurfaceGroup) return;
         GlobalScene.remove(this.oceanSurfaceGroup);
         this.oceanSurfaceGroup.dispose();

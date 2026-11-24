@@ -4,6 +4,7 @@ import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {Globals} from "../Globals";
 import * as LAYER from "../LayerMasks";
 import {createSeaLevelMaterial} from "./SeaLevelMaterial";
+import {mercatorX, mercatorY} from "../WaterMaskGeo";
 
 // A continuous surface: depth testing against the actual land/building mesh
 // determines the waterline. No DEM samples or present-day shoreline mask can
@@ -36,6 +37,9 @@ export class SeaLevelGeometry extends BufferGeometry {
         this.basePositions = new Float64Array(count * 3);
         const positions = new Float32Array(count * 3);
         const normals = new Float32Array(count * 3);
+        const mercator = new Float64Array(count * 2);
+        const centerU = mercatorX(lon);
+        let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
         const sample = new Vector3();
 
         for (let j = 0; j <= segments; j++) {
@@ -52,6 +56,13 @@ export class SeaLevelGeometry extends BufferGeometry {
                 point.sub(this.origin).toArray(this.basePositions, offset);
                 point.toArray(positions, offset);
                 normal.toArray(normals, offset);
+                const u = mercatorX(lla.y) - Math.round(mercatorX(lla.y) - centerU);
+                const v = mercatorY(lla.x);
+                const uvOffset = (j * stride + i) * 2;
+                mercator[uvOffset] = u;
+                mercator[uvOffset + 1] = v;
+                minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+                minV = Math.min(minV, v); maxV = Math.max(maxV, v);
             }
         }
         const indices = [];
@@ -63,6 +74,15 @@ export class SeaLevelGeometry extends BufferGeometry {
         }
         this.setAttribute("position", new Float32BufferAttribute(positions, 3));
         this.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+        // Compute mask coordinates in double precision on the CPU. Deriving
+        // lat/lon from float32 ECEF in the fragment shader loses city detail.
+        const du = Math.max(maxU - minU, maxV - minV);
+        this.maskRect = {u0: (minU + maxU - du) / 2, v0: (minV + maxV - du) / 2, du};
+        for (let i = 0; i < mercator.length; i += 2) {
+            mercator[i] = (mercator[i] - this.maskRect.u0) / du;
+            mercator[i + 1] = (mercator[i + 1] - this.maskRect.v0) / du;
+        }
+        this.setAttribute("seaMaskUv", new Float32BufferAttribute(mercator, 2));
         this.setIndex(indices);
         this.levelMeters = NaN;
         this.setLevel(0);
@@ -125,6 +145,13 @@ export class SeaLevelSurface extends Group {
         // Depth-test against above-water geometry, but let submerged objects
         // remain visible through the surface instead of occluding their draws.
         this.material.depthWrite = !transparent;
+    }
+
+    setInundation(enabled, texture = null) {
+        const uniforms = this.material.userData.inundationUniforms;
+        uniforms.seaInundation.value = enabled;
+        uniforms.seaInundationReady.value = texture !== null;
+        uniforms.seaInundationMask.value = texture;
     }
 
     reflectionPlane(cameraPosition) {

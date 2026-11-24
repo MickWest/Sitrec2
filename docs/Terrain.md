@@ -171,10 +171,57 @@ It follows large camera moves. **Effects → Water Reflection** applies the same
 and ocean shading used by the existing water renderer; its reflection level follows this
 surface. Reflections of scenery still use a local tangent plane.
 
-This is geometric inundation: enclosed low areas fill too. It does not yet model tides,
-flow, drainage or barriers to the arrival of water. The separate **Physics → Scenarios →
-Flood Sim** provides the existing particle and heightmap flow simulations. Lowering this
-surface does not reveal seafloor geometry that the terrain provider/clamp has removed.
+**Inundation** is on by default. Water starts in mapped ocean and spreads through adjacent
+terrain below the selected level. An isolated basin stays dry until the level reaches a
+connecting pass or channel. Lakes do not start a flood. Lowering the level recalculates
+the extent rather than leaving water trapped from a previous higher setting. Turn
+Inundation off to show the unrestricted surface, including enclosed low areas.
+
+The **Calculation** field shows progress. **Recalculate inundation** retries missing data.
+Coverage must include both the ocean and the connecting route; routes outside it are not
+considered. The calculation uses the selected elevation source and mapped ocean polygons,
+independent of camera detail. Missing elevation blocks flow. It samples at roughly 10 m,
+up to 2048 cells across (about 20 m at the default 40 km Coverage); a smaller Coverage
+can resolve narrower passages, provided it still includes their connection to the ocean.
+The source elevation resolution still limits accuracy. By default, connectivity uses terrain
+heights and 3D buildings intersect the rendered water surface.
+An ocean polygon source must be configured (the same vector water source used by Water
+Reflection); an unavailable source is reported in Calculation and does not flood inland areas.
+
+**Use 3D geometry** adds barriers wherever loaded building meshes intersect the selected
+water level. It uses the finest cached 3D building tiles and synthetic buildings, including geometry
+edits. Thin walls can block connections between grid cells; raising the water above them
+allows overtopping. Raised decks leave routes underneath open where the mesh represents
+the opening. Cached tiles remain part of the calculation when they leave the view. Hidden
+coarse parent tiles do not replace detailed children. With Google Photorealistic, land without
+detailed mesh coverage blocks flow instead of falling back to terrain. Tile geometric error
+must be at most a quarter of a grid cell, capped at 5 m, so coarse coastal placeholders cannot
+open a false route through a seawall.
+This also applies on a fresh load and after cache eviction. View the connecting coastline to
+load more detail; an unresolved area is not evidence that it is protected from flooding.
+OSM and synthetic buildings add barriers over the independently loaded terrain grid.
+The calculation refreshes as tiles load or buildings are edited, and the setting saves with the sitch.
+
+**Flow arrows** overlays large red arrows at ocean entrances into substantial inundated
+areas (at least one hectare) and along downhill connections inland. Nearby entrances are
+grouped, and arrows follow the same connected cells as the inundation calculation, respecting
+walls and missing coverage. Use this to inspect possible entry points around a shoreline,
+such as the perimeter of an airport. The arrows update with the water level and geometry;
+they disappear when Inundation is off. This is an equilibrium connectivity diagnostic:
+the arrows show representative potential routes, not water velocity, arrival time, or a
+complete hydraulic simulation. The option saves with the sitch.
+
+Enable **3D Buildings** to load building tiles. Only loaded, displayed geometry contributes;
+hidden cached levels of detail do not. Terrain heights still supply the base ground, so this
+option does not replace the elevation source or fetch buildings outside the views. Calculation
+reports when no 3D geometry is available. Narrow passages remain limited by grid spacing,
+mesh detail, and gaps or errors in the source geometry; drainage and underground culverts
+are not inferred.
+
+This shows the final ocean-connected extent, without flow timing, waves overtopping
+barriers or tides. The separate **Physics → Scenarios → Flood Sim** provides the existing
+particle and heightmap flow simulations. Lowering this surface does not reveal seafloor
+geometry that the terrain provider/clamp has removed.
 
 Note the asymmetry: "Flat" terrain is built at HAE = 0 (the ellipsoid), while the ocean mesh
 is built at the geoid. Two surfaces both reasonably called "sea level", separated by the geoid

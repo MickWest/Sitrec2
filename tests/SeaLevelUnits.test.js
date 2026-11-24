@@ -29,6 +29,8 @@ beforeEach(() => {
         gui: new GUI(), showOceanSurface: true,
         oceanSurfaceLevelFeet: 40, oceanSurfaceDatumOffset: 0.3048, oceanSurfaceWidthKm: 40,
         oceanSurfaceTransparent: false, oceanSurfaceTransparency: 50,
+        oceanSurfaceInundation: true, inundationStatus: "Off", recalculateInundation: jest.fn(),
+        oceanSurfaceUse3D: false, oceanSurfaceFlowArrows: false,
         setOceanSurfaceVisible: jest.fn(),
     });
     ui.buildSeaLevelGUI();
