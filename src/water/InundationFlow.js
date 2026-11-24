@@ -2,8 +2,9 @@
 // Trace links come from the same four-neighbour fill, so they cannot cross a
 // seawall, unknown geometry, or a dry cell. Count the land reached through each
 // link to suppress arrows for tiny puddles and group nearby coastal entrances.
-export function inundationFlowRoutes(trace, heights, ocean, width, cellMeters) {
+export function inundationFlowRoutes(trace, heights, ocean, width, cellMeters, surfaceHeights = null) {
     const {parent, order} = trace;
+    const ground = i => Math.min(heights[i], surfaceHeights?.[i] ?? Infinity);
     const area = new Uint32Array(parent.length), child = new Int32Array(parent.length).fill(-1);
     const minCells = Math.max(4, Math.ceil(10000 / (cellMeters * cellMeters)));
     const spacing = Math.max(4, Math.round(180 / cellMeters));
@@ -27,7 +28,7 @@ export function inundationFlowRoutes(trace, heights, ocean, width, cellMeters) {
             if (!inlet) { inlet = {i, area: 0, coastal: true}; coast.set(key, inlet); }
             inlet.area += area[i];
             if (area[i] > area[inlet.i]) inlet.i = i;
-        } else if (area[i] >= minCells && heights[p] - heights[i] > 0.15) {
+        } else if (area[i] >= minCells && ground(p) - ground(i) > 0.15) {
             candidates.push({i, area: area[i], coastal: false});
         }
     }
@@ -51,11 +52,11 @@ export function inundationFlowRoutes(trace, heights, ocean, width, cellMeters) {
             const next = child[end];
             // Inlet arrows show entry over the coastal sill. Inland arrows
             // specifically follow descending ground toward the lower area.
-            if (!coastal && heights[next] > heights[end] + 0.05) break;
+            if (!coastal && ground(next) > ground(end) + 0.05) break;
             cells.push(next); end = next;
         }
         if (cells.length < 3) continue;
-        if (!coastal && heights[cells[0]] - heights[end] < 0.25) continue;
+        if (!coastal && ground(cells[0]) - ground(end) < 0.25) continue;
         const key = `${bx},${by}`, bucket = occupied.get(key) ?? [];
         bucket.push([x, y]); occupied.set(key, bucket);
         routes.push({cells, coastal, areaMeters2: candidate.area * cellMeters * cellMeters});

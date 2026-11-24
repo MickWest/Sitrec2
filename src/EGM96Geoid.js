@@ -18,11 +18,11 @@
 // a tool whose asserts freeze the page.
 
 import {SITREC_APP} from "./configUtils";
+import {meanSeaLevelFromGrid} from "./EGM96GeoidMath";
 
 const NUM_ROWS = 721;
 const NUM_COLS = 1440;
 const NUM_VALUES = NUM_ROWS * NUM_COLS;
-const INTERVAL = (15 / 60) * (Math.PI / 180); // 15 arc-minutes, in radians
 
 let grid = null;            // Int16Array of undulation in centimetres, row-major
 let loadPromise = null;     // cached in-flight / settled load
@@ -76,11 +76,6 @@ export function isGeoidLoaded() {
     return grid !== null;
 }
 
-const getValue = (row, col) => grid[row * NUM_COLS + col] / 100;
-
-const normalizeRadians = (rads, center = 0) =>
-    rads - (2 * Math.PI) * Math.floor((rads + Math.PI - center) / (2 * Math.PI));
-
 // Mean sea level (geoid undulation N) in metres relative to the WGS84 ellipsoid.
 // Bilinear interpolation over the EGM96 grid — identical algorithm to egm96-universal.
 function meanSeaLevel(latitude, longitude) {
@@ -93,34 +88,7 @@ function meanSeaLevel(latitude, longitude) {
         return 0;
     }
 
-    const lat = normalizeRadians(degToRad(latitude));
-    const lon = normalizeRadians(degToRad(longitude));
-
-    let topRow = Math.floor(((Math.PI / 2) - lat) / INTERVAL);
-    topRow = topRow === NUM_ROWS - 1 ? topRow - 1 : topRow;
-    const bottomRow = topRow + 1;
-
-    const leftCol = Math.floor(normalizeRadians(lon, Math.PI) / INTERVAL);
-    const rightCol = (leftCol + 1) % NUM_COLS;
-
-    const topLeft = getValue(topRow, leftCol);
-    const bottomLeft = getValue(bottomRow, leftCol);
-    const bottomRight = getValue(bottomRow, rightCol);
-    const topRight = getValue(topRow, rightCol);
-
-    const lonLeft = normalizeRadians(leftCol * INTERVAL);
-    const latTop = (Math.PI / 2) - (topRow * INTERVAL);
-
-    const leftProp = (lon - lonLeft) / INTERVAL;
-    const topProp = (latTop - lat) / INTERVAL;
-
-    const top = topLeft + (topRight - topLeft) * leftProp;
-    const bottom = bottomLeft + (bottomRight - bottomLeft) * leftProp;
-    return top + (bottom - top) * topProp;
-}
-
-function degToRad(d) {
-    return d * (Math.PI / 180);
+    return meanSeaLevelFromGrid(grid, latitude, longitude);
 }
 
 // ---- Public API (unchanged from the egm96-universal-backed version) ----

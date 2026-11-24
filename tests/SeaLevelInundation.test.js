@@ -10,7 +10,7 @@ const map = {options: {zScale: 1}};
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 function oceanTexture(seeds = true) {
     const data = new Uint8Array(64 * 64 * 4);
-    if (seeds) data[0] = 255;
+    if (seeds) for (let y = 0; y < 5; y++) for (let x = 0; x < 5; x++) data[(y * 64 + x) * 4] = 255;
     return {image: {getContext: () => ({getImageData: () => ({data})})}, dispose: jest.fn()};
 }
 
@@ -25,13 +25,13 @@ test("reuses height data for level edits and restores a dry region when lowering
     expect(model.update(region, map, 640, 1)).toBeNull();
     await settle();
     expect(model.status).toBe("Ready");
-    expect(model.texture.image.data[1]).toBe(0);
+    expect(model.texture.image.data[6]).toBe(0);
     const texture = model.texture;
     model.suspend();
     model.update(region, map, 640, 2);
-    expect(texture.image.data[1]).toBe(255);
+    expect(texture.image.data[6]).toBe(255);
     model.update(region, map, 640, 1);
-    expect(texture.image.data[1]).toBe(0);
+    expect(texture.image.data[6]).toBe(0);
     expect(loadInundationTerrain).toHaveBeenCalledTimes(1);
     model.dispose();
 });
@@ -49,8 +49,55 @@ test("discarded asynchronous terrain loads cannot replace a more recent region",
     await settle();
     expect(model.texture).toBe(current);
     expect(model.status).toBe("Ready");
-    expect(current.image.data[1]).toBe(255);
+    expect(current.image.data[6]).toBe(255);
     model.dispose();
+});
+
+test("locking cancels an initial terrain load and unlocking can restart the same region", async () => {
+    let finishOld;
+    loadInundationTerrain.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+    const model = new SeaLevelInundation(jest.fn()), region = geometry();
+    model.update(region, map, 640, 3);
+    await settle();
+    model.pauseCalculation();
+    expect(model.controller.signal.aborted).toBe(true);
+    finishOld({heights: new Float32Array(64 * 64).fill(99), missing: 0});
+    await settle();
+    expect(model.texture).toBeNull();
+    model.update(region, map, 640, 3);
+    await settle();
+    expect(model.texture.image.data[6]).toBe(255);
+    expect(loadInundationTerrain).toHaveBeenCalledTimes(2);
+    model.dispose();
+});
+
+test("locking preserves the result and cancels queued geometry work without preventing resume", async () => {
+    jest.useFakeTimers();
+    const model = new SeaLevelInundation(jest.fn()), region = geometry();
+    try {
+        model.update(region, map, 640, 3, [], true);
+        await jest.advanceTimersByTimeAsync(250);
+        model.update(region, map, 640, 3, [], true);
+        const texture = model.texture, routes = model.flowRoutes, barriers = model.buildings.barriers;
+        const pixels = texture.image.data.slice();
+        model.buildings.inputs = null;
+        model.update(region, map, 640, 3, [], true);
+        expect(model.buildings.timer).not.toBeNull();
+        model.pauseCalculation();
+        await jest.advanceTimersByTimeAsync(500);
+        expect(model.texture).toBe(texture);
+        expect(model.texture.image.data).toEqual(pixels);
+        expect(model.flowRoutes).toBe(routes);
+        expect(model.buildings.barriers).toBe(barriers);
+        expect(model.buildings.timer).toBeNull();
+        model.update(region, map, 640, 3, [], true);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.update(region, map, 640, 3, [], true)).toBe(texture);
+        expect(model.buildings.ready).toBe(true);
+        expect(loadInundationTerrain).toHaveBeenCalledTimes(1);
+    } finally {
+        model.dispose(); jest.useRealTimers();
+    }
 });
 
 test("missing ocean coverage stays dry and does not start an elevation download", async () => {
@@ -82,11 +129,16 @@ test("the 3D option reports absent meshes and can be disabled during a pending r
         await jest.advanceTimersByTimeAsync(250);
         model.update(region, map, 640, 1, []);
         expect(model.status).toMatch(/no 3D geometry loaded/);
-        expect(model.texture.image.data[1]).toBe(0);
+        expect(model.texture.image.data[6]).toBe(0);
+        const texture = model.texture;
+        model.suspend();
+        expect(model.buildings).toBeNull();
+        expect(model.buildingMeshes).toBeNull();
+        expect(model.texture).toBe(texture);
         expect(model.update(region, map, 640, 3, [])).toBeNull();
         expect(model.update(region, map, 640, 3, null)).toBe(model.texture);
         expect(model.status).toBe("Ready");
-        expect(model.texture.image.data[1]).toBe(255);
+        expect(model.texture.image.data[6]).toBe(255);
     } finally {
         model.dispose(); jest.useRealTimers();
     }
@@ -102,10 +154,10 @@ test("empty photogrammetry coverage blocks inland flooding instead of falling ba
         model.update(region, map, 640, 3, meshes, true);
         expect(model.status).toMatch(/missing 3D coverage blocks flow/);
         expect(model.texture.image.data[0]).toBe(255);
-        expect(model.texture.image.data[1]).toBe(0);
+        expect(model.texture.image.data[6]).toBe(0);
         expect(model.flowRoutes).toEqual([]);
         model.update(region, map, 640, 3, null, true);
-        expect(model.texture.image.data[1]).toBe(255);
+        expect(model.texture.image.data[6]).toBe(255);
         expect(model.flowRoutes.length).toBeGreaterThan(0);
         model.update(region, map, 640, 3, null, false);
         expect(model.flowRoutes).toEqual([]);

@@ -1,9 +1,9 @@
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6378137, polarRadius: 6356752.314245}}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: () => -30}));
 
-import {BufferGeometry, Float32BufferAttribute, Group, InterleavedBuffer, InterleavedBufferAttribute, Mesh, MeshBasicMaterial} from "three";
+import {BufferGeometry, EventDispatcher, Float32BufferAttribute, Group, InterleavedBuffer, InterleavedBufferAttribute, Mesh, MeshBasicMaterial} from "three";
 import {addInundationTriangle, addInundationCoverageTriangle, connectedInundation} from "../src/water/InundationGrid";
-import {InundationBuildings, inundationBuildingMeshes} from "../src/water/InundationBuildings";
+import {InundationBuildings, InundationMeshCollector, inundationBuildingMeshes, inundationCoverageAtLevel} from "../src/water/InundationBuildings";
 import {LLAToECEF} from "../src/LLA-ECEF-ENU";
 import {mercatorX, mercatorY} from "../src/WaterMaskGeo";
 
@@ -17,6 +17,32 @@ function fill(barriers, level = 5, size = 7) {
     ocean[0] = 1;
     return connectedInundation(heights, ocean, size, size, level, undefined, barriers);
 }
+
+test("coarse ground well below a high tide is usable, while uncertain coastal heights require detail", () => {
+    const coverage = new Uint8Array([1, 1, 1, 0]);
+    const heights = new Float32Array([2, 6, 3, 0]), errors = new Float32Array([8, 8, 2, 0]);
+    expect([...inundationCoverageAtLevel(coverage, heights, errors, 12.192, 5)]).toEqual([1, 0, 1, 0]);
+    expect([...inundationCoverageAtLevel(coverage, heights, errors, 2.31648, 5)]).toEqual([0, 0, 1, 0]);
+});
+
+test("fine children replace coarse heights and barriers without removing uncovered parent cells", () => {
+    const size = 7, coverage = new Uint8Array(49), heights = new Float32Array(49).fill(Infinity);
+    const errors = new Float32Array(49).fill(Infinity);
+    const coarse = new Float32Array([-1,-1,1, 7,-1,1, 7,7,1, -1,7,1]);
+    const fine = new Float32Array([-1,-1,2, 4,-1,2, 4,7,2, -1,7,2]);
+    for (const [vertices, error] of [[fine, 4], [coarse, 8]]) {
+        for (const [a,b,c] of [[0,1,2], [0,2,3]]) addInundationCoverageTriangle(vertices,a,b,c,coverage,size,size,heights,errors,error);
+    }
+    expect(heights[3 * size + 2]).toBe(2);
+    expect(heights[3 * size + 6]).toBe(1);
+    expect(coverage.every(Boolean)).toBe(true);
+    const wall = new Float32Array([2.5,-1,0, 2.5,7,0, 2.5,7,10, 2.5,-1,10]);
+    const barriers = {east: new Uint8Array(49), south: new Uint8Array(49), surfaceErrors: errors};
+    for (const [a,b,c] of [[0,1,2], [0,2,3]]) addInundationTriangle(wall,a,b,c,5,barriers,size,size,8);
+    expect(barriers.east.some(Boolean)).toBe(false);
+    for (const [a,b,c] of [[0,1,2], [0,2,3]]) addInundationTriangle(wall,a,b,c,5,barriers,size,size,2);
+    expect(barriers.east.some(Boolean)).toBe(true);
+});
 
 test("a thin wall blocks flow between cells and can be overtopped", () => {
     const wall = new Float32Array([2.5,-1,0, 2.5,7,0, 2.5,7,10, 2.5,-1,10]);
@@ -56,14 +82,14 @@ test("off-screen cached detail remains in the calculation while coarse ancestors
     mesh.visible = false;
     const solid = mesh.clone();
     solid.visible = true;
-    expect(inundationBuildingMeshes([renderer], [solid], 10)).toEqual([mesh, solid]);
+    expect([...inundationBuildingMeshes([renderer], [solid], 10)]).toEqual([mesh, solid]);
     expect(mesh.matrixWorld.elements.slice(12, 15)).toEqual([10, 20, 30]);
     // Repeated reads must not accumulate a detached tile's group transform.
     inundationBuildingMeshes([renderer], [], 10);
     expect(mesh.matrixWorld.elements.slice(12, 15)).toEqual([10, 20, 30]);
-    expect(inundationBuildingMeshes([renderer], [], 1)).toEqual([]);
+    expect([...inundationBuildingMeshes([renderer], [], 1)]).toEqual([]);
     solid.visible = false;
-    expect(inundationBuildingMeshes([], [solid])).toEqual([]);
+    expect([...inundationBuildingMeshes([], [solid])]).toEqual([]);
 });
 
 test("missing off-screen photogrammetry cannot open a route around a seawall", () => {
@@ -82,16 +108,55 @@ test("missing off-screen photogrammetry cannot open a route around a seawall", (
     expect(connectedInundation(heights, ocean, size, size, 5, undefined, barriers)[24]).toBe(255);
 });
 
-test("detail loaded in one view replaces the other view's cached parent", () => {
+test("partial child loads retain usable parent coverage and deduplicate the views", () => {
     const mesh = () => new Mesh(new BufferGeometry().setAttribute("position", new Float32BufferAttribute([0,0,0], 3)));
     const coarse = mesh(), fine = mesh(), duplicate = mesh();
     const parentA = {content: {uri: "coast.glb"}}, parentB = {content: {uri: "coast.glb"}};
     const childA = {content: {uri: "wall.glb"}, parent: parentA}, childB = {content: {uri: "wall.glb"}, parent: parentB};
     const first = {group: new Group(), forEachLoadedModel: fn => fn(coarse, parentA)};
     const second = {group: new Group(), forEachLoadedModel: fn => fn(fine, childB)};
-    expect(inundationBuildingMeshes([first, second])).toEqual([fine]);
+    expect([...inundationBuildingMeshes([first, second])]).toEqual([coarse, fine]);
     first.forEachLoadedModel = fn => { fn(coarse, parentA); fn(duplicate, childA); };
-    expect(inundationBuildingMeshes([first, second])).toEqual([duplicate]);
+    expect([...inundationBuildingMeshes([first, second])]).toEqual([coarse, duplicate]);
+});
+
+test("tile selection is cached until models change, with listeners removed on disposal", () => {
+    const renderer = new EventDispatcher();
+    renderer.group = new Group();
+    renderer.forEachLoadedModel = jest.fn();
+    const collector = new InundationMeshCollector();
+    collector.collect([renderer], [], 5);
+    collector.collect([renderer], [], 5);
+    renderer.dispatchEvent({type: "tile-visibility-change"});
+    collector.collect([renderer], [], 5);
+    expect(renderer.forEachLoadedModel).toHaveBeenCalledTimes(1);
+    renderer.dispatchEvent({type: "load-model"});
+    collector.collect([renderer], [], 5);
+    expect(renderer.forEachLoadedModel).toHaveBeenCalledTimes(2);
+    renderer.dispatchEvent({type: "dispose-model"});
+    collector.collect([renderer], [], 5);
+    expect(renderer.forEachLoadedModel).toHaveBeenCalledTimes(3);
+    collector.dispose();
+    expect(renderer.hasEventListener("load-model", collector.invalidate)).toBe(false);
+    expect(renderer.hasEventListener("dispose-model", collector.invalidate)).toBe(false);
+});
+
+test("mesh samples correct a high DEM and reject ocean seeds above the water without closing raised decks", () => {
+    const size = 7, heights = new Float32Array(49).fill(10), ocean = new Uint8Array(49);
+    const barriers = {east: new Uint8Array(49), south: new Uint8Array(49), coverage: new Uint8Array(49),
+        surfaceHeights: new Float32Array(49).fill(Infinity)};
+    const ground = new Float32Array([-1,-1,1, 7,-1,1, 7,7,1, -1,7,1]);
+    for (const [a,b,c] of [[0,1,2], [0,2,3]]) addInundationCoverageTriangle(ground, a,b,c, barriers.coverage, size,size, barriers.surfaceHeights);
+    ocean[0] = 1;
+    expect(connectedInundation(heights, ocean, size,size, 2, undefined, barriers).every(Boolean)).toBe(true);
+    // A coast polygon overlapping known elevated land must not start a flood.
+    barriers.surfaceHeights.fill(5);
+    expect(connectedInundation(heights, ocean, size,size, 2, undefined, barriers).some(Boolean)).toBe(false);
+    // A high deck prevents a seed on its top, but water can enter underneath
+    // from an adjacent ocean cell when ground is low and there is no wall.
+    heights.fill(0); barriers.surfaceHeights[0] = 0;
+    ocean[1] = 1;
+    expect(connectedInundation(heights, ocean, size,size, 2, undefined, barriers).every(Boolean)).toBe(true);
 });
 
 test("projects transformed geometry to the same datum and rebuilds after mesh edits", async () => {
@@ -137,5 +202,100 @@ test("projects transformed geometry to the same datum and rebuilds after mesh ed
         expect(model.barriers.east.some(Boolean)).toBe(true);
     } finally {
         model.dispose(); geometry.dispose(); mesh.material.dispose(); jest.useRealTimers();
+    }
+});
+
+test("a synthetic deck does not replace photogrammetry ground or certify missing ground coverage", async () => {
+    jest.useFakeTimers();
+    const rect = {u0: mercatorX(-118) - 0.00001, v0: mercatorY(34) - 0.00001, du: 0.00002};
+    const origin = LLAToECEF(34, -118, -30);
+    const surface = h => {
+        const vertices = [];
+        for (const [lat, lon] of [[33.995,-118.005], [34.005,-118.005], [34.005,-117.995], [33.995,-117.995]]) {
+            LLAToECEF(lat, lon, h - 30).sub(origin).toArray(vertices, vertices.length);
+        }
+        const geometry = new BufferGeometry().setAttribute("position", new Float32BufferAttribute(vertices, 3));
+        geometry.setIndex([0,1,2,0,2,3]);
+        const mesh = new Mesh(geometry, new MeshBasicMaterial());
+        mesh.position.copy(origin); mesh.updateMatrixWorld(true);
+        return mesh;
+    };
+    const ground = surface(1), deck = surface(10), meshes = [ground, deck];
+    meshes.errors = new Map([[ground, 2]]);
+    const model = new InundationBuildings();
+    try {
+        model.update(meshes, rect, 7, 2, true, 5);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.ready).toBe(true);
+        expect(model.surfaceHeights[24]).toBeCloseTo(1, 1);
+        expect(model.surfaceErrors[24]).toBe(2);
+        expect(model.barriers.coverage[24]).toBe(1);
+        model.update([deck], rect, 7, 2, true, 5);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.barriers.coverage.some(Boolean)).toBe(false);
+    } finally {
+        model.dispose();
+        for (const mesh of meshes) { mesh.geometry.dispose(); mesh.material.dispose(); }
+        jest.useRealTimers();
+    }
+});
+
+test("display-cache eviction retains calculation geometry, while a source change releases it", async () => {
+    jest.useFakeTimers();
+    const mesh = new Mesh(new BufferGeometry().setAttribute("position", new Float32BufferAttribute([0,0,0, 1,0,0, 0,1,0], 3)));
+    const model = new InundationBuildings(), rect = {}, sourceKey = {};
+    const projected = [{vertices: new Float32Array([-1,-1,1, 10,-1,1, -1,10,1]), minHeight: 1, maxHeight: 1}];
+    jest.spyOn(model, "project").mockResolvedValue(projected);
+    const meshes = [mesh];
+    Object.assign(meshes, {sourceKey, errors: new Map([[mesh,2]]), meshKeys: new Map([[mesh,"tile/0"]])});
+    try {
+        model.update(meshes,rect,7,2,true,5);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.barriers.coverage[24]).toBe(1);
+        expect(model.records.get("tile/0").input).not.toHaveProperty("mesh");
+        const evicted = []; evicted.sourceKey = sourceKey;
+        model.update(evicted,rect,7,3,true,5);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.barriers.coverage[24]).toBe(1);
+        expect(model.surfaceHeights[24]).toBe(1);
+        expect(model.project).toHaveBeenCalledTimes(1);
+        evicted.sourceKey = {};
+        model.update(evicted,rect,7,3,true,5);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.records.size).toBe(0);
+        expect(model.barriers.coverage.some(Boolean)).toBe(false);
+    } finally {
+        model.dispose(); mesh.geometry.dispose(); mesh.material.dispose(); jest.useRealTimers();
+    }
+});
+
+test("incoming tiles do not starve a scheduled or running geometry batch", async () => {
+    jest.useFakeTimers();
+    const mesh = () => new Mesh(new BufferGeometry().setAttribute("position", new Float32BufferAttribute([0,0,0,1,0,0,0,1,0], 3)));
+    const a = mesh(), b = mesh(), model = new InundationBuildings(), rect = {};
+    const projected = [{vertices: new Float32Array([0,0,1,1,0,1,0,1,1]), minHeight: 1, maxHeight: 1}];
+    let finish;
+    jest.spyOn(model, "project").mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(projected);
+    try {
+        model.update([a],rect,7,2);
+        const generation = model.generation;
+        await jest.advanceTimersByTimeAsync(100);
+        model.update([a,b],rect,7,2);
+        expect(model.generation).toBe(generation);
+        await jest.advanceTimersByTimeAsync(150);
+        expect(model.running).toBe(true);
+        model.update([a,b],rect,7,2);
+        expect(model.generation).toBe(generation);
+        finish(projected);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(model.ready).toBe(true);
+        model.update([a,b],rect,7,2);
+        await jest.advanceTimersByTimeAsync(250);
+        expect(model.ready).toBe(true);
+        expect(model.meshCount).toBe(2);
+    } finally {
+        model.dispose();
+        for (const object of [a,b]) { object.geometry.dispose(); object.material.dispose(); }
+        jest.useRealTimers();
     }
 });

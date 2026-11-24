@@ -17,7 +17,7 @@ import {GlobalScene} from "../LocalFrame";
 import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2, Vector3} from "three";
 import * as LAYER from "../LayerMasks";
 import {DEFAULT_LRU_CACHE, LRUCache, TilesRenderer} from "3d-tiles-renderer";
-import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
+import {GLTFExtensionsPlugin, LoadRegionPlugin, SphereRegion, TilesFadePlugin} from "3d-tiles-renderer/plugins";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
 import {TilesDayNightPlugin} from "../TilesDayNightPlugin";
 import {TilesEdgesPlugin} from "../TilesEdgesPlugin";
@@ -38,8 +38,77 @@ import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
 import {TileViewErrorCache} from "../rendering/TileViewErrorCache";
 import {getPanoramaFrame, isPanoramicCamera, panoramic} from "../PanoramicCamera";
 import {panoramaFrusta, panoramaIntersectsSphere, panoramaPixelsPerRadian} from "../rendering/PanoramaMath";
+import {inundationLoadMask, inundationMaskIntersects} from "../water/InundationLoadMask";
+import {InundationLoadSchedule} from "../water/InundationLoadSchedule";
+import {mercatorX, mercatorY} from "../WaterMaskGeo";
 
 const DEG2RAD = Math.PI / 180;
+
+class InundationLoadRegion extends SphereRegion {
+    constructor(options, renderer) {
+        super(options);
+        this.renderer = renderer;
+        this.bounds = new Sphere();
+    }
+
+    setGrid(grid) {
+        const level = grid.level;
+        const barriers = grid.buildings?.barriers;
+        const coverage = barriers?.level === grid.level ? barriers.coverage : null;
+        const changed = this.heights !== grid.heights || this.waterLevel !== grid.level
+            || this.rect !== grid.geometry.maskRect || this.radius !== this.sphere.radius || this.target !== this.errorTarget;
+        if (!changed && this.coverage === coverage) return false;
+        this.heights = grid.heights;
+        this.level = level;
+        this.waterLevel = grid.level;
+        this.radius = this.sphere.radius;
+        this.target = this.errorTarget;
+        this.rect = grid.geometry.maskRect;
+        this.size = grid.size;
+        this.coverage = coverage;
+        const radiusCells = this.radius / grid.cellMeters;
+        this.loadMask = inundationLoadMask(grid.heights, grid.ocean, grid.size, level, coverage, null, grid.oceanSeeds, radiusCells);
+        this.fineMask = coverage ? inundationLoadMask(grid.heights, grid.ocean, grid.size, level, coverage, barriers.rawCoverage, grid.oceanSeeds, radiusCells) : null;
+        this.fineError = grid.buildings?.fineError ?? this.errorTarget;
+        this.fineVolumes = new WeakMap();
+        if (changed) this.schedule = new InundationLoadSchedule(this.loadMask, this.size,
+            this.radius / grid.cellMeters, Math.max(1, Math.ceil(1000 / grid.cellMeters)),
+            Math.max(1, Math.ceil(250 / grid.cellMeters)), this.renderer.frameCount);
+        return true;
+    }
+
+    advance(grid, pv) {
+        const settled = grid.buildings?.ready && !pv._needsLibUpdate && !pv._isUpdatePending();
+        return this.schedule.advance(this.loadMask, settled, this.renderer.frameCount,
+            this.renderer.lruCache.isFull() && this.renderer.stats.refused > 0);
+    }
+
+    intersectsTile(volume) {
+        const block = this.schedule?.current;
+        if (!block || !super.intersectsTile(volume)) return false;
+        volume.getSphere(this.bounds);
+        this.bounds.applyMatrix4(this.renderer.group.matrixWorld);
+        if (this.bounds.radius > 50000) { this.fineVolumes.set(volume, false); return true; }
+        const lla = ECEFToLLAVD_radii(this.bounds.center);
+        const scale = this.size / this.rect.du;
+        let u = mercatorX(lla.y) - this.rect.u0;
+        u -= Math.round(u - this.rect.du / 2);
+        const x = u * scale, y = (mercatorY(lla.x) - this.rect.v0) * scale;
+        const radius = this.bounds.radius * scale / (40075016.686 * Math.max(0.001, Math.cos(lla.x * DEG2RAD)));
+        const x0 = Math.max(x - radius, block.x0), y0 = Math.max(y - radius, block.y0);
+        const x1 = Math.min(x + radius, block.x1), y1 = Math.min(y + radius, block.y1);
+        if (x0 > x1 || y0 > y1) return false;
+        this.fineVolumes.set(volume, !!this.fineMask && inundationMaskIntersects(this.fineMask, this.size, x0, y0, x1, y1));
+        return inundationMaskIntersects(this.loadMask, this.size, x0, y0, x1, y1);
+    }
+
+    calculateDistance(volume) { return volume.distanceToPoint(this.sphere.center); }
+
+    calculateError(tile, renderer) {
+        const target = this.fineVolumes.get(tile.engineData.boundingVolume) ? this.fineError : this.errorTarget;
+        return tile.geometricError - target + renderer.errorTarget;
+    }
+}
 
 // Reused scratch raycaster for groundBelow() so WASD walking doesn't allocate one per frame.
 const _groundRaycaster = new Raycaster();
@@ -600,11 +669,9 @@ class PerViewTiles {
         this.renderer.registerPlugin(this.fadePlugin);
 
         // Tile LOD: the renderer's global screen-space-error target. Lower = sharper but more
-        // (billed) tile fetches. Overrides the Google plugin's recommended 20. Ordinary
-        // frustum-based loading with progressive parent-to-child refinement — no off-screen
-        // load volume (an earlier camera-centred LoadRegionPlugin SphereRegion was reverted
-        // because a non-mask region force-loads tiles OUTSIDE the frustum too, costing extra
-        // root-tileset requests behind/beside the camera without reliably buying near detail).
+        // (billed) tile fetches. Overrides the Google plugin's recommended 20.
+        // Ordinary views load by camera frustum. Inundation can additionally
+        // request a fixed region of low coastal land via setInundationRegion.
         this.renderer.errorTarget = errorTarget;
         // Keep the default traversal strategy. It loads renderable parent tiles first, then
         // progressively swaps in children as they arrive; the experimental optimized strategy
@@ -642,6 +709,7 @@ class PerViewTiles {
             setRenderOne(true);
         };
         this.renderer.addEventListener("needs-update", this._onNeedsUpdate);
+        this.renderer.addEventListener("dispose-model", this._onNeedsUpdate);
 
         this.renderer.group.layers.mask = layerMask;
 
@@ -880,6 +948,7 @@ class PerViewTiles {
         parentGroup.remove(this.renderer.group);
         this.renderer.removeEventListener("tile-visibility-change", this._onTileVisibilityChange);
         this.renderer.removeEventListener("needs-update", this._onNeedsUpdate);
+        this.renderer.removeEventListener("dispose-model", this._onNeedsUpdate);
         if (this.treeFlattener) {
             this.treeFlattener.dispose();
             this.treeFlattener = null;
@@ -1494,6 +1563,52 @@ export class CNodeBuildings3DTiles extends CNode {
         }
     }
 
+    // A fixed, bounded detail region for inundation. It refines the coastline
+    // independently of the current camera, using only one view's tile cache.
+    // Unknown land outside loaded coverage remains closed in the flood solver.
+    setInundationRegion(center = null, radius = 0, errorTarget = 5, grid = null) {
+        const activeViews = Object.keys(this._perView).filter(id => NodeMan.get(id, false)?.visible);
+        const viewId = activeViews.includes("lookView") ? "lookView" : activeViews[0];
+        for (const [id, pv] of Object.entries(this._perView)) {
+            if (!center || !grid?.heights || radius <= 0 || this.source !== "google-photorealistic" || id !== viewId) {
+                if (pv.inundationLoadPlugin) {
+                    pv.renderer.unregisterPlugin(pv.inundationLoadPlugin);
+                    pv.inundationLoadPlugin = null;
+                    pv.inundationRegion = null;
+                    pv._needsLibUpdate = true;
+                }
+                continue;
+            }
+            pv.renderer.group.updateWorldMatrix(true, false);
+            const localCenter = center.clone().applyMatrix4(pv.renderer.group.matrixWorld.clone().invert());
+            if (!pv.inundationLoadPlugin) {
+                pv.inundationRegion = new InundationLoadRegion({sphere: new Sphere(localCenter, radius), errorTarget}, pv.renderer);
+                pv.inundationRegion.setGrid(grid);
+                pv.inundationLoadPlugin = new LoadRegionPlugin({regions: [pv.inundationRegion]});
+                pv.inundationLoadPlugin.name = "INUNDATION_LOAD_REGION";
+                pv.renderer.registerPlugin(pv.inundationLoadPlugin);
+                pv._needsLibUpdate = true;
+            } else {
+                const region = pv.inundationRegion;
+                if (!region.sphere.center.equals(localCenter) || region.sphere.radius !== radius || region.errorTarget !== errorTarget) {
+                    region.sphere.set(localCenter, radius);
+                    region.errorTarget = errorTarget;
+                    pv._needsLibUpdate = true;
+                }
+                if (region.setGrid(grid)) pv._needsLibUpdate = true;
+                if (region.advance(grid, pv)) pv._needsLibUpdate = true;
+            }
+        }
+    }
+
+    inundationCacheFull() {
+        return Object.values(this._perView).some(pv => pv.inundationRegion?.schedule.cacheLimited);
+    }
+
+    inundationLoading() {
+        return Object.values(this._perView).some(pv => pv.inundationRegion?.schedule.current);
+    }
+
     update(f) {
         super.update(f);
 
@@ -1539,7 +1654,7 @@ export class CNodeBuildings3DTiles extends CNode {
         // loop, which re-runs this update, re-detects work via the per-view
         // grace/pending check above, and re-arms.
         if (this.trackGround?.update()) active = true;
-        this.updateWhilePaused = active;
+        this.updateWhilePaused = active || this.inundationLoading();
 
         // Tile geometry stops moving the moment `active` falls away: nothing queued,
         // downloading, parsing or fading, and no LOD swap left in flight. Announce

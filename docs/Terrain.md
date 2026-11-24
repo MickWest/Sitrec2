@@ -177,7 +177,12 @@ connecting pass or channel. Lakes do not start a flood. Lowering the level recal
 the extent rather than leaving water trapped from a previous higher setting. Turn
 Inundation off to show the unrestricted surface, including enclosed low areas.
 
-The **Calculation** field shows progress. **Recalculate inundation** retries missing data.
+The **Calculation** field shows **Loading 3D detail** progress as usable coverage grows.
+Brief calculation stages do not have separate progress indicators. The heavy calculation
+runs in a background worker so the view remains interactive. Tile projections and waterline intersections are
+cached across camera moves and display-tile eviction; arriving tiles reuse earlier work.
+Changing the level reuses terrain and coverage samples and recalculates waterline barriers.
+**Recalculate inundation** clears these caches and retries missing data.
 Coverage must include both the ocean and the connecting route; routes outside it are not
 considered. The calculation uses the selected elevation source and mapped ocean polygons,
 independent of camera detail. Missing elevation blocks flow. It samples at roughly 10 m,
@@ -189,16 +194,34 @@ An ocean polygon source must be configured (the same vector water source used by
 Reflection); an unavailable source is reported in Calculation and does not flood inland areas.
 
 **Use 3D geometry** adds barriers wherever loaded building meshes intersect the selected
-water level. It uses the finest cached 3D building tiles and synthetic buildings, including geometry
+water level. It uses cached 3D building tiles and synthetic buildings, including geometry
 edits. Thin walls can block connections between grid cells; raising the water above them
 allows overtopping. Raised decks leave routes underneath open where the mesh represents
-the opening. Cached tiles remain part of the calculation when they leave the view. Hidden
-coarse parent tiles do not replace detailed children. With Google Photorealistic, land without
-detailed mesh coverage blocks flow instead of falling back to terrain. Tile geometric error
-must be at most a quarter of a grid cell, capped at 5 m, so coarse coastal placeholders cannot
-open a false route through a seawall.
-This also applies on a fresh load and after cache eviction. View the connecting coastline to
-load more detail; an unresolved area is not evidence that it is protected from flooding.
+the opening. Cached tiles remain part of the calculation when they leave the view. Each cell
+uses the finest available sample; a partially loaded child does not discard the parent's
+remaining coverage, and coarse barriers do not override finer ground. With Google Photorealistic, uncertain
+mesh coverage blocks flow instead of falling back to terrain. Near the waterline, tile
+geometric error must be at most a quarter of a grid cell, capped at 5 m. Coarser cells are
+also usable where their entire height/error interval lies below or above the water. A high
+tide therefore does not require maximum detail across ground that is clearly submerged.
+Mesh samples can reveal lower ground than the DEM, and an ocean polygon overlapping
+known elevated geometry cannot start a flood on top of it.
+Flood sources start two grid cells inside mapped ocean, rather than on uncertain shoreline
+pixels that may lie behind a seawall. Water reaches the shoreline through the same geometry
+and coverage checks as the inland flood.
+
+**3D detail radius** loads Google geometry around the sea surface center independently of
+the camera. It uses the selected large units and defaults to 5 km. Loading targets low land
+and the immediate coastal margin, rather than the open ocean or high inland ground. Increase
+the radius to include a connecting route; larger radii need more downloads and memory.
+Calculation shows loading progress and the percentage of low-land and shoreline cells resolved
+within that radius. It loads small areas in sequence, using smaller sections if an area fills
+the cache. Completed samples are retained separately from the display tile cache,
+so imagery can be released while the calculation loads remaining areas. Near-waterline cells
+request finer geometry where needed. The radius may be smaller than Coverage. Missing or
+uncertain areas still block flow; a dry unresolved area is not evidence of flood protection.
+Incomplete coverage remains explicit after the loading pass. Recalculate retries missing
+areas; reducing the detail radius focuses loading on the area of interest.
 OSM and synthetic buildings add barriers over the independently loaded terrain grid.
 The calculation refreshes as tiles load or buildings are edited, and the setting saves with the sitch.
 
@@ -211,10 +234,16 @@ they disappear when Inundation is off. This is an equilibrium connectivity diagn
 the arrows show representative potential routes, not water velocity, arrival time, or a
 complete hydraulic simulation. The option saves with the sitch.
 
-Enable **3D Buildings** to load building tiles. Only loaded, displayed geometry contributes;
-hidden cached levels of detail do not. Terrain heights still supply the base ground, so this
-option does not replace the elevation source or fetch buildings outside the views. Calculation
-reports when no 3D geometry is available. Narrow passages remain limited by grid spacing,
+**Lock Calculation** freezes the displayed water surface, inundation mask and flow arrows
+while you move around. It pauses pending calculations and additional inundation detail
+requests. Calculation controls stay disabled until you unlock; water visibility and
+transparency remain adjustable. Unlock to refresh using the current camera and geometry.
+The lock resets when loading a sitch because calculated flood data is not saved.
+
+Enable **3D Buildings** to load building tiles. Inundation retains sampled geometry when it
+leaves the view and uses the finest available data at each cell. Terrain heights still supply
+the base ground outside photogrammetric coverage. Calculation reports unresolved coverage.
+Narrow passages remain limited by grid spacing,
 mesh detail, and gaps or errors in the source geometry; drainage and underground culverts
 are not inferred.
 

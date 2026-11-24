@@ -1,16 +1,31 @@
 // Equilibrium inundation from ocean seeds. Four neighbours prevent water
 // leaking diagonally through a closed corner. Unknown heights are barriers.
 // Recomputed from scratch when the level falls, so disconnected basins drain.
-export function connectedInundation(heights, ocean, width, height, level, wet = new Uint8Array(heights.length), barriers = null, trace = null) {
+export function connectedInundation(heights, ocean, width, height, level, wet = new Uint8Array(heights.length), barriers = null, trace = null, seeds = ocean) {
     wet.fill(0);
     const queue = new Uint32Array(heights.length);
     const parent = trace ? new Int32Array(heights.length).fill(-1) : null;
     let head = 0, tail = 0;
     for (let i = 0; i < ocean.length; i++) {
-        if (ocean[i]) { wet[i] = 255; queue[tail++] = i; }
+        // A coastline polygon can overlap a seawall or reclaimed land. Do not
+        // create water on a known surface above this level, behind its barrier.
+        const surface = barriers?.surfaceHeights?.[i];
+        if (seeds[i] && !(Number.isFinite(surface) && surface > level)) wet[i] = 255;
+    }
+    // Only the source boundary can spread into dry cells. Avoid walking the
+    // millions of already-wet ocean interiors at every slider change.
+    for (let i = 0; i < wet.length; i++) if (wet[i]) {
+        const x = i % width;
+        if ((x > 0 && !wet[i - 1]) || (x + 1 < width && !wet[i + 1])
+            || (i >= width && !wet[i - width]) || (i + width < wet.length && !wet[i + width])) queue[tail++] = i;
     }
     const visit = (i, from) => {
-        if (!wet[i] && (!barriers?.coverage || barriers.coverage[i]) && Number.isFinite(heights[i]) && heights[i] <= level) {
+        // Detailed meshes can reveal lower ground than the DEM. Above-water
+        // meshes still act through their cross-section, leaving raised decks
+        // open underneath rather than treating every roof as a solid column.
+        const ground = Math.min(heights[i], barriers?.surfaceHeights?.[i] ?? Infinity);
+        if (!wet[i] && (!barriers?.coverage || barriers.coverage[i])
+            && (ocean[i] || Number.isFinite(ground) && ground <= level)) {
             wet[i] = 255;
             queue[tail++] = i;
             if (parent) parent[i] = from;
@@ -27,9 +42,29 @@ export function connectedInundation(heights, ocean, width, height, level, wet = 
     return wet;
 }
 
+// Coastline polygons and the terrain mesh do not align exactly. Start offshore,
+// then reach the shoreline through the same barrier checks as inland flooding.
+// This prevents a shoreline pixel behind a seawall from becoming its own source.
+export function inundationOceanSeeds(ocean, width, height, inset = 2) {
+    let seeds = ocean.slice();
+    for (let step = 0; step < inset; step++) {
+        const next = seeds.slice();
+        for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+            const i = y * width + x;
+            if (!seeds[i]) continue;
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+                const xx = x + dx, yy = y + dy;
+                if (xx >= 0 && xx < width && yy >= 0 && yy < height && !seeds[yy * width + xx]) next[i] = 0;
+            }
+        }
+        seeds = next;
+    }
+    return seeds;
+}
+
 // Rasterize the actual mesh footprint, not its bounding box (which can span
 // unloaded holes). Unknown land is never an open route in photogrammetry mode.
-export function addInundationCoverageTriangle(vertices, a, b, c, coverage, width, height) {
+export function addInundationCoverageTriangle(vertices, a, b, c, coverage, width, height, surfaceHeights = null, surfaceErrors = null, error = 0) {
     const ax = vertices[a * 3], ay = vertices[a * 3 + 1];
     const bx = vertices[b * 3], by = vertices[b * 3 + 1];
     const cx = vertices[c * 3], cy = vertices[c * 3 + 1];
@@ -40,19 +75,33 @@ export function addInundationCoverageTriangle(vertices, a, b, c, coverage, width
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const u = ((bx - x) * (cy - y) - (by - y) * (cx - x)) / area;
         const v = ((cx - x) * (ay - y) - (cy - y) * (ax - x)) / area;
-        if (u >= -1e-6 && v >= -1e-6 && u + v <= 1 + 1e-6) coverage[y * width + x] = 1;
+        if (u >= -1e-6 && v >= -1e-6 && u + v <= 1 + 1e-6) {
+            const i = y * width + x;
+            coverage[i] = 1;
+            if (surfaceHeights) {
+                const h = u * vertices[a * 3 + 2] + v * vertices[b * 3 + 2] + (1 - u - v) * vertices[c * 3 + 2];
+                if (surfaceErrors && error < surfaceErrors[i] - 1e-5) {
+                    surfaceErrors[i] = error; surfaceHeights[i] = h;
+                } else if (!surfaceErrors || error <= surfaceErrors[i] + 1e-5) surfaceHeights[i] = Math.min(surfaceHeights[i], h);
+            }
+        }
     }
 }
 
 // A mesh/water intersection blocks connections BETWEEN cells. This preserves
 // thin walls which a cell-centre height sample could miss, and leaves passages
 // beneath raised bridge decks open. Coordinates are in cell-centre units.
-export function addInundationBarrier(ax, ay, bx, by, barriers, width, height) {
+export function addInundationBarrier(ax, ay, bx, by, barriers, width, height, error = 0) {
     const dx = bx - ax, dy = by - ay;
     if (Math.abs(dx) + Math.abs(dy) < 1e-8) return;
     const mark = (array, x, y, horizontal) => {
         if (x >= 0 && y >= 0 && x < width - (horizontal ? 1 : 0) && y < height - (horizontal ? 0 : 1)) {
-            array[y * width + x] = 1;
+            const i = y * width + x, next = i + (horizontal ? 1 : width);
+            if (barriers.surfaceErrors && barriers.surfaceErrors[i] < error - 1e-5 && barriers.surfaceErrors[next] < error - 1e-5) return;
+            // The retained geometry cache records sparse edges before applying
+            // the current coverage/LOD. Both paths use exactly this rasterizer.
+            if (barriers.recordEdge) barriers.recordEdge(horizontal, i);
+            else array[i] = 1;
         }
     };
     if (Math.abs(dy) > 1e-10) {
@@ -76,7 +125,7 @@ export function addInundationBarrier(ax, ay, bx, by, barriers, width, height) {
     }
 }
 
-export function addInundationTriangle(vertices, a, b, c, level, barriers, width, height) {
+export function addInundationTriangle(vertices, a, b, c, level, barriers, width, height, error = 0) {
     const aboveA = vertices[a * 3 + 2] > level, aboveB = vertices[b * 3 + 2] > level;
     const aboveC = vertices[c * 3 + 2] > level;
     if (aboveA === aboveB && aboveB === aboveC) return;
@@ -94,7 +143,7 @@ export function addInundationTriangle(vertices, a, b, c, level, barriers, width,
         const x = vertices[i] + t * (vertices[j] - vertices[i]);
         const y = vertices[i + 1] + t * (vertices[j + 1] - vertices[i + 1]);
         if (count++ === 0) { px = x; py = y; }
-        else addInundationBarrier(px, py, x, y, barriers, width, height);
+        else addInundationBarrier(px, py, x, y, barriers, width, height, error);
     }
 }
 

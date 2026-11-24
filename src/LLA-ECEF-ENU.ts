@@ -4,6 +4,7 @@
 import {Matrix3, Vector3} from "three";
 import {Globals, NodeMan, setRenderOne} from "./Globals";
 import {assert} from "./assert";
+import {ecefToGeodetic} from "./GeodesyMath";
 
 /** [latitude, longitude, altitude] tuple — angles in radians, altitude in meters. */
 export type LLATuple = [number, number, number];
@@ -140,41 +141,7 @@ export function RLLAToECEF_radii(latitude: number, longitude: number, altitude: 
  *  The single-step Bowring approximation has ~10m error at 10km altitude on extreme ellipsoids
  *  (e.g. the 0.5× polar radius test ellipsoid). Iterating the latitude converges to sub-mm. */
 export function ECEFToLLA_radii(X: number, Y: number, Z: number): LLATuple {
-    const a = Globals.equatorRadius;
-    const b = Globals.polarRadius;
-    const asqr = a*a;
-    const bsqr = b*b;
-    const e2      = (asqr - bsqr) / asqr;
-    const eprime2 = (asqr - bsqr) / bsqr;
-
-    const p        = Math.sqrt(X*X + Y*Y);
-    const theta    = Math.atan((Z*a) / (p*b));
-    const sintheta = Math.sin(theta);
-    const costheta = Math.cos(theta);
-
-    // Bowring initial estimate
-    let latitude  = Math.atan2(
-        Z + eprime2 * b * sintheta * sintheta * sintheta,
-        p - e2 * a * costheta * costheta * costheta
-    );
-
-    // Iterate to converge latitude (needed for high eccentricity or high altitude)
-    for (let i = 0; i < 5; i++) {
-        const sinLat = Math.sin(latitude);
-        const N = a / Math.sqrt(1 - e2 * sinLat * sinLat);
-        const newLat = Math.atan2(Z + e2 * N * sinLat, p);
-        if (Math.abs(newLat - latitude) < 1e-15) break;
-        latitude = newLat;
-    }
-
-    const longitude = Math.atan2(Y, X);
-    const N         = getN_radii(latitude);
-    const cosLat    = Math.cos(latitude);
-    // Near the poles cos(lat)→0 and p→0, so use the Z-based formula instead.
-    const altitude  = Math.abs(cosLat) > 1e-10
-        ? (p / cosLat) - N
-        : Math.abs(Z) / Math.abs(Math.sin(latitude)) - N * (1 - e2);
-    return [latitude, longitude, altitude];
+    return ecefToGeodetic(X, Y, Z, Globals.equatorRadius, Globals.polarRadius) as LLATuple;
 }
 
 
