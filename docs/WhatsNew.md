@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.207.0 (2026-11-24)
+
+### New Features
+- **Glints** (Terrain → Terrain Tweaks → Glints): *Highlight sun reflection* colors each terrain and 3D building face that reflects sunlight toward the camera within the *Glint tolerance* angle (5° by default). *Glint color*, *Glint transparency (%)* and *Blink* set how the highlight looks. *Use Look Camera* tests the reflections toward the look camera in both views, in place of each view's own camera. The settings save with the sitch.
+- **Show Sun Arrows** (Terrain → Terrain Tweaks → Glints): each 3D view shows a yellow arrow that points toward the Sun, at the place where the center of the view meets the Earth ellipsoid. No arrow shows when the view points away from the Earth. The setting saves with the sitch.
+- **Use 3D geometry** and **3D detail radius** (Terrain → Sea Level): with *Inundation* on, loaded 3D building tiles and synthetic buildings now act as walls that the water must go over or around. With Google Photorealistic tiles, Sitrec also loads detailed tiles within the *3D detail radius* (5 km by default) around the center of the sea surface, also off screen, and land with no usable 3D detail stops the water. *Calculation* shows how much of the low land and shoreline within the radius has usable detail. *Use 3D geometry* is off by default, and both settings save with the sitch.
+- **Flow arrows** (Terrain → Sea Level): large red arrows show where ocean water can enter flooded areas of at least one hectare, and the main downhill routes inland. They show possible routes at the chosen level, not flow speed or timing. The setting saves with the sitch.
+- **Lock Calculation** (Terrain → Sea Level): freezes the water, the inundation and the flow arrows while you move around. The calculation controls are disabled until you unlock, but *Transparent water* and *Transparency (%)* still work. The lock is not saved and turns off when a sitch loads.
+- **Satellites in Celestial Lock** (Camera → Heading → Camera Heading → Celestial Lock): *Celestial Object* now also accepts a loaded satellite by name, the start of its name, or its NORAD number, for example ISS or 25544. The camera follows the satellite as the time and the camera position change. Load orbital data for the viewing date first. Simulated Starlinks cannot be selected.
+- **Chat: point at or lock on a satellite**: the chat now accepts commands such as *point at ISS*, *point the camera at 25544* and *lock on ISS*.
+
+### Improvements
+- **Inundation in the background** (Terrain → Sea Level): the inundation calculation now runs in the background, so the view stays responsive. While new 3D detail refines the result, the last finished water stays visible. After a change of level, the water shows again when the new result is ready.
+- **Flood start** (Terrain → Sea Level → Inundation): the water now starts a little out from the mapped coastline and reaches the shore through the same checks as the land, so a coastline drawn over a seawall cannot put water behind it.
+- **Tracks & Guides** (Satellites → Advanced): the *Satellite to Track* and *Satellite to Track 2* fields are now always in this folder with the other track and guide controls.
+
+### Bug Fixes
+- Fixed a one-time *point at* from the chat being undone by another *Camera Heading* source such as *To Target*, or aiming wrongly with *Relative Heading* or *Satellite Mode* on. It now sets *Camera Heading* to *Manual*, and turns off *Relative Heading*, *Satellite Mode* and *Free Look Camera*.
+- Fixed a one-time *point at* a low Sun, Moon or planet aiming slightly off the body as it is drawn in the sky.
+
 ## Version 2.206.1 (2026-11-24)
 
 ### Bug Fixes

@@ -252,6 +252,20 @@ entry here: an id, what the code does, where the data goes, the release, and its
   destination other than the configured vector water source and the selected elevation source,
   or any other data in the requests is a finding.
 
+### `inundation-3d-detail-tiles` — accepted 2.207.0 (contract widened)
+- **Code:** `src/nodes/CNodeBuildings3DTiles.js` (`setInundationRegion`) and
+  `src/water/InundationLoadSchedule.js`, used by `src/nodes/CNodeTerrainUI.js`. While the Sea
+  Level surface is shown with *Inundation* and *Use 3D geometry* on, and Google photorealistic
+  3D tiles are the shown buildings layer, one view's 3D tiles renderer gets a load region: a
+  sphere around the sea surface center with the *3D detail radius*. The renderer loads the
+  finest tiles in that region, offscreen parts included, so that walls and buildings can block
+  the water. This also happens when a saved sitch with these settings opens.
+- **Data:** the requests for the 3D tiles in that region, to `tile.googleapis.com`. Together they
+  show the area around the sea surface center, which follows the look camera. No other field.
+- **Limits:** only while all four settings above hold. *Use 3D geometry* is off by default. The
+  radius is 0.5 to 10 km and at most half of Coverage. A larger region, a request when one of the
+  settings is off, another tile host, or any other data in the requests is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

@@ -160,7 +160,7 @@
     {
       "host": "tile.googleapis.com",
       "purpose": "photorealistic 3D tiles, and street-level imagery fetched by the server at a chosen position",
-      "trigger": "3D tiles automatically while that layer is shown, including the finest tiles along each track that is locked to the ground, offscreen parts included; street-level imagery when the user asks for it",
+      "trigger": "3D tiles automatically while that layer is shown, including the finest tiles along each track that is locked to the ground, and within the 3D detail radius of Sea Level inundation when Use 3D geometry is on (accepted pattern inundation-3d-detail-tiles), offscreen parts included; street-level imagery when the user asks for it",
       "mayReceive": ["coarse-area", "precise-position"]
     },
     {
