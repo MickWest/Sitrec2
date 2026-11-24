@@ -13,11 +13,14 @@ export const sharedUniforms = {
     showTileEdges: {value: false},
 
     // Water Reflection (CNodeWaterReflection). Scoped ON only around the
-    // look view's GlobalScene render, so mainView never sees a reflection.
+    // view's GlobalScene render (normally look-only; the sea shell uses both).
     // waterReflection is the master gate (0 = off); waterNightFactor is
     // separate so the effect can run by day (sun glitter on dark blue water)
     // as well as by night (stars and moonglade on near-black water).
     waterReflection: {value: 0.0},
+    // An explicit sea shell owns the waterline; don't also shade the old
+    // imagery/3D-tile water at a different elevation.
+    waterSurfaceOnly: {value: 0.0},
     waterNightFactor: {value: 0.0},
     // What daytime water attenuates towards, in sRGB. Deep water is dark blue,
     // not the flat pale fill the map paints it.

@@ -266,7 +266,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // dawn exactly as the night sky itself does. The cube holds the
                 // night sky rendered from the origin, in LINEAR radiance — which
                 // is why this is added AFTER the sRGB->linear conversion above.
-                if (waterReflection > 0.0) {
+                if (waterReflection > 0.0 && waterSurfaceOnly < 0.5) {
                     // Where a vector water mask was loaded for this tile, it IS
                     // the answer: real water polygons, rasterised with the
                     // canvas's antialiasing, so the shoreline is fractional

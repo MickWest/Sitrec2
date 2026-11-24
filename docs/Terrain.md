@@ -145,9 +145,28 @@ from global bathymetry, and Sitrec discards them: every ground query clamps to
 clamp does not test for water. Dry land below sea level, such as Death Valley, is raised to sea
 level too, in the drawn terrain and in every query.
 
-The separate **Ocean Surface (Beta)** mesh renders only when Google 3D tiles are active. It
-draws water wherever the terrain is no more than about 2 m above the geoid, so very low land
-gets water too.
+**Terrain → Sea Level** adds a continuous, curved water surface in both 3D views. It works
+with ordinary terrain, Google Photorealistic tiles, and Cesium OSM or synthetic buildings.
+The loaded geometry determines the waterline; the surface is not restricted to the current
+coastline. **Level (ft MSL)** raises or lowers it relative to EGM96 mean sea level. For
+example, **40 ft** raises the water by **12.192 m**. These settings save with the sitch.
+
+**Datum correction (m)** adds a local vertical offset separately from the simulated level.
+Use it to align a surveyed reference waterline with a dataset using a different vertical
+datum. For city-scale comparisons, use the ellipsoid Earth model, Elevation Scale 1, and
+wait for detailed terrain/building tiles to load. Surface tessellation and local coordinates
+retain centimetre-scale height changes, but source geometry and datum errors still limit
+the accuracy of a real-world waterline.
+
+**Coverage (km)** is the width of the surface, initially 40 km, centred near the look camera.
+It follows large camera moves. **Effects → Water Reflection** applies the same sky, scenery
+and ocean shading used by the existing water renderer; its reflection level follows this
+surface. Reflections of scenery still use a local tangent plane.
+
+This is geometric inundation: enclosed low areas fill too. It does not yet model tides,
+flow, drainage or barriers to the arrival of water. The separate **Physics → Scenarios →
+Flood Sim** provides the existing particle and heightmap flow simulations. Lowering this
+surface does not reveal seafloor geometry that the terrain provider/clamp has removed.
 
 Note the asymmetry: "Flat" terrain is built at HAE = 0 (the ellipsoid), while the ocean mesh
 is built at the geoid. Two surfaces both reasonably called "sea level", separated by the geoid
@@ -181,7 +200,7 @@ you have added your own Google or Cesium Ion key. An own key shows the rows afte
 | **Zoom to track** | top | Move the terrain to the extents of the selected track over the sitch's frames. A 3D object whose **Position** is **Manual** is in the list too: the terrain moves to that object. Hidden while Dynamic Subdivision is on |
 | **3D Buildings** | top | Cesium Ion or Google tiles. Turning this on forces the ellipsoid Earth model, because the tiles are true-ECEF, and forces Dynamic Subdivision on |
 | **Buildings Source** | top | Which provider supplies the 3D building tiles. Shown only when both are available |
-| **Ocean Surface (Beta)** | top | Sea-level water surface under Google 3D tiles |
+| **Sea Level** | sub-folder | Adjustable sea surface for terrain and buildings, with level, datum correction and coverage controls |
 | **Debug Grids** | Tweaks | Green = ground texture tiles, blue = elevation tiles. Shows which tiles are loaded |
 | **Elevation Scale** | Tweaks | **Changes measurements too — see the warning below** |
 | **Terrain Opacity** | Tweaks | Useful for seeing tracks that pass underground. Also fades the 3D tiles |

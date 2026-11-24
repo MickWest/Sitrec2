@@ -65,6 +65,29 @@ test('an unavailable water mask cannot reuse a previous view mask', () => {
     expect(sharedUniforms.waterTileCapture.value).toBe(0);
 });
 
+test.each([true, false])('the sea shell is excluded from its reflection and restored after capture (%s)', fail => {
+    const {mirror, view, node} = capture({fail, clip: false});
+    const surface = {visible: true};
+    node.getSeaLevelSurface = () => surface.visible ? surface : null;
+    const render = view.renderAtmosphereScene;
+    view.renderAtmosphereScene = (...args) => {
+        expect(surface.visible).toBe(false);
+        return render(...args);
+    };
+    if (fail) expect(() => mirror.render(view, 0, null)).toThrow('capture failed');
+    else mirror.render(view, 0, null);
+    expect(surface.visible).toBe(true);
+});
+
+test('an explicit sea level takes precedence over terrain detection and manual mirror level', () => {
+    const plane = {point: new Vector3(), normal: new Vector3(0, 1, 0), altitude: 12.192};
+    const surface = {reflectionPlane: jest.fn(() => plane)};
+    const mirror = new CWaterPlanarMirror({mirrorAutoLevel: false, mirrorLevel: 0, getSeaLevelSurface: () => surface});
+    const camera = new PerspectiveCamera();
+    expect(mirror.detectPlane({camera})).toBe(plane);
+    expect(surface.reflectionPlane).toHaveBeenCalledWith(camera.position);
+});
+
 test('a cropped panorama face and its mirror cover the same points on the water', () => {
     const observer = new PerspectiveCamera(45, 2, 0.1, 1e6);
     observer.position.set(0, 10, 0);

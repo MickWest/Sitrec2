@@ -42,6 +42,7 @@ import {oceanBRDFChunk} from "../ocean/OceanBRDF.glsl.js";
  */
 export const waterUniformsGLSL = /* glsl */ `
 uniform float waterReflection;
+uniform float waterSurfaceOnly;
 uniform float waterNightFactor;
 uniform vec3 waterDayColor;
 uniform samplerCube waterSkyCube;

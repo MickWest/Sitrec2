@@ -123,6 +123,15 @@ export class CWaterPlanarMirror {
         const camera = view._panoramaBaseCamera ?? view.camera;
         const camPos = camera.position;
 
+        // A raised sea has an explicit datum. Probing the old ground/water
+        // would place reflections at the original level instead of the tide.
+        const seaSurface = node.getSeaLevelSurface?.();
+        if (seaSurface) {
+            this._planeKey = null;
+            this.plane = seaSurface.reflectionPlane(camPos);
+            return this.plane;
+        }
+
         // Manual override: the user has told us the water level, so the only
         // thing left to choose is where to put the tangent point — straight
         // below the camera, which is the best place when we know nothing else.
@@ -479,6 +488,8 @@ export class CWaterPlanarMirror {
         const savedAutoClear = renderer.autoClear;
         const savedShadowAuto = renderer.shadowMap.autoUpdate;
         const savedQuadMaterial = view.fullscreenQuad.material;
+        const seaSurface = this.node.getSeaLevelSurface?.();
+        const savedSeaVisible = seaSurface?.visible;
 
         // The water shader is about to read waterMirrorMap; if it were live
         // during this pass the lake would sample the previous frame's mirror
@@ -500,6 +511,8 @@ export class CWaterPlanarMirror {
         renderer.shadowMap.autoUpdate = false;
 
         try {
+            // Never reflect the shell itself, even with mirror clipping off.
+            if (seaSurface) seaSurface.visible = false;
             renderer.setRenderTarget(target);
             renderer.autoClear = false;
             renderer.setClearColor(0x000000, 1);
@@ -563,6 +576,7 @@ export class CWaterPlanarMirror {
             }
             view.renderAtmosphereScene(GlobalScene, cam, {reflectionPlane: plane});
         } finally {
+            if (seaSurface) seaSurface.visible = savedSeaVisible;
             view.fullscreenQuad.material = savedQuadMaterial;
             renderer.shadowMap.autoUpdate = savedShadowAuto;
             renderer.autoClear = savedAutoClear;

@@ -1215,6 +1215,7 @@ export class CNodeWaterReflection extends CNode {
 
     clearUniforms() {
         sharedUniforms.waterReflection.value = 0.0;
+        sharedUniforms.waterSurfaceOnly.value = 0.0;
         sharedUniforms.waterNightFactor.value = 0.0;
         sharedUniforms.waterSkyCube.value = null;
         sharedUniforms.waterOcclusion.value = 0.0;
@@ -1261,7 +1262,7 @@ export class CNodeWaterReflection extends CNode {
     // on the map source and on whether the tiles have finished starting up,
     // neither of which raises an event this node listens to.
     syncTileWater() {
-        const want = this.enabled && this.tileWater && this.tileWaterApplicable();
+        const want = this.enabled && this.tileWater && this.tileWaterApplicable() && !this.getSeaLevelSurface();
         if (want === this._tileWaterApplied) return;
         this._tileWaterApplied = want;
         // Set the module default FIRST, so tiles streaming in during the walk
@@ -1305,13 +1306,19 @@ export class CNodeWaterReflection extends CNode {
         sharedUniforms.waterGeoActive.value = 1.0;
     }
 
-    // Called immediately before the look view renders GlobalScene. Returns
-    // true if the reflection is active, so the caller knows to pop it.
+    getSeaLevelSurface() {
+        const surface = NodeMan.get("terrainUI", false)?.oceanSurfaceGroup;
+        return surface?.visible ? surface : null;
+    }
+
+    // Called immediately before a view renders GlobalScene. Returns true if
+    // the reflection is active, so the caller knows to pop it.
     push(view) {
         if (!this.enabled) return false;
-        // Look view only, by design — the reflection is an eye-level effect
-        // and the shared terrain uniforms would otherwise reach mainView too.
-        if (view.id !== "lookView") return false;
+        const seaSurface = this.getSeaLevelSurface();
+        // The explicit sea surface is visible in both views. Preserve the
+        // original look-only behaviour when it is absent.
+        if (view.id !== "lookView" && !(view.id === "mainView" && seaSurface)) return false;
 
         // A water color is only REQUIRED when the color test is what finds the
         // water. With a vector mask the imagery is never consulted, so demanding
@@ -1324,7 +1331,7 @@ export class CNodeWaterReflection extends CNode {
         // Without this the tiles reflect on OSM and ESRI and silently do
         // nothing on Debug, NoClouds, or any other source with no water color.
         const waterColor = this.getWaterColor();
-        if (waterColor === undefined && !this.vectorWaterMask && !this._tileWaterApplied) return false;
+        if (waterColor === undefined && !this.vectorWaterMask && !this._tileWaterApplied && !seaSurface) return false;
 
         const nightSky = NodeMan.get("NightSkyNode", false);
         if (!nightSky) return false;
@@ -1400,7 +1407,7 @@ export class CNodeWaterReflection extends CNode {
             sharedUniforms.waterOcclusion.value = 0.0;
             // Report what the detector found, so the manual box is pre-filled
             // with something sensible the moment auto is switched off.
-            if (this.mirrorAutoLevel && this.planarMirror.plane) {
+            if (this.mirrorAutoLevel && this.planarMirror.plane && !seaSurface) {
                 this.mirrorLevel = this.planarMirror.plane.altitude;
             }
             if (oceanMode) {
@@ -1451,6 +1458,7 @@ export class CNodeWaterReflection extends CNode {
         }
 
         sharedUniforms.waterReflection.value = 1.0;
+        sharedUniforms.waterSurfaceOnly.value = seaSurface ? 1.0 : 0.0;
         sharedUniforms.waterNightFactor.value = nightFactor;
         sharedUniforms.waterDayColor.value.set(this.dayColor[0], this.dayColor[1], this.dayColor[2]);
 

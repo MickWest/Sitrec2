@@ -398,7 +398,7 @@ if (abs(tileOutputGamma - 1.0) > 0.0001) {
 // half-float srgb-linear targets and the copy-to-screen shader does the
 // encoding, so <colorspace_fragment> above was a no-op. That is the same space
 // the terrain adds its reflection in, which is why one chunk serves both.
-if (waterReflection > 0.0 || waterTileCapture > 0.5) {
+if ((waterReflection > 0.0 && waterSurfaceOnly < 0.5) || waterTileCapture > 0.5) {
     vec3 seaPos;
     vec3 waterWorldNormal = inverseTransformDirection(normal, viewMatrix);
     float tileWaterMask = sitrecTileWaterMask(vWorldPositionDN, waterWorldNormal, seaPos);
