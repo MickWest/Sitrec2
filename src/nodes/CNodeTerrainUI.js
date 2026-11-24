@@ -839,7 +839,10 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceLevelFeet = v.oceanSurfaceLevelFeet ?? 0;
         this.oceanSurfaceDatumOffset = v.oceanSurfaceDatumOffset ?? 0;
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? 40;
-        this.addSimpleSerials(["showOceanSurface", "oceanSurfaceLevelFeet", "oceanSurfaceDatumOffset", "oceanSurfaceWidthKm"]);
+        this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? false;
+        this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? 50;
+        this.addSimpleSerials(["showOceanSurface", "oceanSurfaceLevelFeet", "oceanSurfaceDatumOffset", "oceanSurfaceWidthKm",
+            "oceanSurfaceTransparent", "oceanSurfaceTransparency"]);
         this.oceanSurfaceGroup = null;
         this.buildSeaLevelGUI();
 
@@ -1584,6 +1587,8 @@ export class CNodeTerrainUI extends CNode {
         this.oceanSurfaceLevelFeet = v.oceanSurfaceLevelFeet ?? this.props.oceanSurfaceLevelFeet ?? 0;
         this.oceanSurfaceDatumOffset = v.oceanSurfaceDatumOffset ?? this.props.oceanSurfaceDatumOffset ?? 0;
         this.oceanSurfaceWidthKm = v.oceanSurfaceWidthKm ?? this.props.oceanSurfaceWidthKm ?? 40;
+        this.oceanSurfaceTransparent = v.oceanSurfaceTransparent ?? this.props.oceanSurfaceTransparent ?? false;
+        this.oceanSurfaceTransparency = v.oceanSurfaceTransparency ?? this.props.oceanSurfaceTransparency ?? 50;
         this.setOceanSurfaceVisible(this.showOceanSurface);
         if (v.treeFlattenParams) {
             Object.assign(this.treeFlattenParams, v.treeFlattenParams);
@@ -1646,6 +1651,12 @@ export class CNodeTerrainUI extends CNode {
         addDistance("oceanSurfaceWidthKm", "Coverage", "big", 1000, 1, 100, 1)
             .tooltip("Width of the sea surface, centered near the look camera. Follows large camera moves. Reflections use Effects > Water Reflection.")
             .onFinishChange(changed);
+        folder.add(this, "oceanSurfaceTransparent").name("Transparent water").listen()
+            .tooltip("Show terrain and buildings beneath the water. Turn off to restore opaque water without losing the transparency setting.")
+            .onChange(changed);
+        folder.add(this, "oceanSurfaceTransparency", 0, 100, 1).name("Transparency (%)").listen()
+            .tooltip("When Transparent water is on: 0% is opaque, 100% is invisible. The water level stays unchanged.")
+            .onChange(changed);
         this.changeUnits();
     }
 
@@ -1685,6 +1696,7 @@ export class CNodeTerrainUI extends CNode {
         const width = Number.isFinite(this.oceanSurfaceWidthKm) ? this.oceanSurfaceWidthKm : 40;
         this.oceanSurfaceGroup.updateSurface(center.x, center.y, Math.max(1, Math.min(100, width)) * 1000,
             level * scaleF2M + datum);
+        this.oceanSurfaceGroup.setTransparency(this.oceanSurfaceTransparent, this.oceanSurfaceTransparency);
     }
 
     setOceanSurfaceVisible(visible) {

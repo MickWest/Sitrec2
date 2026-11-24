@@ -28,6 +28,7 @@ beforeEach(() => {
     ui = Object.assign(new Menu(), {
         gui: new GUI(), showOceanSurface: true,
         oceanSurfaceLevelFeet: 40, oceanSurfaceDatumOffset: 0.3048, oceanSurfaceWidthKm: 40,
+        oceanSurfaceTransparent: false, oceanSurfaceTransparency: 50,
         setOceanSurfaceVisible: jest.fn(),
     });
     ui.buildSeaLevelGUI();

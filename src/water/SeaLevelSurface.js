@@ -113,6 +113,20 @@ export class SeaLevelSurface extends Group {
         this.mesh.geometry.setLevel(levelMeters);
     }
 
+    setTransparency(enabled, percent) {
+        const amount = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 50;
+        const opacity = enabled ? 1 - amount / 100 : 1;
+        const transparent = opacity < 1;
+        if (this.material.transparent !== transparent) {
+            this.material.transparent = transparent;
+            this.material.needsUpdate = true;
+        }
+        this.material.opacity = opacity;
+        // Depth-test against above-water geometry, but let submerged objects
+        // remain visible through the surface instead of occluding their draws.
+        this.material.depthWrite = !transparent;
+    }
+
     reflectionPlane(cameraPosition) {
         return seaLevelPlane(cameraPosition, this.levelMeters);
     }

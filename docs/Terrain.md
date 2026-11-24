@@ -154,6 +154,11 @@ selected small units (feet or meters); **Coverage** uses the selected large unit
 miles, miles, kilometers, or feet). Changing units preserves the physical heights and width.
 These settings save with the sitch.
 
+**Transparent water** enables the **Transparency (%)** slider: 0% is opaque and 100%
+is invisible. Use intermediate values to see submerged terrain and buildings. Turning
+the option off restores opaque water and remembers the slider value. Transparency also
+fades reflections; it does not change the water level. Both settings save with the sitch.
+
 **Datum correction** adds a local vertical offset separately from the simulated level.
 Use it to align a surveyed reference waterline with a dataset using a different vertical
 datum. For city-scale comparisons, use the ellipsoid Earth model, Elevation Scale 1, and
