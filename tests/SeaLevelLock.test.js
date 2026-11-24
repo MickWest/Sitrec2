@@ -47,6 +47,7 @@ test("loading a sitch clears the session lock before updating its water surface"
     const ui = Object.assign(new Menu(), {
         oceanSurfaceCalculationLocked: true, props: {},
         seaLevelCalculationControls: [controller], disarmManualEdit: jest.fn(),
+        updateGlints: jest.fn(),
     });
     ui.setOceanSurfaceVisible = jest.fn(() => expect(ui.oceanSurfaceCalculationLocked).toBe(false));
     ui.modDeserialize({showOceanSurface: true, oceanSurfaceLevelFeet: 40});

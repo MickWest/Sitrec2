@@ -2,13 +2,14 @@ import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
+import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight} from "./TerrainGlints";
 import {applyCityLightsShader, cityLightsDefault} from "../../../citylights/CityLightsShader";
 import {
     addTerrestrialRefractionUniforms,
     patchTerrestrialRefractionVertexShader,
 } from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v12citylights";
+const CACHE_KEY = "DayNightStandardMaterial.v13glints";
 
 // Whether a NEWLY CREATED tile material should carry the water branch.
 //
@@ -54,6 +55,7 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         if (cityLightsDefault()) this.defines.SITREC_CITY_LIGHTS = "";
 
         this._dayNightUniforms = {
+            ...glintUniforms,
             sunDirection: {value: Globals.sunLight.position},
             earthCenter: {value: new Vector3(0, 0, 0)},
             useDayNight: sharedUniforms.useDayNight,
@@ -126,7 +128,8 @@ attribute vec3 barycentric;
 varying vec3 vBarycentric;
 varying vec3 vWorldPositionDN;
 varying vec3 vLocalPositionDN;
-varying vec2 vDNUv;`
+varying vec2 vDNUv;
+${glintVertexDeclarations}`
         );
 
         const vertexInjection =
@@ -139,6 +142,10 @@ sitrecLocalPositionDN = instanceMatrix * sitrecLocalPositionDN;
 #endif
 vWorldPositionDN = (modelMatrix * sitrecLocalPositionDN).xyz;
 vLocalPositionDN = sitrecLocalPositionDN.xyz;
+vGlintViewPosition = (modelViewMatrix * sitrecLocalPositionDN).xyz;
+// TilesEdgesPlugin de-indexes these meshes. Its edge coordinates suppress
+// coplanar edges, so use raw vertex order for the glint centroid instead.
+vGlintBarycentric = glintBarycentric(float(gl_VertexID % 3));
 vBarycentric = barycentric;
 vDNUv = uv;`;
 
@@ -180,6 +187,7 @@ varying vec3 vWorldPositionDN;
 varying vec3 vLocalPositionDN;
 varying vec3 vBarycentric;
 varying vec2 vDNUv;
+${glintFragmentDeclarations}
 #ifdef SITREC_TILE_WATER
 ${waterUniformsGLSL}
 
@@ -408,7 +416,8 @@ if ((waterReflection > 0.0 && waterSurfaceOnly < 0.5) || waterTileCapture > 0.5)
         gl_FragColor.rgb = sitrecWaterShade(gl_FragColor.rgb, tileWaterMask, seaPos);
     }
 }
-#endif`
+#endif
+${glintFragmentHighlight}`
         );
         applyCityLightsShader(shader, this);
     }

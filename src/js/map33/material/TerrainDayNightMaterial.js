@@ -2,6 +2,7 @@ import {Color, ShaderMaterial, UniformsLib, UniformsUtils, Vector3} from "three"
 import {sharedUniforms} from "./SharedUniforms";
 import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
+import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight} from "./TerrainGlints";
 import {
     addTerrestrialRefractionUniforms,
     installTerrestrialRefractionOnShaderMaterial,
@@ -49,6 +50,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             earthCenter: { value: new Vector3(0, 0, 0) },
             terrainShadingStrength: { value: terrainShadingStrength },
             transparency: { value: transparency },
+            glintTerrainSegments: {value: Globals.settings?.tileSegments ?? 64},
             fogColor: { value: new Color(0xffffff) },
             fogNear: { value: 1 },
             fogFar: { value: 1000 },
@@ -62,6 +64,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
     for (const k of Object.keys(sharedUniforms)) {
         mergedUniforms[k] = sharedUniforms[k];
     }
+    Object.assign(mergedUniforms, glintUniforms);
     // Shared by reference, so one per-view update reaches every terrain tile.
     addTerrestrialRefractionUniforms({uniforms: mergedUniforms});
     const material = new ShaderMaterial({
@@ -75,6 +78,8 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             varying vec3 vNormal;
             varying vec3 vWorldPosition;
             varying vec4 vPosition;
+            ${glintVertexDeclarations}
+            uniform float glintTerrainSegments;
             #include <common>
             #include <fog_pars_vertex>
             #include <shadowmap_pars_vertex>
@@ -91,6 +96,11 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                 // Calculate position for depth
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                vGlintViewPosition = mvPosition.xyz;
+                // Three colors on the indexed PlaneGeometry grid: each
+                // triangle has one of each, without duplicating its vertices.
+                vec2 glintGrid = floor(uv * glintTerrainSegments + 0.5);
+                vGlintBarycentric = glintBarycentric(mod(glintGrid.x + glintGrid.y, 3.0));
                 // Terrestrial refraction — apparent position only. vWorldPosition
                 // and vNormal above are computed from the model matrix directly
                 // and stay physical, so day/night lighting, local terrain shading
@@ -152,6 +162,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             #include <lights_pars_begin>
             #include <shadowmap_pars_fragment>
             #include <shadowmask_pars_fragment>
+            ${glintFragmentDeclarations}
 
             // The water surface, shared with DayNightStandardMaterial (the
             // Google 3D tiles). Carries the Ocean method's microfacet BRDF with
@@ -330,6 +341,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                 gl_FragColor = linearColor;
                 #include <fog_fragment>
+                ${glintFragmentHighlight}
                 
                 // Logarithmic depth. In an ORTHOGRAPHIC projection clip-space w is
                 // a constant 1.0, which collapses this log formula to a single

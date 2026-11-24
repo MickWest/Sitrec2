@@ -2,6 +2,7 @@ import {CNode} from "./CNode";
 import {getCachedKey} from "../BYOKKeyStore";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {glintUniforms} from "../js/map33/material/TerrainGlints";
 import {assert} from "../assert";
 import {configParams} from "../runtimeConfig";
 import {isAdmin, isLocal, isServerless, SITREC_APP, SITREC_TERRAIN} from "../configUtils";
@@ -142,6 +143,13 @@ export class CNodeTerrainUI extends CNode {
         this.textureDetail = v.textureDetail ?? 1;
         this.elevationDetail = v.elevationDetail ?? 1;
         this.transparency = v.transparency ?? 1;
+        this.highlightSunReflection = v.highlightSunReflection ?? false;
+        this.glintTolerance = v.glintTolerance ?? 5;
+        this.glintColor = v.glintColor ?? 0xff00ff;
+        this.glintTransparency = v.glintTransparency ?? 0;
+        this.glintBlink = v.glintBlink ?? false;
+        this.glintUseLookCamera = v.glintUseLookCamera ?? false;
+        this.addSimpleSerials(["highlightSunReflection", "glintTolerance", "glintColor", "glintTransparency", "glintBlink", "glintUseLookCamera"]);
         // Global tile-LOD detail for 3D buildings (screen-space-error target, px). Admin-only
         // control (cost: lower = more billed tile fetches). Not serialized.
         this.buildingErrorTarget = 20;
@@ -699,6 +707,7 @@ export class CNodeTerrainUI extends CNode {
             // builds (per sitch), like the controllers it holds, so it self-heals on reload.
             this.terrainTweaks = this.gui.addFolder("Terrain Tweaks").close()
                 .tooltip("Holds detail, display and debug settings for the terrain and the 3D buildings.");
+            this.buildGlintsGUI();
 
             // a toggle to show or hide the debug elevation grid
 
@@ -1559,6 +1568,48 @@ export class CNodeTerrainUI extends CNode {
             .tooltip("Discard every stroke and restore all tiles to their original imagery. This cannot be undone.");
     }
 
+    buildGlintsGUI() {
+        const folder = this.terrainTweaks.addFolder("Glints").close();
+        const changed = () => this.updateGlints();
+        folder.add(this, "highlightSunReflection").name("Highlight sun reflection").listen()
+            .tooltip("Highlight terrain and building faces when they reflect sunlight toward the camera within the glint tolerance.")
+            .onChange(changed);
+        folder.add(this, "glintTolerance", 0.1, 90, 0.1).name("Glint tolerance").listen()
+            .tooltip("Maximum angle in degrees between the reflected sunlight and the direction to the camera. Default: 5°.")
+            .onChange(changed);
+        folder.addColor(this, "glintColor").name("Glint color").listen()
+            .tooltip("Color of the sun reflection highlight. Default: magenta.")
+            .onChange(changed);
+        folder.add(this, "glintTransparency", 0, 100, 1).name("Glint transparency (%)").listen()
+            .tooltip("Blend the highlight with the normal surface color. 0% is a solid highlight; 100% shows only the normal surface.")
+            .onChange(changed);
+        folder.add(this, "glintBlink").name("Blink").listen()
+            .tooltip("Alternate the highlight and normal surface color once per second, including while paused.")
+            .onChange(changed);
+        folder.add(this, "glintUseLookCamera").name("Use Look Camera").listen()
+            .tooltip("Test reflections toward the Look Camera in both views. When off, each view uses its own camera.")
+            .onChange(changed);
+        this.updateGlints();
+    }
+
+    updateGlints() {
+        clearInterval(this._glintBlinkTimer);
+        this._glintBlinkTimer = undefined;
+        glintUniforms.glintCosTolerance.value = Math.cos(this.glintTolerance * Math.PI / 180);
+        glintUniforms.glintColor.value.set(this.glintColor);
+        glintUniforms.glintOpacity.value = 1 - Math.max(0, Math.min(100, this.glintTransparency)) / 100;
+        glintUniforms.glintEnabled.value = this.highlightSunReflection;
+        if (this.highlightSunReflection && this.glintBlink) {
+            // Wake only at a blink transition; the paused render loop can sleep
+            // between transitions instead of continuously redrawing terrain.
+            this._glintBlinkTimer = setInterval(() => {
+                glintUniforms.glintEnabled.value = !glintUniforms.glintEnabled.value;
+                setRenderOne(true);
+            }, 500);
+        }
+        setRenderOne(true);
+    }
+
     // treeFlattenParams and groundPaintParams are serialized as whole objects, but
     // MERGED into the existing instances on load so GUI controllers, the buildings
     // node and the painter keep their shared references (replacing them would
@@ -1597,6 +1648,11 @@ export class CNodeTerrainUI extends CNode {
             for (const control of [controller, ...(controller._mirrorControllers ?? [])]) control.disable(false);
         }
         super.modDeserialize(v);
+        for (const [key, fallback] of Object.entries({highlightSunReflection: false, glintTolerance: 5, glintColor: 0xff00ff,
+            glintTransparency: 0, glintBlink: false, glintUseLookCamera: false})) {
+            this[key] = v[key] ?? this.props[key] ?? fallback;
+        }
+        this.updateGlints();
         this.showOceanSurface = v.showOceanSurface ?? this.props.showOceanSurface ?? false;
         this.oceanSurfaceLevelFeet = v.oceanSurfaceLevelFeet ?? this.props.oceanSurfaceLevelFeet ?? 0;
         this.oceanSurfaceDatumOffset = v.oceanSurfaceDatumOffset ?? this.props.oceanSurfaceDatumOffset ?? 0;
@@ -2084,6 +2140,8 @@ export class CNodeTerrainUI extends CNode {
     // but if the terrain is being removed, then we assume the GUI is too
     // this might not be the case, in the future
     dispose() {
+        clearInterval(this._glintBlinkTimer);
+        glintUniforms.glintEnabled.value = false;
         this.stopMapRecoveryWatch();
         for (const [serviceName, callback] of this._serviceCallbacks ?? []) {
             ServiceAvailability.offUnavailable(serviceName, callback);

@@ -87,6 +87,7 @@ import {ShaderPass} from "three/addons/postprocessing/ShaderPass.js";
 import {isLocal, SITREC_APP} from "../configUtils"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
+import {glintUniforms, updateGlintCamera} from "../js/map33/material/TerrainGlints";
 import {CameraMapControls} from "../js/CameraControls";
 import {ViewMan} from "../CViewManager";
 import * as LAYER from "../LayerMasks";
@@ -1279,7 +1280,13 @@ export class CNodeView3D extends CNodeViewCanvas {
     renderAtmosphereScene(scene, camera = this.camera, {reflectionPlane} = {}) {
         const renderWorld = () => withVisibleMeasurements(camera, () => withObjectMoveWidgetVisible({camera}, () => {
             const softDepth = this.softDepthPass ??= new SoftDepthPass();
-            return softDepth.render(this.renderer, scene, camera, () => this.renderer.render(scene, camera));
+            return softDepth.render(this.renderer, scene, camera, () => {
+                if (glintUniforms.glintEnabled.value) {
+                    updateGlintCamera(camera, NodeMan.get("lookCamera", false)?.camera,
+                        NodeMan.get("terrainUI", false)?.glintUseLookCamera);
+                }
+                return this.renderer.render(scene, camera);
+            });
         }));
         if (!this.effectiveAerialPerspective) {
             return withMaterialAtmosphere(scene, null, renderWorld, this.renderer);
