@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.208.1 (2026-11-25)
+
+### Improvements
+- **Faster drawing when effects are not in use**: terrain, 3D building tiles and other 3D objects now leave the code for an effect out of what the graphics processor (GPU) runs while that effect is not in use. This applies to *Highlight sun reflection* (Terrain → Terrain Tweaks → Glints), the water shading of *Water Reflection* (Effects → Water Reflection), distance haze, refraction, and the *Building Edges* and *Tile Edges* outlines (Terrain → Terrain Tweaks).
+- **Shorter terrain skirts**: the hidden strips that hang below the edges of terrain tiles, to cover the gaps between levels of detail, are now a tenth of each tile's own width deep. Before, every tile, however small, had strips a tenth of the map's largest tile deep, which could be kilometers, so the GPU drew much more hidden terrain than necessary. With *Water Reflection* set to *Planar Mirror* or *Ocean (spectral)*, *Hide Waterline Skirts* (Effects → Water Reflection → Planar Mirror) now checks each strip from the lowest point of its tile and its new depth, so terrain well above the water keeps its strips and the gaps stay covered.
+- **Frame timing**: in a visible tab, Sitrec now draws each frame on a refresh of the display, not when a timer fires. Playback speed does not change, also for 29.97 fps video and on a 120 Hz display.
+- **Look View camera moves on every drawn frame**: when you drag in the Look View to pan and tilt, also with the Heading Editor, or zoom it with the mouse wheel, the camera now moves on every frame that Sitrec draws, not only when the sitch goes to its next frame. You see this when the *Frame Rate Limit* (Sitrec → Settings → Performance Tweaks) is higher than the frame rate of the sitch, for example 60 fps with a 30 fps video, while playing or paused. A camera frustum in the main view also moves on each drawn frame.
+- **High-performance graphics**: each 3D view now asks the browser for the high-performance GPU. On a computer with more than one GPU this is usually the faster one, but the browser can ignore the request. Help → *Export Debug Log* now records which GPU each 3D view uses, if the browser makes it available.
+
 ## Version 2.208.0 (2026-11-25)
 
 ### New Features
