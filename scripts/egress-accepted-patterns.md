@@ -266,6 +266,29 @@ entry here: an id, what the code does, where the data goes, the release, and its
   radius is 0.5 to 10 km and at most half of Coverage. A larger region, a request when one of the
   settings is off, another tile host, or any other data in the requests is a finding.
 
+### `sitmap-loopback-camera-relay` — accepted 2.208.0
+- **Code:** `src/SitMap.js` and `src/SitMapBridge.js` (page side), and
+  `tools/SitrecBridge/extension/sitmap.js`, `content-script.js` and `background.js` (the
+  SitrecBridge browser extension). The page samples the look camera and posts it to its own
+  window with `window.postMessage`, to its own origin. Only the SitrecBridge extension, which the
+  user installs by hand, receives it. The extension sends it to the native SitMap app on the same
+  computer: one view by HTTP to `http://127.0.0.1:9876` (`/v1/status`, `/v1/view`,
+  `/v1/snapshot`), or a live stream of changed poses by WebSocket to `ws://127.0.0.1:9877`
+  (protocol `sitmap-v1`). The page itself opens no connection.
+- **Data:** the camera pose: latitude, longitude, altitude above sea level, ground altitude
+  below the camera, heading, elevation, roll, vertical field of view and aspect, and the
+  latitude, longitude, altitude and distance of the terrain point that the camera looks at (and
+  of a second such point along SitMap's accepted pitch). In the live stream, a sequence number
+  and the send time. Snapshot options. No other field.
+- **Trigger:** a user action only: *Send Look Camera to SitMap* or *Live Sync to SitMap* in the
+  Camera menu, which show only on local hosts (`isLocal`), or a call to `window.sitMap` through
+  the bridge. The live stream sends only after SitMap answers `ready` with `apiVersion` 1, and
+  stops when the user turns sync off or the page closes.
+- **Limits:** the two fixed loopback endpoints above, through the extension only. A connection
+  that the page opens itself, another host or port, a destination that a page or setting can
+  choose, a send without a user action, the menu items on a public host, or any other data is a
+  finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

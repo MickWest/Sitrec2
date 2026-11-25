@@ -2155,12 +2155,16 @@ async function initializeOnce() {
     }, "exportCameraKML").name(t("misc.exportCameraKML.label")).perm()
         .tooltip(t("misc.exportCameraKML.tooltip"));
 
-    guiMenus.camera.add({sendToSitMap: () => sendToSitMap().catch(error => showError(error.message))}, "sendToSitMap")
-        .name("Send Look Camera to SitMap").perm();
-    const sitMapControls = {get follow() { return getSitMap().sync.enabled; },
-        set follow(value) { syncSitMap({enabled: value}).catch(error => showError(error.message)); }};
-    guiMenus.camera.add(sitMapControls, "follow").name("Live Sync to SitMap").listen().perm()
-        .tooltip("Mirror the look camera in the native SitMap app through SitrecBridge. Sends changed poses after each rendered frame.");
+    // SitMap is a native macOS app reached only through the SitrecBridge extension,
+    // so its controls are shown on local hosts only.
+    if (isLocal) {
+        guiMenus.camera.add({sendToSitMap: () => sendToSitMap().catch(error => showError(error.message))}, "sendToSitMap")
+            .name("Send Look Camera to SitMap").perm();
+        const sitMapControls = {get follow() { return getSitMap().sync.enabled; },
+            set follow(value) { syncSitMap({enabled: value}).catch(error => showError(error.message)); }};
+        guiMenus.camera.add(sitMapControls, "follow").name("Live Sync to SitMap").listen().perm()
+            .tooltip("Mirror the look camera in the native SitMap app through SitrecBridge. Sends changed poses after each rendered frame.");
+    }
 
     addTranslatedGUIMenu("target", "menus.target.title")
         .tooltip(t("menus.target.tooltip"));

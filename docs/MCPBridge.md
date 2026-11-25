@@ -326,6 +326,9 @@ Sitrec does not tell you when a newer Bridge exists. To update the Bridge:
 SitMap is a native Apple Maps companion for 3D terrain and buildings. With
 SitMap running and an updated Bridge, use **Camera → Send Look Camera to SitMap**
 for a single view, or **Camera → Live Sync to SitMap** to follow camera changes.
+These two menu items show only when Sitrec runs on a local host: `localhost`,
+`127.0.0.1`, `::1`, a `192.168.` address, or the host set as `LOCALHOST` in
+`config/shared.env`. They do not show on the public site.
 Turn sync off before navigating SitMap independently.
 
 The MCP tools are `sitmap_status`, `sitmap_set_view`, `sitmap_snapshot`,

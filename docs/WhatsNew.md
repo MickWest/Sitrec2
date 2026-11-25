@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.208.0 (2026-11-25)
+
+### New Features
+- **SitMap** (macOS; Camera → *Send Look Camera to SitMap* and *Live Sync to SitMap*): SitMap is a separate Mac app that shows Apple Maps 3D terrain and buildings. *Send Look Camera to SitMap* sets its view to the Sitrec look camera once, and *Live Sync to SitMap* makes it follow the look camera as it changes, also while playback is paused. The two menu items show only when Sitrec runs on a local host, for example localhost, 127.0.0.1 or a 192.168. address, and not on the public site. SitMap needs macOS 14 or later, SitrecBridge 1.0.69, and a build from the Sitrec source code. In SitMap you can also move the view with the mouse and save a 4K snapshot. See *SitMap on macOS* in Help → Documentation → Advanced → *Control Sitrec from an AI Assistant (MCP Bridge)*.
+- **Sync Keyframes** (Camera → Heading → Heading Editor): a new button at the top of the Heading Editor pairs the *Pan / Az* and *Tilt / El* keyframes. When you turn it on, each curve gets a keyframe at every frame where the other curve has one, and neither curve changes shape. While it is on, a keyframe that you add to one curve, also by dragging in the Look View, gets a partner on the other curve, deleting a keyframe deletes its partner, and moving keyframes or segments moves their partners in time only. The values of the two curves stay independent. Turning it off keeps the keyframes. Each press of the button is one undo step, and the setting saves with the sitch.
+
+### Improvements
+- **Heading Editor curve selection** (Camera → Heading → Heading Editor): click the *Pan / Az* or *Tilt / El* name at the top of the editor to choose the curve that new keyframes go on and that you edit where the curves overlap. The selected name is underlined. The names replace the *Edit Pan / Az* / *Edit Tilt / El* list. A click on a name no longer turns its curve on or off; use the checkbox beside it. A click on a keyframe now picks that keyframe even when a line of the selected curve goes through the same place.
+
 ## Version 2.207.1 (2026-11-24)
 
 ### Bug Fixes

@@ -70,6 +70,7 @@ export class CNodeControllerHeadingEditor extends CNodeController {
             if (existing) { existing.x = frame; existing.y = value; }
             else channel.points.push({x: frame, y: value});
             channel.points.sort((a, b) => a.x - b.x);
+            view.syncEditedChannel(key);
             if (Math.abs(value) > channel.range) {
                 channel.range = Math.min(180, Math.abs(value) * 1.1);
                 view.controls[key].slider.value = Math.log10(channel.range);

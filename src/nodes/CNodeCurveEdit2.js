@@ -79,6 +79,11 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         setRenderOne(true);
     }
 
+    // Let multi-curve editors update paired points before notifying their owner.
+    onPointsChanged() {
+        this.onChange?.();
+    }
+
     // Camera editors share a reset action and the existing timeline navigation.
     // Register once and read live state: edits, undo and visibility need no copies.
     enableCameraEditorTools(label) {
@@ -181,8 +186,8 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         if (index < 0 || this.points.length <= 1) return;
         const stateBefore = this.captureState();
         this.points.splice(index, 1);
+        this.onPointsChanged();
         const stateAfter = this.captureState();
-        if (this.onChange) this.onChange();
         UndoManager?.add({
             description: "Delete curve point",
             undo: () => this.restoreState(stateBefore),
@@ -410,9 +415,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             this.points.splice(insertIndex, 0, newPoint);
             // Recalculate now: a Ctrl+click with no drag never reaches onMouseMove, and the
             // new point used to show on the graph while the camera FOV ignored it.
-            if (this.onChange) {
-                this.onChange();
-            }
+            this.onPointsChanged();
 
             this.draggedPointIndex = insertIndex;
             this.dragStartPoint = {x: newPoint.x, y: newPoint.y};
@@ -457,9 +460,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 this.dragStartLineP1 = {x: this.points[newP1].x, y: this.points[newP1].y};
                 this.dragStartLineP2 = {x: this.points[newP2].x, y: this.points[newP2].y};
                 this.draggedLineIndex = newP1;
-                if (this.onChange) {
-                    this.onChange();
-                }
+                this.onPointsChanged();
             } else {
                 this.dragStartLineP1 = {x: this.points[p1].x, y: this.points[p1].y};
                 this.dragStartLineP2 = {x: this.points[p2].x, y: this.points[p2].y};
@@ -635,9 +636,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 }
             }
             
-            if (this.onChange) {
-                this.onChange();
-            }
+            this.onPointsChanged();
         } else if (this.isDragging && this.draggedPointIndex !== null) {
             e.preventDefault();
             e.stopPropagation();
@@ -724,9 +723,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 }
             }
             
-            if (this.onChange) {
-                this.onChange();
-            }
+            this.onPointsChanged();
         } else if (this.isDragging && this.isDraggingWindow) {
             e.preventDefault();
             e.stopPropagation();
