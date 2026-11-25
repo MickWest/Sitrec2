@@ -266,7 +266,7 @@ entry here: an id, what the code does, where the data goes, the release, and its
   radius is 0.5 to 10 km and at most half of Coverage. A larger region, a request when one of the
   settings is off, another tile host, or any other data in the requests is a finding.
 
-### `sitmap-loopback-camera-relay` — accepted 2.208.0
+### `sitmap-loopback-camera-relay` — accepted 2.208.0, widened after the 2.208.0 check
 - **Code:** `src/SitMap.js` and `src/SitMapBridge.js` (page side), and
   `tools/SitrecBridge/extension/sitmap.js`, `content-script.js` and `background.js` (the
   SitrecBridge browser extension). The page samples the look camera and posts it to its own
@@ -275,19 +275,32 @@ entry here: an id, what the code does, where the data goes, the release, and its
   computer: one view by HTTP to `http://127.0.0.1:9876` (`/v1/status`, `/v1/view`,
   `/v1/snapshot`), or a live stream of changed poses by WebSocket to `ws://127.0.0.1:9877`
   (protocol `sitmap-v1`). The page itself opens no connection.
+- **Local MCP server:** the `sitmap_status`, `sitmap_set_view` and `sitmap_snapshot` tools in
+  `tools/SitrecBridge/mcp-server.js` (`requestSitMap`, `sitmap-tools.js`) send the request that
+  the user's MCP client gives straight to the same `http://127.0.0.1:9876` endpoints, without the
+  extension. The fields are the ones in the `sitmap_set_view` schema: the camera fields below,
+  `renderScale`, `style` and `requireExact`, and for a snapshot `width` and `height`.
+- **The native app:** `native/SitMap/` is a separate macOS app that the user builds from source.
+  It shows the camera it receives with Apple MapKit, which loads map imagery, terrain and
+  buildings for the viewed area from Apple's map service, as any MapKit app does. The app sends
+  no other data.
 - **Data:** the camera pose: latitude, longitude, altitude above sea level, ground altitude
   below the camera, heading, elevation, roll, vertical field of view and aspect, and the
   latitude, longitude, altitude and distance of the terrain point that the camera looks at (and
   of a second such point along SitMap's accepted pitch). In the live stream, a sequence number
   and the send time. Snapshot options. No other field.
 - **Trigger:** a user action only: *Send Look Camera to SitMap* or *Live Sync to SitMap* in the
-  Camera menu, which show only on local hosts (`isLocal`), or a call to `window.sitMap` through
-  the bridge. The live stream sends only after SitMap answers `ready` with `apiVersion` 1, and
-  stops when the user turns sync off or the page closes.
-- **Limits:** the two fixed loopback endpoints above, through the extension only. A connection
-  that the page opens itself, another host or port, a destination that a page or setting can
-  choose, a send without a user action, the menu items on a public host, or any other data is a
-  finding.
+  Camera menu, which show only on local hosts (`isLocal`), a call to `window.sitMap` through
+  the bridge, or a `sitmap_*` tool call from the user's MCP client. The live stream sends only
+  after SitMap answers `ready` with `apiVersion` 1, and stops when the user turns sync off or the
+  page closes.
+- **Limits:** the two fixed loopback endpoints above, reached through the extension or the local
+  MCP server only, and Apple's map service from the native app only. A connection that the page
+  opens itself, another host or port, a destination that a page or setting can choose, a send
+  without a user action, the menu items on a public host, or any other data is a finding. Two
+  points are not accepted and stay findings until they are fixed: extra fields that a bridge
+  caller adds to the camera payload (`sendView` and live sync pass caller options through), and
+  sending to a loopback port before the listener is shown to be the user's own SitMap.
 
 ## Refused — never covered by an entry
 
