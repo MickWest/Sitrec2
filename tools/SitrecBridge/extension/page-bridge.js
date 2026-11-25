@@ -550,6 +550,17 @@ const handlers = {
         }
     },
 
+    async sitrec_send_to_sitmap(params = {}) {
+        if (!window.sitMap) throw new Error("Rebuild Sitrec to enable SitMap integration.");
+        return window.sitMap.sendView(params);
+    },
+
+    async sitrec_sync_sitmap(params = {}) {
+        if (!window.sitMap) throw new Error("Rebuild Sitrec to enable SitMap integration.");
+        if (params.statusOnly) return window.sitMap.syncStatus();
+        return window.sitMap.sync(params);
+    },
+
     sitrec_api_list() {
         const api = window.sitrecAPI;
         if (!api) return { error: "sitrecAPI not available (page may need rebuilding)" };

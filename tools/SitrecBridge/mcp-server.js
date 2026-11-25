@@ -49,6 +49,8 @@ import {
 } from "./lifecycle.js";
 import {normalizeTabArgs} from "./tab-target.js";
 import {DEV_TOOLS} from "./dev-tools.js";
+import {SITMAP_TOOLS} from "./sitmap-tools.js";
+import {requestSitMap} from "./extension/sitmap.js";
 import * as diag from "./diagnostics.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1363,6 +1365,7 @@ const TAB_PROPERTY = {
 
 const TOOLS = [
     ...(DEV_MODE ? DEV_TOOLS : []),
+    ...SITMAP_TOOLS,
     {
         name: "sitrec_status",
         description:
@@ -1681,6 +1684,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         args = normalizeTabArgs(rawArgs);
     } catch (e) {
         return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+
+    if (["sitmap_status", "sitmap_set_view", "sitmap_snapshot"].includes(name)) {
+        try {
+            const action = {sitmap_status: "status", sitmap_set_view: "view", sitmap_snapshot: "snapshot"}[name];
+            const value = await requestSitMap(action, name === "sitmap_set_view" ? args?.camera : args);
+            const {imageData, mimeType, ...metadata} = value;
+            return {content: [{type: "text", text: JSON.stringify(metadata)},
+                ...(imageData ? [{type: "image", data: imageData, mimeType}] : [])]};
+        } catch (error) {
+            return {content: [{type: "text", text: error.message}], isError: true};
+        }
     }
 
     // sitrec_status is handled locally — no extension needed

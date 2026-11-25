@@ -129,6 +129,7 @@ import "./FpsMismatchDialog";
 import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
 import {exportFOVForEditor} from "./FOVInterchange";
 import {exportCameraAsKML} from "./ExportCameraKML";
+import {getSitMap, sendToSitMap, syncSitMap, publishSitMapFrame} from "./SitMap";
 import {initUILogging} from "./UILogging";
 import {initDropdownWatch} from "./DropdownWatch";
 import {assert} from "./assert";
@@ -639,6 +640,9 @@ if (INCLUDE_IWER_EMULATOR) {
 
 // Expose Globals to window for debugging
 window.Globals = Globals;
+window.sitMap = {status: () => getSitMap().status(), setView: camera => getSitMap().setView(camera),
+    sendView: sendToSitMap, sync: syncSitMap, syncStatus: () => ({...getSitMap().sync}),
+    snapshot: options => getSitMap().snapshot(options)};
 
 // Expose the build directory so SitrecBridge can match MCP sessions to tabs
 window.__sitrecBuildDir = typeof __SITREC_BUILD_DIR__ !== 'undefined' ? __SITREC_BUILD_DIR__ : null;
@@ -2151,6 +2155,13 @@ async function initializeOnce() {
     }, "exportCameraKML").name(t("misc.exportCameraKML.label")).perm()
         .tooltip(t("misc.exportCameraKML.tooltip"));
 
+    guiMenus.camera.add({sendToSitMap: () => sendToSitMap().catch(error => showError(error.message))}, "sendToSitMap")
+        .name("Send Look Camera to SitMap").perm();
+    const sitMapControls = {get follow() { return getSitMap().sync.enabled; },
+        set follow(value) { syncSitMap({enabled: value}).catch(error => showError(error.message)); }};
+    guiMenus.camera.add(sitMapControls, "follow").name("Live Sync to SitMap").listen().perm()
+        .tooltip("Mirror the look camera in the native SitMap app through SitrecBridge. Sends changed poses after each rendered frame.");
+
     addTranslatedGUIMenu("target", "menus.target.title")
         .tooltip(t("menus.target.tooltip"));
     addTranslatedGUIMenu("traverse", "menus.traverse.title")
@@ -2981,6 +2992,7 @@ function animate(newtime) {
         }
 
     }
+    publishSitMapFrame();
     Globals.stats.end();
     
     // GPU queue backlog prevention: flush GPU command buffers and check for saturation

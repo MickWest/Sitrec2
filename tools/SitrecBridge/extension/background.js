@@ -10,6 +10,9 @@
 
 import {DEV_MODE} from "./dev-mode.js";
 import {createDevBrowser} from "./dev-browser.js";
+import {installSitMapRelay} from "./sitmap.js";
+
+installSitMapRelay(chrome);
 
 const handleDevBrowser = createDevBrowser(chrome, DEV_MODE);
 const MCP_PORT_MIN = 9780;

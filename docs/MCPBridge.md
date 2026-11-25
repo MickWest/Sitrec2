@@ -321,6 +321,29 @@ Sitrec does not tell you when a newer Bridge exists. To update the Bridge:
 6. If you use Local Compute, open the extension popup and click
    **Install/Update Local Compute**.
 
+## SitMap on macOS
+
+SitMap is a native Apple Maps companion for 3D terrain and buildings. With
+SitMap running and an updated Bridge, use **Camera → Send Look Camera to SitMap**
+for a single view, or **Camera → Live Sync to SitMap** to follow camera changes.
+Turn sync off before navigating SitMap independently.
+
+The MCP tools are `sitmap_status`, `sitmap_set_view`, `sitmap_snapshot`,
+`sitrec_send_to_sitmap` and `sitrec_sync_sitmap`. Live sync uses a persistent
+local connection and applies the newest camera on SitMap's 60 Hz update loop;
+it does not make an MCP call for every frame.
+
+Apple MapKit restricts camera pitch and does not expose a lens FOV setter.
+SitMap uses calibrated image projection for FOV and pitch compensation, and
+automatically adjusts its render dimensions to avoid pitch and zoom clamps
+where possible. It reports requested versus applied settings and image coverage. Sitrec supplies
+terrain targets for both the requested ray and MapKit's accepted angle.
+Missing source pixels remain dark. Near-horizon views and
+terrain eye positions are approximate. Very narrow FOV can magnify source pixels.
+
+Build instructions, controls, API examples and research references are in the
+[SitMap README](https://github.com/MickWest/Sitrec2/tree/main/native/SitMap).
+
 ## More detail
 
 The [SitrecBridge README](https://github.com/MickWest/Sitrec2/tree/main/tools/SitrecBridge)

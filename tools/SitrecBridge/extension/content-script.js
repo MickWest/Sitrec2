@@ -203,4 +203,52 @@ window.addEventListener("message", (event) => {
     }
 });
 
+// Sitrec -> native SitMap. This goes through the extension so an HTTPS page
+// never needs mixed-content fetch or local-network browser permission itself.
+let sitMapPort = null;
+let sitMapStart = null;
+function sitMapReply(id, result, error) {
+    window.postMessage({source: "sitmap-extension", id, result, error}, window.location.origin);
+}
+function stopSitMap() {
+    const port = sitMapPort; sitMapPort = null;
+    port?.disconnect();
+    if (sitMapStart) { clearTimeout(sitMapStart.timer); sitMapReply(sitMapStart.id, null, "SitMap sync stopped."); sitMapStart = null; }
+}
+window.addEventListener("message", event => {
+    if (event.source !== window || event.origin !== window.location.origin || event.data?.source !== "sitmap-client" || !sitrecDetected) return;
+    const {id, action, params} = event.data;
+    if (action === "pose") {
+        try { sitMapPort?.postMessage({type: "pose", ...params}); } catch { stopSitMap(); }
+        return;
+    }
+    if (action === "stop") { stopSitMap(); sitMapReply(id, {stopped: true}); return; }
+    if (action === "start") {
+        stopSitMap();
+        const port = sitMapPort = chrome.runtime.connect({name: "sitmap-live"});
+        sitMapStart = {id, timer: setTimeout(() => {
+            sitMapReply(id, null, "Cannot connect to SitMap. Open SitMap.app and try again.");
+            sitMapStart = null; stopSitMap();
+        }, 5000)};
+        port.onMessage.addListener(message => {
+            if (port !== sitMapPort) return;
+            if (message.type === "ready" && sitMapStart) {
+                clearTimeout(sitMapStart.timer); sitMapReply(sitMapStart.id, {connected: true}); sitMapStart = null;
+            }
+            window.postMessage({source: "sitmap-extension", live: message}, window.location.origin);
+        });
+        port.onDisconnect.addListener(() => {
+            if (port !== sitMapPort) return;
+            stopSitMap();
+            window.postMessage({source: "sitmap-extension", live: {type: "stopped"}}, window.location.origin);
+        });
+        return;
+    }
+    if (!["status", "view", "snapshot"].includes(action)) { sitMapReply(id, null, "Unknown SitMap action."); return; }
+    chrome.runtime.sendMessage({type: "sitmapRequest", action, params}).then(
+        response => sitMapReply(id, response?.result, response?.error),
+        error => sitMapReply(id, null, error.message));
+});
+window.addEventListener("pagehide", stopSitMap);
+
 } // end double-injection guard
