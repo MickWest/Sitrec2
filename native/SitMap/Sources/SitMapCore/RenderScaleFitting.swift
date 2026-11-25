@@ -43,11 +43,14 @@ public enum RenderScaleFitting {
         return values
     }
 
-    /// Retain the previous working scale to avoid resizing on every sync tick.
+    /// Retain the previous working scale during motion. An idle quality pass can
+    /// request a preferred scale to recover resolution after a zoom restriction.
     /// The callback applies and measures the real camera at each candidate size.
     public static func fit(width: Double, height: Double, initialScale: Double,
+                           preferredScale: Double? = nil,
                            measure: (Double) -> Measurement) -> Result {
         let candidates = scales(width: width, height: height)
+        let preferred = preferredScale.map { min(candidates.last!, max(candidates.first!, $0)) }
         var index = candidates.indices.min { abs(candidates[$0] - initialScale) < abs(candidates[$1] - initialScale) }!
         var visited = Set<Int>(), bestIndex = index, best: Measurement?
         var lastIndex = index, attempts = 0
@@ -59,7 +62,9 @@ public enum RenderScaleFitting {
                     && candidates[index] > candidates[bestIndex]
             } ?? false
             if best == nil || result.better(than: best!) || equivalentLargerSurface { best = result; bestIndex = index }
-            if result.fits { break }
+            if result.fits {
+                guard let preferred, candidates[index] < preferred - 0.01 else { break }
+            }
             let next = index + (result.positionFits ? 1 : -1)
             guard candidates.indices.contains(next) else { break }
             index = next

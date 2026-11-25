@@ -49,6 +49,14 @@ final class MapCanvas: NSView, MKMapViewDelegate {
     private var fitAttempts = 0
     private var surfaceResizeCount = 0
     private var applyMilliseconds = 0.0
+    private var resolutionRecovery: DispatchWorkItem?
+    private var recoveringResolution = false
+    private var resolutionRecoveryCount = 0
+    private var resolutionRecoveryAttempts = 0
+    private var preferredRenderScale: Double {
+        min(max(1, cropScale), RenderScaleFitting.scales(
+            width: viewport.height * renderAspect, height: viewport.height).last!)
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -89,6 +97,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
             else { map.setCamera(camera, animated: false) }
         }
         updateFraming()
+        scheduleResolutionRecovery()
     }
 
     /// Apply source geometry synchronously, including when called from layout().
@@ -134,6 +143,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
         defer {
             applying = false; updateFraming()
             applyMilliseconds = (CFAbsoluteTimeGetCurrent()-start)*1000
+            scheduleResolutionRecovery()
             changed?()
         }
         // MapKit needs a ground target. An above-horizon ray has none; report the
@@ -180,7 +190,8 @@ final class MapCanvas: NSView, MKMapViewDelegate {
             if let current = sourceAspect { sourceAspect = min(outputAspect, max(current, requiredAspect())) }
             func fitSurface() -> RenderScaleFitting.Result {
                 RenderScaleFitting.fit(width: viewport.height * renderAspect, height: viewport.height,
-                    initialScale: sourceScale, measure: measure)
+                    initialScale: sourceScale,
+                    preferredScale: recoveringResolution ? preferredRenderScale : nil, measure: measure)
             }
             var fit = fitSurface()
             fitAttempts = fit.attempts
@@ -201,6 +212,41 @@ final class MapCanvas: NSView, MKMapViewDelegate {
             }
         }
     }
+
+    /// Keep the cheap, stable fit while cameras are moving. Once movement stops,
+    /// try recovering enough source pixels for the FOV crop. Failed candidates
+    /// are restored by the fitter and are not retried until another user change.
+    private func scheduleResolutionRecovery() {
+        guard !recoveringResolution else { return }
+        resolutionRecovery?.cancel(); resolutionRecovery = nil
+        guard request?.renderScale == nil, viewport.width > 1, viewport.height > 1 else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.resolutionRecovery = nil
+            self.recoverResolution()
+        }
+        resolutionRecovery = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+    private func recoverResolution() {
+        guard !applying, !recoveringResolution, gesture == nil, nativeFov != nil,
+              request?.renderScale == nil, sourceScale < preferredRenderScale - 0.01 else { return }
+        recoveringResolution = true
+        defer { recoveringResolution = false; changed?() }
+        resolutionRecoveryCount += 1
+        if let request {
+            try? apply(request)
+        } else {
+            let camera = map.camera
+            let pose = NavigationPose(distance: camera.centerCoordinateDistance, nativePitch: Double(camera.pitch),
+                heading: camera.heading, pitch: desiredPitch ?? Double(camera.pitch), roll: desiredRoll)
+            _ = applyNavigation(pose, origin: Coordinate(camera.centerCoordinate))
+        }
+        resolutionRecoveryAttempts = fitAttempts
+    }
+    // Private renderer controls can remove a size constraint without moving the
+    // camera. The optional experiment calls this after a settings change.
+    func rendererSettingsDidChange() { updateFraming(); scheduleResolutionRecovery() }
 
     private func applyCamera(_ value: ViewRequest, pitch: Double) {
         let camera = MKMapCamera(lookingAtCenter: value.target(pitch: pitch).cl,
@@ -319,15 +365,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
                           "requestedTargetY": point.y.isFinite ? point.y / max(1, map.bounds.height) as Any : NSNull(),
                           "centerErrorMeters": centerError, "rangeErrorMeters": rangeError,
                           "sourceCenterErrorMeters": sourceCenterError, "sourceRangeErrorMeters": sourceRangeError,
-                          "sourceWidth": map.bounds.width, "sourceHeight": map.bounds.height,
-                          "sourceAspect": renderAspect,
-                          "expectedSourceWidth": viewport.height * sourceScale * renderAspect,
-                          "expectedSourceHeight": viewport.height * sourceScale,
-                          "mapCoordinatesFlipped": map.isFlipped, "renderScale": sourceScale,
-                          "renderScaleMode": request.renderScale == nil ? "adaptive" : "fixed",
-                          "fitAttempts": fitAttempts]
-            projection["surfaceResizeCount"] = surfaceResizeCount
-            projection["applyMilliseconds"] = applyMilliseconds
+                          "mapCoordinatesFlipped": map.isFlipped]
             if let framing, point.x.isFinite, point.y.isFinite,
                let output = framing.project(x: (point.x-map.bounds.midX) / max(1, map.bounds.height/2),
                     y: (point.y-map.bounds.midY) / max(1, map.bounds.height/2) * (map.isFlipped ? -1 : 1)) {
@@ -338,6 +376,19 @@ final class MapCanvas: NSView, MKMapViewDelegate {
                 notes.append(String(format: "MapKit displaced the source camera: target error %.1f m, range error %.1f m.", sourceCenterError, sourceRangeError))
             }
         }
+        projection["sourceWidth"] = map.bounds.width; projection["sourceHeight"] = map.bounds.height
+        projection["sourceAspect"] = renderAspect
+        projection["expectedSourceWidth"] = viewport.height * sourceScale * renderAspect
+        projection["expectedSourceHeight"] = viewport.height * sourceScale
+        projection["renderScale"] = sourceScale
+        projection["renderScaleMode"] = request?.renderScale == nil ? "adaptive" : "fixed"
+        projection["fitAttempts"] = fitAttempts
+        projection["surfaceResizeCount"] = surfaceResizeCount
+        projection["applyMilliseconds"] = applyMilliseconds
+        projection["preferredRenderScale"] = preferredRenderScale
+        projection["resolutionRecoveryPending"] = resolutionRecovery != nil
+        projection["resolutionRecoveryCount"] = resolutionRecoveryCount
+        projection["resolutionRecoveryAttempts"] = resolutionRecoveryAttempts
         let pitchError = Double(c.pitch) - (desiredPitch ?? Double(c.pitch))
         if abs(pitchError) > 0.05 { notes.append("MapKit clamped the native pitch; the image is reprojected to the requested direction within source coverage.") }
         if abs(pitchError) > 0.05 && request?.sourceGroundTarget == nil {
@@ -409,6 +460,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
     @discardableResult
     func beginNavigation(mode: NavigationGesture.Mode, at point: NSPoint) -> Bool {
         endNavigation()
+        resolutionRecovery?.cancel(); resolutionRecovery = nil
         let c = map.camera
         guard viewport.contains(point), sourcePoint(point) != nil,
               (1...2_000_000).contains(c.centerCoordinateDistance) else { return false }
@@ -423,6 +475,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
     func endNavigation() {
         gesture = nil; gestureOrigin = nil
         navigationDetails["active"] = false
+        scheduleResolutionRecovery()
     }
     @discardableResult
     func moveNavigation(to point: NSPoint) -> Bool {
@@ -449,7 +502,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
         let previousScale = sourceScale, previousPitch = desiredPitch, previousRequest = request
         let previousWarnings = warnings
         applying = true
-        defer { applying = false; updateFraming(); changed?() }
+        defer { applying = false; updateFraming(); scheduleResolutionRecovery(); changed?() }
         request = nil; desiredPitch = pose.pitch; warnings = []; renderComplete = false
         func source(_ pitch: Double) -> MKMapCamera? {
             guard let target = pose.target(nativePitch: pitch) else { return nil }
@@ -460,7 +513,8 @@ final class MapCanvas: NSView, MKMapViewDelegate {
                                pitch: pitch, heading: pose.heading)
         }
         let result = RenderScaleFitting.fit(width: viewport.height * renderAspect, height: viewport.height,
-            initialScale: sourceScale) { scale in
+            initialScale: sourceScale,
+            preferredScale: recoveringResolution ? preferredRenderScale : nil) { scale in
             self.sourceScale = scale; self.layoutRenderSurface()
             guard let camera = source(pose.pitch) else {
                 return .init(pitchError: 180, centerError: .infinity, rangeError: .infinity)
@@ -532,7 +586,7 @@ final class MapCanvas: NSView, MKMapViewDelegate {
                 fromDistance: min(2_000_000, max(5, c.centerCoordinateDistance * factor)),
                 pitch: c.pitch, heading: c.heading), animated: false)
         }
-        request = nil; warnings = []; updateFraming(); changed?()
+        request = nil; warnings = []; updateFraming(); scheduleResolutionRecovery(); changed?()
     }
     override func magnify(with event: NSEvent) {
         guard gesture == nil else { return }
@@ -541,5 +595,6 @@ final class MapCanvas: NSView, MKMapViewDelegate {
         map.setCamera(MKMapCamera(lookingAtCenter: c.centerCoordinate,
             fromDistance: min(2_000_000, max(5, c.centerCoordinateDistance * exp(-event.magnification))),
             pitch: c.pitch, heading: c.heading), animated: false)
+        updateFraming(); scheduleResolutionRecovery()
     }
 }

@@ -240,7 +240,14 @@ macOS test, a 2× surface changed a 218.46 m camera request to 271.28 m and move
 the target by 39.14 m. At native size, range and target matched to numerical
 precision. SitMap therefore chooses the render size automatically: it enlarges
 the source for a pitch clamp, reduces it for a displaced source camera, and
-retains the last working size across sync updates. Automatic sizes run from
+retains the last working size across sync updates.
+After 350 ms without camera input, it retries larger surfaces until the FOV crop
+has at least one source pixel per display pixel, or a camera/resource limit is
+reached. A rejected size restores the best aligned camera. This quality pass runs
+once per settled change, including manual navigation, window/sidebar resizing and
+experimental renderer setting changes, so a temporary reduction does not remain
+permanently blurry. It does not resize repeatedly while the camera is moving.
+Explicit diagnostic render scales remain fixed. Automatic sizes run from
 0.5× to 4×, bounded by 4096 points per axis and 8,388,608 square points, before
 Retina backing. A supplied `renderScale` (0.5–2) overrides adaptation for
 diagnostics. `projection.renderScaleMode`, `renderScale`, and `fitAttempts`
@@ -254,6 +261,9 @@ not continually resize MapKit's render surface. An unchanged size does not
 reset the layer layout. `projection.surfaceResizeCount` and
 `projection.applyMilliseconds` report resizing and camera-update cost; the
 timing excludes asynchronous GPU rendering and tile loading.
+`projection.preferredRenderScale`, `resolutionRecoveryPending`,
+`resolutionRecoveryCount` and `resolutionRecoveryAttempts` report the idle
+resolution recovery. Source dimensions remain available during manual navigation.
 Snapshots retain this source shape and project to the requested output aspect.
 Check
 `projection.sourceCenterErrorMeters` and `projection.sourceRangeErrorMeters`

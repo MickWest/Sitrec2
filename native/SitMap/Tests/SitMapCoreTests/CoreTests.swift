@@ -72,6 +72,50 @@ final class CoreTests: XCTestCase {
         }
         XCTAssertEqual(fit.scale, 1); XCTAssertTrue(fit.measurement.fits)
     }
+    func testIdleResolutionRecoveryAfterZoomRestrictionIsRemoved() {
+        let close = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: 2) { scale in
+            .init(pitchError: 0, centerError: scale > 0.5 ? 40 : 0, rangeError: scale > 0.5 ? 50 : 0)
+        }
+        XCTAssertEqual(close.scale, 0.5)
+        let moving = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: close.scale) { _ in
+            .init(pitchError: 0, centerError: 0, rangeError: 0)
+        }
+        XCTAssertEqual(moving.scale, 0.5); XCTAssertEqual(moving.attempts, 1)
+        let magnification = Framing(nativeFov: 30.05, requestedFov: 19.968, roll: 0, aspect: 2.21).scale
+        let idle = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: moving.scale,
+            preferredScale: magnification) { _ in .init(pitchError: 0, centerError: 0, rangeError: 0) }
+        XCTAssertEqual(idle.scale, 2)
+        XCTAssertGreaterThanOrEqual(idle.scale / magnification, 1)
+        let nextFrame = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: idle.scale) { _ in
+            .init(pitchError: 0, centerError: 0, rangeError: 0)
+        }
+        XCTAssertEqual(nextFrame.scale, 2); XCTAssertEqual(nextFrame.attempts, 1)
+    }
+    func testResolutionRecoveryRestoresLastSharpAlignedCandidateAtZoomLimit() {
+        var activeScale = 0.0
+        let fit = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: 0.5, preferredScale: 2) { scale in
+            activeScale = scale
+            return .init(pitchError: 0, centerError: scale > 1 ? 40 : 0, rangeError: scale > 1 ? 50 : 0)
+        }
+        XCTAssertEqual(fit.scale, 1); XCTAssertEqual(activeScale, 1)
+        XCTAssertTrue(fit.measurement.fits)
+        // A sharpness request must not trade an aligned angle for extra pixels.
+        let pitchLimited = RenderScaleFitting.fit(width: 1590, height: 720, initialScale: 1,
+            preferredScale: 2) { scale in
+            .init(pitchError: scale > 1 ? 10 : 0, centerError: 0, rangeError: 0)
+        }
+        XCTAssertEqual(pitchLimited.scale, 1)
+        XCTAssertTrue(pitchLimited.measurement.fits)
+    }
+    func testResolutionRecoveryHonorsBudgetAndKeepsAnAlreadyLargerSurface() {
+        let limited = RenderScaleFitting.fit(width: 3000, height: 2200, initialScale: 0.5,
+            preferredScale: 300) { _ in .init(pitchError: 0, centerError: 0, rangeError: 0) }
+        XCTAssertEqual(limited.scale, RenderScaleFitting.scales(width: 3000, height: 2200).last)
+        XCTAssertLessThanOrEqual(3000 * 2200 * limited.scale * limited.scale, 8_388_608 + 0.01)
+        let larger = RenderScaleFitting.fit(width: 1000, height: 600, initialScale: 3,
+            preferredScale: 1.5) { _ in .init(pitchError: 0, centerError: 0, rangeError: 0) }
+        XCTAssertEqual(larger.scale, 3); XCTAssertEqual(larger.attempts, 1)
+    }
     func testAdaptiveRenderSurfaceRestoresBestPoseWhenLimitsConflict() {
         var activeScale = 0.0
         let fit = RenderScaleFitting.fit(width: 1614, height: 730.5, initialScale: 1) { scale in

@@ -31,6 +31,7 @@ final class WireframeExperiment: NSObject {
     private var failure: String?
     private var internalSettingsActivated = false
     var changed: (() -> Void)?
+    var renderSettingsChanged: (() -> Void)?
 
     func initialize() {
         _ = Bundle(path: "/System/Library/PrivateFrameworks/VectorKit.framework")?.load()
@@ -225,7 +226,8 @@ final class WireframeExperiment: NSObject {
         refresh()
     }
     private func refresh() {
-        _ = callVoid("setNeedsRender"); map?.needsDisplay = true; changed?()
+        _ = callVoid("setNeedsRender"); map?.needsDisplay = true
+        renderSettingsChanged?(); changed?()
     }
     func state() -> [String: Any] {
         var values: [String: Any] = [:]

@@ -30,7 +30,9 @@ text = text.replace('let app = NSApplication.shared', '''WireframeExperiment.sha
         }
         let app = NSApplication.shared''')
 text = text.replace('window.title = "SitMap"', 'window.title = "SitMap — Wireframe Experiment"')
-text = text.replace('root.layoutSubtreeIfNeeded(); applyFields()', 'root.layoutSubtreeIfNeeded(); applyFields()\n        WireframeExperiment.shared.attach(canvas.map)')
+text = text.replace('root.layoutSubtreeIfNeeded(); applyFields()', '''root.layoutSubtreeIfNeeded(); applyFields()
+        WireframeExperiment.shared.renderSettingsChanged = { [weak self] in self?.canvas.rendererSettingsDidChange() }
+        WireframeExperiment.shared.attach(canvas.map)''')
 # Keep camera and renderer panels in the existing padded sidebar. Only one is visible.
 start = text.index('        let header = NSTextField(labelWithString: "CAMERA REQUEST")')
 end = text.index('        let legal = NSButton', start)
