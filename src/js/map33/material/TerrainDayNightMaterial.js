@@ -2,10 +2,12 @@ import {Color, ShaderMaterial, UniformsLib, UniformsUtils, Vector3} from "three"
 import {sharedUniforms} from "./SharedUniforms";
 import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
-import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight} from "./TerrainGlints";
+import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight, installGlintVariant} from "./TerrainGlints";
+import {installShaderFeatureVariants} from "../../../ShaderFeatureVariants";
 import {
     addTerrestrialRefractionUniforms,
     installTerrestrialRefractionOnShaderMaterial,
+    installTerrestrialRefractionVariants,
     TERRESTRIAL_REFRACTION_VERTEX_GLSL,
 } from "../../../atmosphere/terrestrialRefraction";
 
@@ -79,7 +81,9 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             varying vec3 vWorldPosition;
             varying vec4 vPosition;
             ${glintVertexDeclarations}
+            #ifdef SITREC_GLINTS
             uniform float glintTerrainSegments;
+            #endif
             #include <common>
             #include <fog_pars_vertex>
             #include <shadowmap_pars_vertex>
@@ -96,11 +100,13 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
                 // Calculate position for depth
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                #ifdef SITREC_GLINTS
                 vGlintViewPosition = mvPosition.xyz;
                 // Three colors on the indexed PlaneGeometry grid: each
                 // triangle has one of each, without duplicating its vertices.
                 vec2 glintGrid = floor(uv * glintTerrainSegments + 0.5);
                 vGlintBarycentric = glintBarycentric(mod(glintGrid.x + glintGrid.y, 3.0));
+                #endif
                 // Terrestrial refraction — apparent position only. vWorldPosition
                 // and vNormal above are computed from the model matrix directly
                 // and stay physical, so day/night lighting, local terrain shading
@@ -136,6 +142,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
             // Water surface shading, shared with the 3D-tiles material.
             // See src/water/WaterShading.glsl.js.
+            #ifdef SITREC_TERRAIN_WATER
             ${waterUniformsGLSL}
 
             // Terrain's own way of FINDING water, which the shared chunk knows
@@ -151,6 +158,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             // flag saying this tile actually got one. See WaterMaskTiles.js.
             uniform sampler2D waterMaskMap;
             uniform float hasWaterMask;
+            #endif
 
             varying vec2 vUv;
             varying vec3 vNormal;
@@ -167,7 +175,9 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
             // The water surface, shared with DayNightStandardMaterial (the
             // Google 3D tiles). Carries the Ocean method's microfacet BRDF with
             // it — see src/water/WaterShading.glsl.js.
+            #ifdef SITREC_TERRAIN_WATER
             ${waterShadeGLSL}
+            #endif
             
             void main() {
                 // Get the base texture color
@@ -233,6 +243,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // regardless of zoom. Mirrors the building-edges trick in
                 // DayNightStandardMaterial — there it's per-triangle from
                 // barycentric coords; here it's per-tile from the 0..1 UV.
+                #ifdef SITREC_TILE_EDGES
                 if (showTileEdges) {
                     vec2 uvD = fwidth(vUv);
                     // Two guards on rendering the magenta border:
@@ -265,6 +276,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 }
 
                 // Set alpha based on transparency parameter
+                #endif
                 finalColor.a = transparency;
 
                 // Convert sRGB-space output to linear to match standard materials.
@@ -277,6 +289,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                 // dawn exactly as the night sky itself does. The cube holds the
                 // night sky rendered from the origin, in LINEAR radiance — which
                 // is why this is added AFTER the sRGB->linear conversion above.
+                #ifdef SITREC_TERRAIN_WATER
                 if (waterReflection > 0.0 && waterSurfaceOnly < 0.5) {
                     // Where a vector water mask was loaded for this tile, it IS
                     // the answer: real water polygons, rasterised with the
@@ -339,6 +352,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
                     }
                 }
 
+                #endif
                 gl_FragColor = linearColor;
                 #include <fog_fragment>
                 ${glintFragmentHighlight}
@@ -367,12 +381,22 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
     // Tag so consumers can identify a TerrainDayNight material for per-view cloning.
     material.userData.isTerrainDayNight = true;
     installTerrestrialRefractionOnShaderMaterial(material);
+    installTerrainFeatureVariants(material);
     // Flat Earth rendering: patch at creation, not via the 500 ms scene
     // sweep — a tile activated on an LOD change must land on the disc on
     // its FIRST frame, or the swap briefly shows a hole where the new tile
     // still sits at its globe position. Null when the mode is off.
     Globals.flatEarthPatchMaterial?.(material);
     return material;
+}
+
+function installTerrainFeatureVariants(material) {
+    installGlintVariant(material);
+    installShaderFeatureVariants(material, {
+        SITREC_TERRAIN_WATER: () => sharedUniforms.waterReflection.value > 0
+            && sharedUniforms.waterSurfaceOnly.value < 0.5,
+        SITREC_TILE_EDGES: () => sharedUniforms.showTileEdges.value,
+    });
 }
 
 /**
@@ -411,6 +435,7 @@ export function cloneTerrainDayNightMaterialForView(orig) {
     }
 
     const clone = new ShaderMaterial({
+        defines: {...orig.defines},
         uniforms,
         vertexShader: orig.vertexShader,
         fragmentShader: orig.fragmentShader,
@@ -422,6 +447,8 @@ export function cloneTerrainDayNightMaterialForView(orig) {
     });
     clone.userData.isTerrainDayNight = true;
     clone.userData.isPerViewClone = true;
+    installTerrestrialRefractionVariants(clone);
+    installTerrainFeatureVariants(clone);
     // See createTerrainDayNightMaterial — per-view clones need the flat
     // earth patch at creation for the same first-frame reason.
     Globals.flatEarthPatchMaterial?.(clone);

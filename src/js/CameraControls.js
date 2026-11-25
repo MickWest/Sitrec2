@@ -21,6 +21,7 @@ import {
 } from "../SphericalMath";
 import {Globals, NodeFactory, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {CNodeControllerPTZUI} from "../nodes/CNodeControllerPTZUI";
+import {requestCameraInputUpdate} from "../CameraInputUpdates";
 import {intersectSphere2, V3} from "../threeUtils";
 import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove} from "../mouseMoveView";
 import {isKeyHeld} from "../KeyBoardHandler";
@@ -83,7 +84,7 @@ const STATE = {
 };
 
 // A drag in a PTZ-driven view (the look view) changes the controller's angles.
-// The camera follows them every frame on its own; what needs the controller's
+// The camera refresh is queued for the next draw; what needs the controller's
 // recalculateCascade is everything computed from the camera over the WHOLE sitch:
 // lines of sight, ground tracks, angle graphs. In a long sitch that is far slower
 // than a frame (23 minutes, 41,400 frames: about 200 ms, nearly all of it the LOS
@@ -694,6 +695,7 @@ class CameraMapControls {
 			if (fovUINode) {
 				fovUINode.setValue(ptzControls.fov);
 			}
+			requestCameraInputUpdate(this.view.cameraNode);
 
 		} else if (!this.view.cameraNode?.hasFOVController?.()) {
 
@@ -913,6 +915,7 @@ class CameraMapControls {
 
 	// Recalculate `node`'s cascade once the drag pauses (see CASCADE_PAUSE_MS).
 	deferCascade(node) {
+		requestCameraInputUpdate(this.view.cameraNode);
 		this.cascadeNode = node;
 		clearTimeout(this.cascadeTimer);
 		this.cascadeTimer = setTimeout(() => this.flushCascade(), CASCADE_PAUSE_MS);

@@ -2,11 +2,13 @@ import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
-import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight} from "./TerrainGlints";
+import {glintUniforms, glintVertexDeclarations, glintFragmentDeclarations, glintFragmentHighlight, installGlintVariant} from "./TerrainGlints";
+import {installShaderFeatureVariants, updateShaderFeatureVariants} from "../../../ShaderFeatureVariants";
 import {applyCityLightsShader, cityLightsDefault} from "../../../citylights/CityLightsShader";
 import {
     addTerrestrialRefractionUniforms,
     patchTerrestrialRefractionVertexShader,
+    installTerrestrialRefractionVariants,
 } from "../../../atmosphere/terrestrialRefraction";
 
 const CACHE_KEY = "DayNightStandardMaterial.v13glints";
@@ -51,7 +53,7 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         this.tileOutputGamma = tileOutputGamma;
         this.useSitrecShadowCoords = useSitrecShadowCoords;
         this.defines = {};
-        if (tileWaterEnabled) this.defines.SITREC_TILE_WATER = "";
+        this._tileWaterEnabled = tileWaterEnabled;
         if (cityLightsDefault()) this.defines.SITREC_CITY_LIGHTS = "";
 
         this._dayNightUniforms = {
@@ -79,6 +81,15 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         }
 
         this.onBeforeCompile = this._onBeforeCompile.bind(this);
+        installGlintVariant(this);
+        installTerrestrialRefractionVariants(this);
+        installShaderFeatureVariants(this, {
+            SITREC_TILE_WATER: material => material._tileWaterEnabled && (
+                (sharedUniforms.waterReflection.value > 0 && sharedUniforms.waterSurfaceOnly.value < 0.5)
+                || sharedUniforms.waterTileCapture.value > 0.5),
+            SITREC_BUILDING_EDGES: () => sharedUniforms.showBuildingEdges.value,
+            SITREC_TILE_EDGES: () => sharedUniforms.showTileEdges.value,
+        });
     }
 
     _onBeforeCompile(shader) {
@@ -124,11 +135,15 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         shader.vertexShader = shader.vertexShader.replace(
             '#include <common>',
             `#include <common>
+#ifdef SITREC_BUILDING_EDGES
 attribute vec3 barycentric;
 varying vec3 vBarycentric;
+#endif
 varying vec3 vWorldPositionDN;
 varying vec3 vLocalPositionDN;
+#if defined(SITREC_TILE_EDGES) || defined(SITREC_TILE_WATER)
 varying vec2 vDNUv;
+#endif
 ${glintVertexDeclarations}`
         );
 
@@ -142,12 +157,18 @@ sitrecLocalPositionDN = instanceMatrix * sitrecLocalPositionDN;
 #endif
 vWorldPositionDN = (modelMatrix * sitrecLocalPositionDN).xyz;
 vLocalPositionDN = sitrecLocalPositionDN.xyz;
+#ifdef SITREC_GLINTS
 vGlintViewPosition = (modelViewMatrix * sitrecLocalPositionDN).xyz;
 // TilesEdgesPlugin de-indexes these meshes. Its edge coordinates suppress
 // coplanar edges, so use raw vertex order for the glint centroid instead.
 vGlintBarycentric = glintBarycentric(float(gl_VertexID % 3));
+#endif
+#ifdef SITREC_BUILDING_EDGES
 vBarycentric = barycentric;
-vDNUv = uv;`;
+#endif
+#if defined(SITREC_TILE_EDGES) || defined(SITREC_TILE_WATER)
+vDNUv = uv;
+#endif`;
 
         if (shader.vertexShader.includes('#include <worldpos_vertex>')) {
             shader.vertexShader = shader.vertexShader.replace(
@@ -185,8 +206,12 @@ uniform bool showBuildingEdges;
 uniform bool showTileEdges;
 varying vec3 vWorldPositionDN;
 varying vec3 vLocalPositionDN;
+#ifdef SITREC_BUILDING_EDGES
 varying vec3 vBarycentric;
+#endif
+#if defined(SITREC_TILE_EDGES) || defined(SITREC_TILE_WATER)
 varying vec2 vDNUv;
+#endif
 ${glintFragmentDeclarations}
 #ifdef SITREC_TILE_WATER
 ${waterUniformsGLSL}
@@ -347,6 +372,7 @@ uniform mat4 sitrecDirectionalShadowWorldMatrix[ NUM_DIR_LIGHT_SHADOWS ];
         shader.fragmentShader = shader.fragmentShader.replace(
             '#include <dithering_fragment>',
             `#include <dithering_fragment>
+#ifdef SITREC_BUILDING_EDGES
 if (showBuildingEdges) {
     // Screen-space anti-aliased wireframe via barycentric coords
     vec3 d = fwidth(vBarycentric);
@@ -355,6 +381,8 @@ if (showBuildingEdges) {
     vec3 edgeColor = vec3(0.25);
     gl_FragColor.rgb = mix(edgeColor, gl_FragColor.rgb, edgeFactor);
 }
+#endif
+#ifdef SITREC_TILE_EDGES
 if (showTileEdges) {
     // Magenta ~1-pixel border around each tile, anti-aliased.
     // vUv runs 0..1 across the tile; fwidth(vUv) gives UV change per pixel,
@@ -381,6 +409,7 @@ if (showTileEdges) {
         gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.0, 1.0), borderFactor);
     }
 }
+#endif
 if (useDayNight) {
     vec3 globalNormal = normalize(vWorldPositionDN - earthCenter);
     vec3 sunNorm = normalize(sunDirection);
@@ -438,12 +467,8 @@ ${glintFragmentHighlight}`
      * needsUpdate would rebuild every tile program for nothing.
      */
     setTileWater(on) {
-        const want = !!on;
-        this.defines = this.defines ?? {};
-        if (!!this.defines.SITREC_TILE_WATER === want) return;
-        if (want) this.defines.SITREC_TILE_WATER = "";
-        else delete this.defines.SITREC_TILE_WATER;
-        this.needsUpdate = true;
+        this._tileWaterEnabled = !!on;
+        updateShaderFeatureVariants(this);
     }
 
     setTileOutputGamma(value) {
@@ -463,7 +488,9 @@ ${glintFragmentHighlight}`
         this.flatShading = true;
         this.setTileOutputGamma(source.tileOutputGamma ?? 1.0);
         this.useSitrecShadowCoords = source.useSitrecShadowCoords ?? this.useSitrecShadowCoords ?? false;
+        this._tileWaterEnabled = source._tileWaterEnabled ?? this._tileWaterEnabled;
         this.onBeforeCompile = this._onBeforeCompile.bind(this);
+        updateShaderFeatureVariants(this);
         return this;
     }
 

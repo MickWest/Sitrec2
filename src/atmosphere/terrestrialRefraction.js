@@ -70,6 +70,7 @@
 
 import {Frustum, Material, Matrix4, Sphere, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
+import {installShaderFeatureVariants} from "../ShaderFeatureVariants";
 import {projectRayRelative, unprojectRayRelative, rayGeometryLiftBounds,
     RAY_GEOMETRY_GLSL, rayGeometryUniforms, patchRayGeometryFragmentShader} from "../refraction/RayGeometryProjection";
 
@@ -543,6 +544,7 @@ const CHUNK_MARKER = "SITREC_TERRESTRIAL_REFRACTION_CHUNK";
 export const TERRESTRIAL_REFRACTION_VERTEX_GLSL = /* glsl */`
 // ${CHUNK_MARKER}
 ${RAY_GEOMETRY_GLSL}
+#ifdef SITREC_TERRESTRIAL_REFRACTION
 uniform float uTerrK;
 uniform vec3 uTerrZenithView;
 uniform float uTerrInvR;
@@ -598,8 +600,12 @@ float sitrecSightLineDensity(float hObs, float hTgt, float d) {
     return 2.0 * total;
 }
 
+#endif
+
 vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
-    if (uRayGeometry > 0.5) return applyRayGeometry(viewPos);
+#ifdef SITREC_RAY_GEOMETRY
+    return applyRayGeometry(viewPos);
+#elif defined(SITREC_TERRESTRIAL_REFRACTION)
     if (uTerrK == 0.0) return viewPos;
     float upComponent = dot(viewPos, uTerrZenithView);
     vec3 horizontal = viewPos - upComponent * uTerrZenithView;
@@ -625,6 +631,9 @@ vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
     lift = uTerrMaxLift * v * inversesqrt(1.0 + v * v);
 
     return viewPos + uTerrZenithView * lift;
+#else
+    return viewPos;
+#endif
 }
 
 // The one line every hand-written vertex shader needs. See the JS comment on
@@ -660,8 +669,19 @@ export function installTerrestrialRefractionOnShaderMaterial(material) {
     addTerrestrialRefractionUniforms({uniforms: material.uniforms});
     material.vertexShader = injectTerrestrialRefractionChunk(material.vertexShader);
     material.fragmentShader = patchRayGeometryFragmentShader(material.fragmentShader);
+    installTerrestrialRefractionVariants(material);
     _installed.add(material);
     material.needsUpdate = true;
+}
+
+// Read the effective draw state: ray geometry and thermal captures scope these
+// uniforms independently of the situation's master checkboxes.
+export function installTerrestrialRefractionVariants(material) {
+    installShaderFeatureVariants(material, {
+        SITREC_RAY_GEOMETRY: () => rayGeometryUniforms.uRayGeometry.value > 0.5,
+        SITREC_TERRESTRIAL_REFRACTION: () => rayGeometryUniforms.uRayGeometry.value <= 0.5
+            && terrestrialRefractionUniforms.uTerrK.value !== 0,
+    });
 }
 
 // Point a shader's uniform slots at the shared objects.
@@ -747,7 +767,7 @@ export function patchTerrestrialRefractionVertexShader(vertexShader) {
             + "\n\t\t\tend.xyz = applyTerrestrialRefraction_chunk(end.xyz);");
         out = out.replace(FATLINE_APPROX_MV,
             "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;"
-            + "\n\tvRayGeometryPhysical = mvPosition.xyz;");
+            + "\n#ifdef SITREC_RAY_GEOMETRY\n\tvRayGeometryPhysical = mvPosition.xyz;\n#endif\n");
         matched = true;
     }
 
@@ -768,6 +788,7 @@ const TERRESTRIAL_PROGRAM_KEY = "sitrecTerrestrialRefraction.v1";
 
 export function installTerrestrialRefractionOnMaterial(material) {
     if (!material || _installed.has(material)) return;
+    installTerrestrialRefractionVariants(material);
 
     const prev = material.onBeforeCompile;
 

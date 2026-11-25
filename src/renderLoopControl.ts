@@ -18,6 +18,19 @@ type SleepAnimationLoopArgs = {
     forceRender?: boolean;
 };
 
+// rAF timestamps can land a fraction of a millisecond before a 60/30 Hz
+// deadline. Accept that small rounding/jitter window without moving the clock
+// to the callback: advancing whole periods keeps long playback in phase.
+export const DISPLAY_FRAME_TOLERANCE_MS = 0.5;
+
+export function frameClockStep(now: number, origin: number, interval: number, tolerance = 0): {
+    due: boolean; time: number; elapsed: number; delay: number;
+} {
+    const periods = Math.max(0, Math.floor((now - origin + tolerance) / interval));
+    return {due: periods > 0, time: origin + periods * interval, elapsed: periods * interval,
+        delay: Math.max(0, origin + interval - now)};
+}
+
 export function renderCadence({renderFps, sourceFps, adaptiveFps, playing, logicTime, renderTime}: {
     renderFps: number; sourceFps: number; adaptiveFps: number; playing: boolean;
     logicTime: number; renderTime: number;

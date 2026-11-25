@@ -887,6 +887,12 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
 
     }
 
+    get updateOnCameraInput() {
+        // The projected video is a separate scene object and can stay visible
+        // even when the frustum's own group is hidden.
+        return this.visible || this.showVideoOnGround;
+    }
+
     update(f) {
 
         const fov = this.camera.fov

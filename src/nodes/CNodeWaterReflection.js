@@ -63,7 +63,6 @@ import {setTileWaterDefault} from "../js/map33/material/DayNightStandardMaterial
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {findOSMWaterSource} from "../terrainSourceUtils";
 import {OCEAN_MAX_WAVES} from "../ocean/OceanBRDF.glsl.js";
-import {altitudeHAE} from "../SphericalMath";
 import * as Astronomy from "astronomy-engine";
 import {
     buildWaveComponents,
@@ -1592,13 +1591,13 @@ export class CNodeWaterReflection extends CNode {
             if (this.gatedSkirts?.has(o)) return;
             if (waterAlt !== null) {
                 const tile = o.userData.tile;
-                const tileMesh = tile?.mesh;
-                const sphere = tileMesh?.geometry?.boundingSphere;
-                if (sphere && tile.size !== undefined) {
-                    const c = this._skirtScratch ??= new Vector3();
-                    c.copy(sphere.center).applyMatrix4(tileMesh.matrixWorld);
-                    // buildSkirtGeometry() uses size * 0.1 for the drop.
-                    const skirtBottom = altitudeHAE(c) - tile.size * 0.1;
+                const bounds = tile?.altitudeBounds;
+                if (bounds?.measured && Number.isFinite(bounds.min)
+                    && Number.isFinite(tile.skirtDepth)) {
+                    // A sloping tile's low edge can reach the water even when its
+                    // centre is far above it. Use the measured surface minimum
+                    // and the actual drop; unknown bounds conservatively hide.
+                    const skirtBottom = bounds.min - tile.skirtDepth;
                     if (skirtBottom > waterAlt) return;   // never gets near the water
                 }
             }

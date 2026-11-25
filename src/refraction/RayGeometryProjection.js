@@ -158,6 +158,7 @@ export function rayGeometryLiftBounds(table, near, far) {
 // No hardware float filtering is required. Interpolate distance within ONE
 // row; never blend a terminated ray with a live one before the inverse search.
 export const RAY_GEOMETRY_GLSL = /* glsl */`
+#ifdef SITREC_RAY_GEOMETRY
 uniform float uRayGeometry, uRayDistance, uRayObserverHeight;
 uniform sampler2D uRayTable;
 uniform vec2 uRayAngles, uRayTableSize;
@@ -212,6 +213,7 @@ vec3 applyRayGeometry(vec3 position) {
     // geometry still resolves occlusion; this continuation is not a ray hit.
     return position + uRayZenithView * (distance * apparent - y);
 }
+#endif
 `;
 
 // Clip the physical horizontal domain after interpolation, so a triangle
@@ -219,6 +221,7 @@ vec3 applyRayGeometry(vec3 position) {
 export function patchRayGeometryFragmentShader(source) {
     if (!source || source.includes("void sitrecClipRayRange")) return source;
     const declarations = /* glsl */`
+#ifdef SITREC_RAY_GEOMETRY
 uniform float uRayGeometry, uRayDistance;
 uniform vec3 uRayZenithView;
 varying vec3 vRayGeometryPhysical;
@@ -228,7 +231,8 @@ void sitrecClipRayRange() {
         if (dot(horizontal, horizontal) > uRayDistance * uRayDistance) discard;
     }
 }
+#endif
 `;
-    const patched = source.replace(/void\s+main\s*\(\s*(?:void)?\s*\)\s*\{/, "$&\n sitrecClipRayRange();");
+    const patched = source.replace(/void\s+main\s*\(\s*(?:void)?\s*\)\s*\{/, "$&\n#ifdef SITREC_RAY_GEOMETRY\n sitrecClipRayRange();\n#endif\n");
     return patched === source ? source : declarations + patched;
 }

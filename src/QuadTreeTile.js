@@ -315,9 +315,9 @@ export class QuadTreeTile {
         if (this._measurement && !this._measurement.aborted) {
             this._measurement.skirtCommitted = true;
             // V5 NOTE: skirtDepth intentionally NOT subtracted from min.
-            // The skirt extends downward from the main mesh's outer edge by
-            // `tile.size * 0.1` — for a z=0 tile that's ~26 km, which would
-            // explode the bounding sphere's vertical extent and cause
+            // Coarse tiles can still have skirts extending kilometres below
+            // the main mesh's outer edge, which would inflate the bounding
+            // sphere's vertical extent and cause
             // catastrophic over-subdivision in sphere/obb modes. The skirt
             // sits below the visible mesh surface and is never directly
             // exposed to the camera (it's covered by the parent surface at
@@ -547,12 +547,19 @@ export class QuadTreeTile {
         this.geometry = geometry
     }
 
+    calculateSkirtDepth(north, south, centerLongitude) {
+        // size is the map's initial tile width and does not shrink on subdivision.
+        // Use this tile's actual span, as ground overlays do, so fine tiles do not
+        // retain kilometre-deep walls. Keep the existing limit for coarse roots.
+        const span = LLAToECEF(north, centerLongitude, 0)
+            .distanceTo(LLAToECEF(south, centerLongitude, 0));
+        return Math.min(span, this.size) * 0.1;
+    }
+
     // Create skirt geometry that extends downward around the tile edges
     buildSkirtGeometry() {
         // Use Globals.settings.tileSegments directly
         const segments = Globals.settings.tileSegments ?? 64;
-        const halfSize = this.size / 2;
-        const skirtDepth = this.size * 0.1; // 1/10 the width of the tile
 
         // Calculate the center position of the tile in world coordinates
         const lat1 = this.map.options.mapProjection.getNorthLatitude(this.y, this.z);
@@ -561,6 +568,7 @@ export class QuadTreeTile {
         const lon2 = this.map.options.mapProjection.getLeftLongitude(this.x + 1, this.z);
         const centerLat = (lat1 + lat2) / 2;
         const centerLon = (lon1 + lon2) / 2;
+        const skirtDepth = this.skirtDepth = this.calculateSkirtDepth(lat1, lat2, centerLon);
         const centerPosition = LLAToECEF(centerLat, centerLon, 0);
 
         // Get the local down vector for this tile's center position
@@ -673,7 +681,6 @@ export class QuadTreeTile {
         if (!this.geometry || !this.skirtGeometry) return;
 
         const segments = this.map.options.tileSegments;
-        const skirtDepth = this.size * 0.1; // 1/10 the width of the tile
 
         // Calculate the center position of the tile in world coordinates
         const lat1 = this.map.options.mapProjection.getNorthLatitude(this.y, this.z);
@@ -682,6 +689,7 @@ export class QuadTreeTile {
         const lon2 = this.map.options.mapProjection.getLeftLongitude(this.x + 1, this.z);
         const centerLat = (lat1 + lat2) / 2;
         const centerLon = (lon1 + lon2) / 2;
+        const skirtDepth = this.skirtDepth = this.calculateSkirtDepth(lat1, lat2, centerLon);
         const centerPosition = LLAToECEF(centerLat, centerLon, 0);
 
         // Get the local down vector for this tile's center position

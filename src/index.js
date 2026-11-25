@@ -8,6 +8,7 @@
  * - Coordinate startup lifecycle, GUI initialization, and main loop wiring.
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
+import {WEBGL_POWER_PREFERENCE} from "./RendererGPUInfo";
 import {disposeVideoFormatLayer, setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
 import {disposeRefractionTool} from "./refraction/RefractionLoader";
 import {addDopplerGeolocationMenu, disposeDopplerGeolocation} from "./doppler/DopplerLoader";
@@ -144,7 +145,8 @@ import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {cancelTrackObjectLinksRefresh} from "./TrackObjectLinks";
 import {CNodeView3D} from "./nodes/CNodeView3D";
-import {renderCadence, shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
+import {DISPLAY_FRAME_TOLERANCE_MS, frameClockStep, renderCadence, shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
+import {RenderLoopScheduler} from "./RenderLoopScheduler";
 import {getApproximateLocationFromIP} from "./GeoLocation";
 import {customSitchLoadHint} from "./errorHints";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
@@ -350,7 +352,7 @@ const rootSitches = {};
 const menuButtonSitches = {};
 let toTest;
 let testing = false;
-let fpsInterval, rafInterval, startTime, now, then, thenRender, elapsed;
+let fpsInterval, rafInterval, startTime, now, then, thenRender;
 
 // Sitch transitions run one at a time. setupFunctions() reads the global Sit, NodeMan
 // and FileManager after each of its awaits, so a second transition that disposed and
@@ -360,25 +362,23 @@ let fpsInterval, rafInterval, startTime, now, then, thenRender, elapsed;
 let sitchTransition = Promise.resolve();
 let latestSitchRequest = 0;
 
-let animationFrameId;
+const animationScheduler = new RenderLoopScheduler({
+    run: animate,
+    hidden: document.hidden,
+    requestFrame: callback => requestAnimationFrame(callback),
+    cancelFrame: id => cancelAnimationFrame(id),
+    setTimer: (callback, delay) => setTimeout(callback, delay),
+    clearTimer: id => clearTimeout(id),
+    now: () => performance.now(),
+});
 // isTransitioning lives in indexRender.js; writes go through setIsTransitioning.
 
 function clearScheduledAnimation() {
-    if (animationFrameId !== undefined && animationFrameId !== null) {
-        clearTimeout(animationFrameId);
-        animationFrameId = null;
-    }
+    animationScheduler.cancel();
 }
 
 function scheduleAnimationLoop(delay = 0) {
-    if (animationFrameId !== undefined && animationFrameId !== null) {
-        return;
-    }
-
-    animationFrameId = setTimeout(() => {
-        animationFrameId = null;
-        animate(performance.now());
-    }, Math.max(0, delay));
+    animationScheduler.schedule(delay);
 }
 
 // Render-on-demand sleep/wake. The loop is gated ONLY on tab VISIBILITY (document.hidden), not on
@@ -420,10 +420,7 @@ function startKeepAwakeTicker() {
             // to seconds away — fire it now so the loop paces at ~30 fps. When
             // the loop has SLEPT (nothing scheduled) this is a no-op; the next
             // wakeAnimationLoop() re-arms it.
-            if (animationFrameId !== undefined && animationFrameId !== null) {
-                clearScheduledAnimation();
-                animate(performance.now());
-            }
+            animationScheduler.runPending();
         };
     } catch (e) {
         console.warn("MCP keep-awake worker unavailable:", e);
@@ -478,6 +475,9 @@ globalThis.__sitrecForceRender = (on = true) => {
 window.__sitrecForceRenderLoop = forceRenderLoop;
 
 document.addEventListener("visibilitychange", () => {
+    // Cancel the previous callback with the matching API, then move pending
+    // work onto the new clock. A hidden non-MCP tab drops its pending work.
+    animationScheduler.setHidden(document.hidden, !document.hidden || forceRenderLoop || mcpKeepAwake());
     if (document.hidden) {
         if (forceRenderLoop || mcpKeepAwake()) {
             // Backgrounded but under MCP/debug control — keep running as if
@@ -2511,7 +2511,7 @@ function initRendering() {
 
     // attept to create a renderer to catch issues early and do a graceful exit
     try {
-        const renderer = new WebGLRenderer({});
+        const renderer = new WebGLRenderer({powerPreference: WEBGL_POWER_PREFERENCE});
         renderer.dispose();
     } catch (e) {
         showError("Incompatible Browser or Graphics Acceleration Disabled\n Error creating WebGLRenderer: "+e)
@@ -2888,12 +2888,7 @@ function startAnimating(fps) {
 }
 
 
-function animate(newtime) {
-    // Method of setting frame rate, from:
-    // http://jsfiddle.net/chicagogrooves/nRpVD/2/
-    // uses the sub-ms resolution timer window.performance.now() (a double)
-    // and does nothing if the time has not elapsed
-
+function animate(newtime, displayFrame = false) {
     const animateStartTime = window.performance.now();
     let logicRan = false;
 
@@ -2902,7 +2897,7 @@ function animate(newtime) {
     // No sitch is loaded yet: Sit is only assigned by setSit(). On the async
     // ?custom= load path setSit() runs after an `await fetch(...)`, and the
     // render-on-demand loop can be woken during that window (visibilitychange /
-    // setRenderOne / par.frame), firing this setTimeout-scheduled animate() while
+    // setRenderOne / par.frame), firing animate() while
     // Sit is still undefined — which threw "Cannot read properties of undefined
     // (reading 'fps')" at `Sit.fps` below. Nothing to render yet, so bail out;
     // startAnimating() re-arms the loop once the sitch is established.
@@ -2924,11 +2919,12 @@ function animate(newtime) {
         logicTime: then, renderTime: thenRender});
     rafInterval = cadence.interval;
     
-    // Check if enough time has elapsed for RAF to do anything (fpsLimit gate)
-    const elapsedSinceRender = now - cadence.origin;
-    if (elapsedSinceRender < rafInterval) {
-        // Not yet time, reschedule and return early
-        scheduleAnimationLoop(rafInterval - elapsedSinceRender);
+    // Visible work lands on a display refresh. Timers/worker ticks remain
+    // strict; only rAF gets the small allowance for timestamp quantization.
+    const tolerance = displayFrame ? DISPLAY_FRAME_TOLERANCE_MS : 0;
+    const renderStep = frameClockStep(now, cadence.origin, rafInterval, tolerance);
+    if (!renderStep.due) {
+        scheduleAnimationLoop(renderStep.delay);
         return;
     }
 
@@ -2952,49 +2948,16 @@ function animate(newtime) {
     }
     fpsInterval = 1000 / targetFps;
 
-    const smoothFrameRate = false;
-
-   // animationFrameId = requestAnimationFrame( animate );
-
-    if (smoothFrameRate) {
-        // elapsed = now - then;
-        // renderMain(elapsed);
-        // then = now;
-        // // Record frame time (all frames have logic in smooth mode)
-        // if (thenRender > 0) {
-        //     const frameTime = now - thenRender;
-        //     frameRateController.recordFrameTime(frameTime, true);
-        // }
+    const logicStep = frameClockStep(now, then, fpsInterval, tolerance);
+    if (logicStep.due) {
+        then = logicStep.time;
+        // Skip missed periods in one update; never queue a burst of stale draws.
+        renderMain(logicStep.elapsed);
+        logicRan = true;
     } else {
-        // Check time since last logic update
-        elapsed = now - then;
-        
-        // if enough time has elapsed, draw the next frame
-        if (elapsed >= fpsInterval) {
-
-            // if (!par.paused)
-            // debugLog("Newtime = " + newtime + " ms" + "Elapsed = " + elapsed + " ms" + " fpsInterval = " + fpsInterval + " fps = " + Sit.fps + " frame = " + par.frame)
-
-            // we need to account for full frames and fractions of frames
-            // so first calculate the fraction of a frame that has elapsed
-            const remainder = elapsed % fpsInterval;
-            // and reset the "then" time to the current time minus the remainder
-            then = now - remainder;
-            // and execute logic for a whole number of frames (usually 1)
-            renderMain(elapsed - remainder);
-            logicRan = true;
-        } else {
-            // It is not yet time for a new frame
-            // so just render - which will allow smooth motion between logic updates
-            // const oldPaused = par.paused
-            //par.paused = true;
-            par.noLogic = true;
-            renderMain(0); // 0 so we don't advance anything between frames
-            par.noLogic = false;
-            //par.paused = oldPaused;
-            logicRan = false;
-        }
-
+        // Camera interaction can still draw between source/video frames.
+        par.noLogic = true;
+        try { renderMain(0); } finally { par.noLogic = false; }
     }
     publishSitMapFrame();
     Globals.stats.end();
@@ -3004,7 +2967,7 @@ function animate(newtime) {
 
     // Keep the render cadence anchored to its clock. Resetting to the late timer callback added its overshoot to
     // every period (a 30 Hz limit delivered about 28 Hz even with time to spare). Drop missed periods, retain phase.
-    thenRender = now - (elapsedSinceRender % rafInterval);
+    thenRender = renderStep.time;
     
     // Schedule next RAF call (runs frequently, but does nothing until rafInterval elapses)
     scheduleAnimationLoop(0);

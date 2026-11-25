@@ -2,7 +2,7 @@ import {CNode} from "./CNode";
 import {getCachedKey} from "../BYOKKeyStore";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit, Units} from "../Globals";
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
-import {glintUniforms} from "../js/map33/material/TerrainGlints";
+import {glintUniforms, setGlintFeatureEnabled} from "../js/map33/material/TerrainGlints";
 import {assert} from "../assert";
 import {configParams} from "../runtimeConfig";
 import {isAdmin, isLocal, isServerless, SITREC_APP, SITREC_TERRAIN} from "../configUtils";
@@ -1603,6 +1603,7 @@ export class CNodeTerrainUI extends CNode {
         glintUniforms.glintColor.value.set(this.glintColor);
         glintUniforms.glintOpacity.value = 1 - Math.max(0, Math.min(100, this.glintTransparency)) / 100;
         glintUniforms.glintEnabled.value = this.highlightSunReflection;
+        setGlintFeatureEnabled(this.highlightSunReflection);
         if (this.highlightSunReflection && this.glintBlink) {
             // Wake only at a blink transition; the paused render loop can sleep
             // between transitions instead of continuously redrawing terrain.
@@ -2146,6 +2147,7 @@ export class CNodeTerrainUI extends CNode {
     dispose() {
         clearInterval(this._glintBlinkTimer);
         glintUniforms.glintEnabled.value = false;
+        setGlintFeatureEnabled(false);
         this.stopMapRecoveryWatch();
         for (const [serviceName, callback] of this._serviceCallbacks ?? []) {
             ServiceAvailability.offUnavailable(serviceName, callback);

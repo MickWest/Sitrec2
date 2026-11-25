@@ -74,10 +74,13 @@ test("helper opt-outs do not turn into atmospheric surfaces", () => {
 test("custom shader early exits retain conditional control flow", () => {
     const material = new ShaderMaterial();
     installMaterialAtmosphere(material);
+    materialAtmosphereUniforms.atmoEnabled.value = true;
+    material.onBeforeRender();
     const shader = {uniforms: {},
         vertexShader: "void main(void) { /* } */ if (position.x < 0.0) { gl_Position = vec4(0.0); return; } gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
         fragmentShader: "void main() { gl_FragColor = vec4(1.0); if (gl_FragCoord.x < 1.0) return; gl_FragColor.r = 2.0; }"};
     material.onBeforeCompile(shader, {});
+    materialAtmosphereUniforms.atmoEnabled.value = false;
     expect(shader.fragmentShader).toContain("if (gl_FragCoord.x < 1.0) { gl_FragColor.rgb = applyMaterialAtmosphere(gl_FragColor.rgb); return; }");
     expect(shader.vertexShader).toContain("void main(void)");
 });

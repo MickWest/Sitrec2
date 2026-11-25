@@ -45,6 +45,7 @@ import {getPanoramaFrame, isPanoramicCamera, PanoramicRenderer} from "../Panoram
 import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
+import {logRendererGPU, WEBGL_POWER_PREFERENCE} from "../RendererGPUInfo";
 import {
     Camera,
     Color,
@@ -1837,6 +1838,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         try {
             this.renderer = new WebGLRenderer({
+                powerPreference: WEBGL_POWER_PREFERENCE,
                 antialias: true,
                 canvas: this.canvas,
                 logarithmicDepthBuffer: true,
@@ -1849,6 +1851,8 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             return;
         }
+
+        logRendererGPU(this.renderer, this.id);
 
         if (!isLocal) {
             console.warn("Disabling shader error checking for production performance");
@@ -2020,6 +2024,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         this._onContextRestored = () => {
             console.warn(`[WebGL] Context restored on view "${this.id}"`);
+            logRendererGPU(this.renderer, this.id, "restored");
             this.contextLost = false;
 
             // A decoded PSF lives in a render target, and a render target has no source data

@@ -36,6 +36,7 @@ import {Controller} from "./js/lil-gui.esm";
 import {DragDropHandler} from "./DragDropHandler";
 import {EventManager} from "./CEventManager";
 import {updateFrame} from "./updateFrame";
+import {flushCameraInputUpdates} from "./CameraInputUpdates";
 import {isKeyHeld} from "./KeyBoardHandler";
 import {updateLockTrack} from "./updateLockTrack";
 import {assert} from "./assert";
@@ -377,7 +378,8 @@ export function renderMain(elapsed) {
     // change par.frame between logic ticks, so update once when the rendered
     // frame differs from the frame that last drove the nodes.
     const frameNeedsNodeUpdate = lastNodeUpdateFrame !== par.frame;
-    if ((!par.noLogic || frameNeedsNodeUpdate) && !Globals.justVideoAnalysis) {
+    const nodesUpdated = (!par.noLogic || frameNeedsNodeUpdate) && !Globals.justVideoAnalysis;
+    if (nodesUpdated) {
         if (globalProfiler) globalProfiler.push('#ff7f0e', 'Updates');
 
         if (Sit.updateFunction) {
@@ -481,6 +483,11 @@ export function renderMain(elapsed) {
             frameSlider.update(par.frame);
         }
     }
+
+    // A full node pass already applied camera inputs. Between source frames,
+    // refresh only cameras changed by gestures, before any preRender/view work.
+    // Video-only mode discards requests because its 3D cameras are not rendered.
+    flushCameraInputUpdates(par.frame, nodesUpdated || Globals.justVideoAnalysis);
 
     // render each viewport
     if (globalProfiler) globalProfiler.push('#2ca02c', 'Viewports');

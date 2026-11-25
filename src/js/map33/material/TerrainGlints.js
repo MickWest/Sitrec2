@@ -1,4 +1,15 @@
 import {Color, Matrix4, Vector3, Vector4} from "three";
+import {installShaderFeatureVariants} from "../../../ShaderFeatureVariants";
+
+let glintsEnabled = false;
+
+export function setGlintFeatureEnabled(enabled) {
+    glintsEnabled = !!enabled;
+}
+
+export function installGlintVariant(material) {
+    installShaderFeatureVariants(material, {SITREC_GLINTS: () => glintsEnabled});
+}
 
 // Shared by terrain and streamed building materials, including per-view clones.
 export const glintUniforms = {
@@ -29,14 +40,17 @@ export function updateGlintCamera(viewCamera, lookCamera, useLookCamera) {
 }
 
 export const glintVertexDeclarations = `
+#ifdef SITREC_GLINTS
 varying vec3 vGlintViewPosition;
 varying vec2 vGlintBarycentric;
 vec2 glintBarycentric(float corner) {
     return corner < 0.5 ? vec2(1.0, 0.0) : (corner < 1.5 ? vec2(0.0, 1.0) : vec2(0.0));
 }
+#endif
 `;
 
 export const glintFragmentDeclarations = `
+#ifdef SITREC_GLINTS
 uniform bool glintEnabled;
 uniform vec3 glintColor;
 uniform float glintOpacity;
@@ -71,11 +85,14 @@ bool sitrecSunGlint(vec3 sunDirectionWorld) {
         && dot(faceNormal, towardObserver) > 0.0
         && dot(reflectedSun, towardObserver) >= glintCosTolerance;
 }
+#endif
 `;
 
 // Apply after surface lighting, fog and water to preserve the chosen highlight color.
 export const glintFragmentHighlight = `
+#ifdef SITREC_GLINTS
 if (glintEnabled && sitrecSunGlint(sunDirection)) {
     gl_FragColor.rgb = mix(gl_FragColor.rgb, glintColor, glintOpacity);
 }
+#endif
 `;

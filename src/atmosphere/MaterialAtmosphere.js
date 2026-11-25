@@ -1,5 +1,6 @@
 import {AdditiveBlending, Color, Material, Vector3, Vector4} from "three";
 import {atmosphereProjectionUniforms, ATMOSPHERE_PROJECTION_GLSL} from "./AtmosphereProjection";
+import {installShaderFeatureVariants} from "../ShaderFeatureVariants";
 
 export const materialAtmosphereUniforms = {
     ...atmosphereProjectionUniforms(),
@@ -144,6 +145,10 @@ export function installMaterialAtmosphere(material) {
     material.onBeforeCompile = function(shader, renderer) {
         previous?.call(this, shader, renderer);
         Object.assign(shader.uniforms, materialAtmosphereUniforms);
+        // Three retains the last compiled variant's JS uniform table when
+        // selecting a cached program. Keep bindings for the enabled variant;
+        // the disabled GPU program has no corresponding active uniforms.
+        if (!this.defines?.SITREC_MATERIAL_ATMOSPHERE) return;
         // Preserve the complete original vertex shader: morphs, skinning,
         // instancing, displacement, billboards, and projection patches all run
         // first. No guessed replacement geometry or separate depth pass.
@@ -167,7 +172,11 @@ export function installMaterialAtmosphere(material) {
         return `${previousKey ? previousKey.call(this) : defaultKey}.materialAtmosphere.v1.${this.blending === AdditiveBlending}.${this.premultipliedAlpha}`;
     };
     installed.add(material);
-    material.needsUpdate = true;
+    const version = material.version;
+    installShaderFeatureVariants(material, {
+        SITREC_MATERIAL_ATMOSPHERE: () => materialAtmosphereUniforms.atmoEnabled.value,
+    });
+    if (material.version === version) material.needsUpdate = true;
     return true;
 }
 

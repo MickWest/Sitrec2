@@ -3,6 +3,7 @@ import {CameraMapControls} from "../src/js/CameraControls";
 import {CNodeControllerPTZUI} from "../src/nodes/CNodeControllerPTZUI";
 import {NodeMan} from "../src/Globals";
 import {fitViewSyncPan} from "../src/FitViewSync";
+import {flushCameraInputUpdates} from "../src/CameraInputUpdates";
 
 jest.mock("../src/Globals", () => ({Globals: {}, Sit: {}, NodeMan: {get: jest.fn(), exists: jest.fn()}, setRenderOne: jest.fn()}));
 jest.mock("../src/nodes/CNodeControllerPTZUI", () => ({CNodeControllerPTZUI: class {}}));
@@ -55,4 +56,45 @@ test("without Heading Editor the same drag still pans the fit-synced video", () 
     controls.handleMouseMove({clientX: 120, clientY: 110, buttons: 1});
     expect(fitViewSyncPan).toHaveBeenCalledWith(controls.view, 20, 10);
     expect(headingEditor.dragView).not.toHaveBeenCalled();
+});
+
+
+test("heading drag refreshes the camera on the next draw and keeps the expensive cascade deferred", () => {
+    jest.useFakeTimers();
+    cameraNode.update = jest.fn();
+    headingEditor.id = "headingEditor";
+    headingEditor.recalculateCascade = jest.fn();
+    NodeMan.exists.mockReturnValue(true);
+    controls.deferCascade = CameraMapControls.prototype.deferCascade;
+    try {
+        controls.handleMouseMove({clientX: 120, clientY: 110, buttons: 1});
+        controls.handleMouseMove({clientX: 130, clientY: 115, buttons: 1});
+        expect(cameraNode.update).not.toHaveBeenCalled();
+        flushCameraInputUpdates(22);
+        expect(cameraNode.update).toHaveBeenCalledTimes(1);
+        expect(cameraNode.update).toHaveBeenCalledWith(22);
+        jest.advanceTimersByTime(499);
+        expect(headingEditor.recalculateCascade).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(1);
+        expect(headingEditor.recalculateCascade).toHaveBeenCalledTimes(1);
+    } finally {
+        controls.dispose();
+        flushCameraInputUpdates(0, true);
+        jest.useRealTimers();
+    }
+});
+
+test("Free Look direct pan does not enqueue controllers, but its PTZ FOV zoom does", () => {
+    cameraNode.freeLook = true;
+    cameraNode.update = jest.fn();
+    controls.button = 2;
+    controls.handleMouseMove({clientX: 120, clientY: 110, buttons: 2});
+    flushCameraInputUpdates(9);
+    expect(cameraNode.update).not.toHaveBeenCalled();
+    controls.zoomGestures = controls.enableZoom = true;
+    controls.minZoom = 0.0001;
+    controls.maxZoom = 170;
+    controls.zoomFovBy(0.1);
+    flushCameraInputUpdates(9);
+    expect(cameraNode.update).toHaveBeenCalledWith(9);
 });
