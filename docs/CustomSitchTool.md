@@ -301,6 +301,11 @@ By default, terrain uses **dynamic subdivision** (the **Dynamic Subdivision** ch
 
 For **Elevation Type** and **3D Buildings**, see [Terrain and Elevation](Terrain.md).
 
+**Terrain → Terrain Tweaks → Glints** highlights faces that could reflect sunlight toward
+the camera and can show a yellow arrow toward the Sun at the ground point ahead of each view.
+See [Glints and Sun Arrows](Terrain.md#glints-and-sun-arrows) for camera selection, tolerance,
+color, transparency and blinking.
+
 For the MISB truck example the default terrain already covers the track; zooming in loads the detail automatically:
 
 ![Video and look view side by side, zoomed in on the road](docimages/MISB-zoomed-terrain.jpg)

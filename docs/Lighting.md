@@ -11,6 +11,10 @@ The Sun's position is not set here. Sitrec calculates it from the sitch's date, 
 location, so the lighting follows the **Time** menu. The controls in this menu set how *strong*
 the light is, not where it comes from.
 
+To check which terrain or 3D building faces could reflect sunlight toward a camera, use
+**Terrain → Terrain Tweaks → Glints**. It also provides Sun direction arrows in the 3D views.
+See [Glints and Sun Arrows](Terrain.md#glints-and-sun-arrows) for the controls and the steps to check a glint.
+
 This page lists every control. The defaults given are those of a new custom sitch, the usual
 starting point. A built-in sitch can start with different values.
 

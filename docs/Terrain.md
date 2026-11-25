@@ -260,6 +260,60 @@ about −40 m at the North Carolina coast to about −8 m at Yellowstone; worldw
 
 ---
 
+## Glints and Sun Arrows
+
+**Terrain → Terrain Tweaks → Glints**
+
+Glints helps you find terrain and 3D building faces whose orientation could reflect sunlight
+toward a camera. Each qualifying face is highlighted in magenta by default. The Sun's direction
+follows the sitch's date and time, so set these in the **Time** menu before comparing reflections.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Highlight sun reflection** | Off | Highlights terrain and 3D building tile faces whose reflected sunlight points toward the selected camera within the tolerance |
+| **Glint tolerance** | 5° | Maximum angle between the reflected ray and the direction from the face to the camera. Range: 0.1–90°. A smaller value selects a closer alignment; a larger value includes more faces |
+| **Glint color** | Magenta | Chooses the highlight color |
+| **Glint transparency (%)** | 0% | Blends the highlight with the normal surface color. 0% is solid highlight, 50% mixes the two, and 100% leaves only the normal surface color |
+| **Blink** | Off | Alternates the highlight and normal surface color every half second. Works while the timeline is paused |
+| **Use Look Camera** | Off | When off, each view tests reflections toward its own camera. When on, both views test reflections toward the look camera, so you can inspect its candidate surfaces from the main view |
+| **Show Sun Arrows** | Off | Shows a yellow 3D arrow toward the Sun at each view camera's forward-ray intersection with the Earth ellipsoid. Works with the highlight off |
+
+All seven settings save with the sitch.
+
+### Check a possible glint
+
+1. Set the observation time and position the look camera at the observer's location.
+2. Turn on **Highlight sun reflection** and **Use Look Camera**. Move the main camera to
+   examine the highlighted surfaces while keeping the observer's position fixed.
+3. Start with the default **5°** tolerance, then reduce it to find the closest alignments.
+   Use **Blink** or increase **Glint transparency (%)** to see the imagery beneath the highlight.
+4. Turn on **Show Sun Arrows** to see the Sun's direction from the ground point ahead of
+   each camera.
+
+The reflection test uses the center and flat orientation of each displayed triangle and colors
+the whole face. Results therefore depend on the terrain or building geometry currently loaded;
+more detailed tiles can change the highlighted faces. Keep **Elevation Scale** at **1** when
+checking real terrain slopes. The highlight tests reflection direction; surface reflectivity,
+roughness, brightness and objects blocking the sunlight are outside this test.
+
+### Read the Sun Arrows
+
+Each arrow starts where its own camera's forward ray meets the reference Earth surface and
+points **toward the Sun**. It shows the direction to the light source, rather than the reflected
+ray toward the observer. **Use Look Camera** changes the highlight calculation only: each
+view's Sun Arrow still follows that view's own camera.
+
+The arrow's base is on the ellipsoid at zero ellipsoid height, which can be below terrain or
+buildings. It is drawn over those surfaces so it remains visible. With the spherical Earth
+model selected, the intersection uses that sphere. The arrow scales for readability as you
+zoom; its length is not a distance measurement.
+
+If the camera points above the horizon and its forward ray misses the Earth, that view has
+no arrow. Point the camera down toward the ground to show it again. Changing the time updates
+the Sun direction; moving or aiming the camera moves the arrow's base.
+
+---
+
 ## The controls
 
 The top level of the Terrain menu holds the main controls. The rest are in the **Terrain
@@ -288,6 +342,7 @@ you have added your own Google or Cesium Ion key. An own key shows the rows afte
 | **Debug Grids** | Tweaks | Green = ground texture tiles, blue = elevation tiles. Shows which tiles are loaded |
 | **Elevation Scale** | Tweaks | **Changes measurements too — see the warning below** |
 | **Terrain Opacity** | Tweaks | Useful for seeing tracks that pass underground. Also fades the 3D tiles |
+| **Glints** | Tweaks sub-folder | [Sun reflection highlights and Sun Arrows](#glints-and-sun-arrows), with camera selection, tolerance, color, transparency and blinking |
 | **Dynamic Subdivision** | Tweaks | Camera-adaptive tiling for globe-scale viewing. With it off, hold `T` and move the cursor: the terrain square follows it. Cannot be turned off while 3D Buildings is on |
 | **Building Edges** | Tweaks | Wireframe edges on the 3D building tiles |
 | **Tile Edges** | Tweaks | A magenta outline around each terrain tile, to show tile boundaries |
