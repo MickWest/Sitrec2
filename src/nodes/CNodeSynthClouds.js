@@ -1,3 +1,4 @@
+import {SPOTLIGHT_GLSL, spotlightUniforms} from "../clouds/SpotlightField";
 import {CloudSort, registerTransparentCamera} from "../rendering/CloudSort";
 import {addNameControl} from "../DisplayName";
 import {installSoftDepthMaterial} from "../rendering/SoftDepth";
@@ -243,6 +244,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 reflectionPoint: { value: new Vector3(0, 0, 0) },
                 reflectionRadius: { value: 0 },
                 ...sharedUniforms,
+                ...spotlightUniforms(),
             },
             vertexShader: `
                 attribute vec3 instanceOffset;
@@ -250,6 +252,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 varying vec2 vUv;
                 varying float vDepth;
                 varying vec3 vWorldPosition;
+                varying vec3 vCloudOffset;
                 
                 void main() {
                     vUv = uv;
@@ -261,6 +264,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                         + cameraRight * position.x * instanceSize.x 
                         + cameraUp * position.y * instanceSize.y;
                     
+                    vCloudOffset = vertexPosition;
                     vec4 worldPos = modelMatrix * vec4(instanceOffset, 1.0);
                     vWorldPosition = worldPos.xyz;
                     
@@ -274,6 +278,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 }
             `,
             fragmentShader: `
+                ${SPOTLIGHT_GLSL}
                 uniform sampler2D map;
                 uniform float opacity;
                 uniform vec3 color;
@@ -289,6 +294,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
                 varying vec2 vUv;
                 varying float vDepth;
                 varying vec3 vWorldPosition;
+                varying vec3 vCloudOffset;
 
                 void main() {
                     vec4 texColor = texture2D(map, vUv);
@@ -315,6 +321,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
                     // Convert sRGB-space output to linear for the render target.
                     gl_FragColor = sRGBTransferEOTF(gl_FragColor);
 
+                    if (spotlightCount > 0) gl_FragColor.rgb += texColor.rgb * spotlightIrradiance(vCloudOffset);
+
                     // Orthographic projection makes vDepth a constant 1.0, collapsing
                     // the log formula to one value per fragment → z-fighting; use the
                     // linear rasteriser depth there.
@@ -333,6 +341,9 @@ export class CNodeSynthClouds extends CNode3DGroup {
             side: DoubleSide,
             forceSinglePass: true,
         });
+        cloudMaterial.onBeforeRender = (_renderer, _scene, _camera, _geometry, mesh) => {
+            Synth3DManager?.spotlights.setUniforms(cloudMaterial.uniforms, mesh.matrixWorld);
+        };
         installSoftDepthMaterial(cloudMaterial, Math.max(1, this.cloudSize * 0.15));
         installTerrestrialRefractionOnShaderMaterial(cloudMaterial);
         

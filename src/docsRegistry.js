@@ -199,6 +199,12 @@ export const helpDocs = [
         chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object, Add Balloon or Add Kite? How do I add a kite on a line, set its line length and wind, and choose a kite type such as an octopus kite? If an object in the video is a kite, how do I find where on the ground its line is held (Traverse > Kite Anchor Finder, the band of possible anchors from the object's size in pixels, a range of kite sizes, the flight angle and the wind)? If an object is a balloon, how do I find where it was launched (Traverse > Reverse Balloon Launch Finder, which follows the flight back to the ground from a line of sight, the target, a track or a 3D object, for a range of buoyancy and the wind of each height)? How do I use a 3D object that I placed by hand as the target, the camera position or the start of a finder (an object whose Position is Manual is in the track lists under its name)? How do I delete a 3D object? What is the difference between a track and an object, which object is on which track, and what do the On Track, Object and Used For rows and the tags on a folder title (Camera, Target, on Track 3) mean? What are the Camera Track, the Traverse Track, the Camera Object and the Traverse Object? How do I line up a map or satellite image with the ground?",
     },
 
+    {
+        file: "docs/Spotlights", labelKey: "menus.help.documentation.spotlights",
+        section: "data", role: "reference",
+        chatDesc: "How do I recreate moving white patches on clouds with ground spotlights? Covers adding and moving projectors, beam cones and lumens, motion and phase, SkyTracker cloverleaf, Spaceflower AUTO dial settings, importing a QLC+ movement effect, and matching the patches to footage.",
+    },
+
     // ── The world ───────────────────────────────────────────────────────────
     {
         file: "docs/CameraAndTarget", labelKey: "menus.help.documentation.cameraAndTarget",

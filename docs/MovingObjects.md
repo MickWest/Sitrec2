@@ -137,6 +137,7 @@ What a move changes depends on what supplies the object's position:
 | **Manual** position | The object's latitude, longitude and altitude |
 | Hand-drawn track | The control point at the current frame; a move between existing points adds a point at that frame |
 | Balloon or kite | The balloon's launch position or the kite's anchor, which recalculates its generated path |
+| [Spotlight projector](Spotlights.md) | The ground location of the projector. Its Surface disk follows the terrain with a fixed 5 cm clearance |
 | Imported track or satellite orbit | These positions cannot be dragged with the move widget |
 
 With **Edit Track** on, use the track's control-point widgets. They use the same movement

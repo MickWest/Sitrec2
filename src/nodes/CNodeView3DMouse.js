@@ -25,7 +25,7 @@ import {
 import {Sphere, Vector3} from "three";
 import {par} from "../par";
 import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
-import {mouseInViewOnly, mouseInRenderedView, ndcToView, viewToClient, withDisplayedCamera} from "../ViewUtils";
+import {mouseInViewOnly, mouseInRenderedView, ndcToView, setRaycasterFromView, viewToClient, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
 import {FeatureManager} from "../CFeatureManager";
@@ -1171,6 +1171,16 @@ export const mouseMethods = {
     showTrackMenu(closestTrack, event) {
         console.log(`Found track near mouse: ${closestTrack.trackID}`);
         CustomManager.showTrackMenu(closestTrack, event.clientX, event.clientY);
+    },
+
+    tryGroundContextMenu(mouseX, mouseY) {
+        if (!Sit.isCustom || !this.mouseEnabled || !this.camera || !mouseInRenderedView(this, mouseX, mouseY)) return false;
+        if (!setRaycasterFromView(this.raycaster, this, mouseX, mouseY)) return false;
+        // Omit the camera so roofs and walls in 3D tiles cannot replace the terrain hit.
+        const hit = raycastLocalGround(this.raycaster);
+        if (!hit) return false;
+        CustomManager.showGroundContextMenu(mouseX, mouseY, hit.point, this.id, {throughObjects: true});
+        return true;
     },
 
     // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse),

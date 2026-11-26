@@ -71,7 +71,7 @@ const WIDGET_OPACITY = 0.6;
  *          data track (ADS-B, KML, satellite...) that the user cannot hand-edit.
  */
 function resolveMoveTarget(objectNode) {
-    const root = findRootTrack(objectNode);
+    const root = objectNode.groundMoveOnly ? objectNode : findRootTrack(objectNode);
     if (!root) return null;
 
     // A hand-drawn spline: control points at frames, interpolated between.
@@ -326,7 +326,7 @@ class CObjectMoveWidget {
         if (this._objectsVersion !== NodeMan.listVersion) {
             this._objects = [];
             for (const entry of Object.values(NodeMan.list)) {
-                if (entry.data instanceof CNode3DObject) this._objects.push(entry.data);
+                if (entry.data instanceof CNode3DObject || entry.data.groundMoveOnly) this._objects.push(entry.data);
             }
             this._objectsVersion = NodeMan.listVersion;
         }
@@ -640,7 +640,9 @@ class CObjectMoveWidget {
         if (!this.node) return;
         this.proxy.position.copy(this.node.group.position);
         if (this.widget && this.widget.object) {
-            this.widget.freeMovementAllowed = this.target?.kind !== 'spline' || !isAltitudeLockActive(this.target.node);
+            this.widget.groundMoveOnly = !!this.node.groundMoveOnly;
+            this.widget.freeMovementAllowed = !this.widget.groundMoveOnly
+                && (this.target?.kind !== 'spline' || !isAltitudeLockActive(this.target.node));
             this.widget.group.position.copy(this.proxy.position);
             this.widget.updateOrientation();
         }
@@ -764,6 +766,12 @@ class CObjectMoveWidget {
         const position = this.target.position;
         const newBase = this.dragBaseECEF.clone().add(delta);
         const lla = ECEFToLLAVD_radii(newBase);
+
+        if (this.node.groundMoveOnly) {
+            position.setLLA(lla.x, lla.y, this.dragStartLLA[2]);
+            this.syncToObject();
+            return;
+        }
 
         let altitude;
         if (this.widget?.activeDragMode === 'horizontal') {

@@ -179,7 +179,7 @@ export const mirrorMethods = {
 
         this.setupDynamicMirroring(guiToMirror, standaloneMenu);
         titleFollowsDisplayName(standaloneMenu, node.id, menuTitle);
-        if (node instanceof CNode3DObject) {
+        if (node instanceof CNode3DObject || node.groundMoveOnly) {
             // Registering the editing object is also what attaches CObjectMoveWidget, so
             // this is what makes the object draggable without holding Option.
             this.setEditingObject(node, standaloneMenu);

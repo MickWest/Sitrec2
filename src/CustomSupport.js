@@ -454,7 +454,7 @@ export class CCustomManager {
         }
 
         const node = NodeMan.get(this.editingObjectNodeId, false);
-        if (!(node instanceof CNode3DObject)) {
+        if (!(node instanceof CNode3DObject) && !node?.groundMoveOnly) {
             this.clearEditingObject();
             return null;
         }

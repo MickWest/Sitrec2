@@ -176,6 +176,7 @@ class CameraMapControls {
             moveTouches: e => this.handleTouchMove(e),
             endTouches: e => this.handleTouchEnd(e),
             wheel: e => this.handleMouseWheel(e),
+            shiftContextMenu: e => this.view.tryGroundContextMenu(e.clientX, e.clientY),
             contextMenu: e => this.view.onContextMenu?.(e, e.clientX, e.clientY),
             hover: e => {
                 if (!e) return;

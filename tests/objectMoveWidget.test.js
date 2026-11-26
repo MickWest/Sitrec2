@@ -395,3 +395,38 @@ test.each(["render-hidden", "ancestor-hidden", "mesh-hidden", "different-layer"]
         for (const node of [visible,hidden]) node.group.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});
     }
 });
+
+test("a ground projector uses the surface widget and follows its snapped position during drag", () => {
+    const group = new Group();
+    let location = [34, -118, 0.05];
+    group.position.copy(LLAToECEF(location[0], location[1], 10.05));
+    const position = {
+        getLLA: () => location.slice(),
+        getECEF: () => group.position.clone(),
+        setLLA(lat, lon, clearance) {
+            location = [lat, lon, clearance];
+            group.position.copy(LLAToECEF(lat, lon, 35 + clearance));
+        },
+    };
+    const node = {id: "projector", group, groundMoveOnly: true, getPositionEditTarget: () => position};
+    const move = ObjectMoveWidget;
+    move.node = node;
+    move.target = move.movableTarget(node);
+    move.proxy = new Object3D();
+    move.widget = {object: move.proxy, group: new Group(), activeDragMode: "horizontal", updateOrientation() {}};
+    move.syncToObject();
+    expect(move.widget.freeMovementAllowed).toBe(false);
+    expect(move.widget.groundMoveOnly).toBe(true);
+    move.dragAnchor.copy(move.proxy.position);
+    move.dragging = true;
+    move.proxy.position.addScaledVector(getLocalEastVector(group.position), 120);
+    move.onWidgetMoved();
+    expect(location[1]).toBeGreaterThan(-118);
+    expect(location[2]).toBe(0.05);
+    expect(move.proxy.position).toEqual(group.position);
+    move.endDrag();
+    const action = undoManager.add.mock.calls.at(-1)[0];
+    action.undo();
+    expect(location).toEqual([34, -118, 0.05]);
+    move.widget = null;
+});

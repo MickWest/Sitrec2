@@ -271,8 +271,9 @@ the ground right-click menu stays straight as you add control points, even thoug
 choose **Smooth (chordal)** again.
 
 Turn on **Edit Track** in the track's folder to edit it. Edit mode is modal: while it is
-on, a label at the top of each 3D view names the track, and right-click acts only on that
-track. Press **Escape**, or choose **Exit Edit Mode** from either menu, to leave it.
+on, a label at the top of each 3D view names the track, and a plain right-click acts on that
+track. **Shift-right-click** opens the **Ground** menu wherever there is terrain under the pointer.
+Press **Escape**, or choose **Exit Edit Mode** from either track menu, to leave edit mode.
 
 ![A hand-drawn track in edit mode over desert: colored cubes on the line, a green disc with orange arrows at the first point, a white cone with altitude text, and a label at the top that names the track](docimages/tracks-hand-drawn-edit.jpg)
 *A hand-drawn track with **Edit Track** on. Each cube is a control point, in a random color. The selected control point has no cube. It has a green disc, which you drag to move the point sideways, and orange arrows, which you drag to move it up or down. When you turn on **Edit Track**, the first control point is selected. Move the pointer over a cube to select it. The white cone marks the track's position at the current frame, and the green text gives its altitude. The faint vertical lines below the track are **Extend To Ground**, which is on by default for a hand-drawn track.*

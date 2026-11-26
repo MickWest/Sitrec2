@@ -24,6 +24,7 @@
 
 import {ATMOSPHERE_PROJECTION_GLSL} from "../atmosphere/AtmosphereProjection";
 import {ATMOSPHERE_HAZE_GLSL, MATERIAL_ATMOSPHERE_UNIFORMS_GLSL} from "../atmosphere/MaterialAtmosphere";
+import {SPOTLIGHT_GLSL} from "./SpotlightField";
 import {WEATHER_SIZE} from "./CloudNoise";
 
 export const CLOUD_MAX_LAYERS = 4;
@@ -96,6 +97,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
     #define ATMOSPHERE_AIRLIGHT_SCALE cloudAirlightScale
     ${ATMOSPHERE_HAZE_GLSL}
 
+    ${SPOTLIGHT_GLSL}
     uniform mat3 cloudViewToWorld;
     uniform vec3 cloudUp;          // geodetic up at the camera
     uniform float cloudR;          // local sphere radius (Gaussian radius at the camera)
@@ -649,6 +651,10 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
                 float ownShadow = mix(0.3, 1.0, diffuseTransmission(tau));
                 float groundShade = diffuseTransmission(density * hf * thickness * 0.5) * coverageShade * ownShadow;
                 light += cloudAmbientTop * skyShade + cloudAmbientBottom * groundShade;
+                if (spotlightCount > 0) {
+                    // Approximate extinction from the base up to this sample.
+                    light += vec3(spotlightIrradiance(p) * diffuseTransmission(density * max(hf, 0.0) * thickness * 0.5));
+                }
                 float stepT = exp(-density * stepLength);
                 float absorbed = segmentT * (1.0 - stepT);
                 segmentColor += absorbed * 0.98 * light;
@@ -769,6 +775,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
             light = sunColor * (cloudSunIntensity * gain * scatter);
         }
         light += mix(cloudAmbientBottom, cloudAmbientTop, 0.75) * 0.8;
+        if (spotlightCount > 0) light += vec3(spotlightIrradiance(p));
         vec3 sheetColor = light * 0.98 * alpha;
         compositeSegment(sheetColor, 1.0 - alpha, t, viewOrigin, viewDir, color, transmittance);
         if (front >= NO_FRONT_KM * 1000.0 && 1.0 - transmittance > FRONT_ALPHA) front = t;

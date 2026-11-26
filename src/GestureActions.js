@@ -17,6 +17,7 @@ export const GESTURE_PROFILES = Object.freeze({
     camera: {label: "3D camera", wheelScale: .95, gestures: [
         ["Drag", "Move the world"], ["Shift-drag / middle drag", "Orbit the pivot"],
         ["Ctrl/Command-drag / right drag", "Aim the camera"],
+        ["Shift-right-click", "Open Ground through objects and tracks in a custom sitch"],
         ["Wheel", "Move toward or away from the pointer"], ["Shift-wheel", "Change field of view"],
         ["PTZ mode", "Drags aim; wheel changes field of view"],
         ["Synced camera fit", "Primary drag and wheel move and zoom the video"],
