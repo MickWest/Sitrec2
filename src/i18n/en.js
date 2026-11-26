@@ -1,4 +1,12 @@
 const en = {
+    softwareRenderingWarning: {
+        title: "Software rendering detected",
+        message: "Your browser is using the CPU to render a Sitrec 3D view. This can make Sitrec very slow, even on a fast computer.",
+        advice: "Check that hardware or graphics acceleration is enabled in your browser settings. Check extensions that can disable it, then restart the browser. Driver or browser restrictions can also cause software rendering.",
+        renderer: "Detected renderer: {{renderer}}",
+        benchmark: "Open benchmark",
+        dismiss: "Dismiss",
+    },
     thermal: {
         "title": "Physical thermal",
         "mode": "Render mode",

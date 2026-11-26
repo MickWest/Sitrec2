@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import {debugLogViewLabel, logRendererGPU} from "../src/RendererGPUInfo";
+import {debugLogViewLabel, isSoftwareRenderer, logRendererGPU} from "../src/RendererGPUInfo";
 
 const debugInfo = {UNMASKED_RENDERER_WEBGL: 1, UNMASKED_VENDOR_WEBGL: 2};
 let gl, renderer, log;
@@ -22,7 +22,8 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 test("logs the existing context's GPU separately from the requested performance hint", () => {
-    logRendererGPU(renderer, "mainView");
+    const info = logRendererGPU(renderer, "mainView");
+    expect(info).toMatchObject({rendererName: "ANGLE (Example Discrete GPU)", identity: "unmasked", softwareRendererDetected: false});
     expect(renderer.getContext).toHaveBeenCalledTimes(1);
     expect(gl.getExtension).toHaveBeenCalledWith("WEBGL_debug_renderer_info");
     expect(log).toHaveBeenCalledTimes(1);
@@ -31,6 +32,56 @@ test("logs the existing context's GPU separately from the requested performance 
     expect(message).toContain('renderer (unmasked)="ANGLE (Example Discrete GPU)"');
     expect(message).toContain('vendor="Example GPU vendor"');
     expect(message).toContain('requested power preference="high-performance" (hint)');
+});
+
+test.each([
+    "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)",
+    "Google SwiftShader",
+    "llvmpipe (LLVM 18.1.8, 256 bits)",
+    "softpipe",
+    "swrast",
+    "Software Rasterizer",
+    "Software Renderer",
+    "ANGLE (Microsoft, Microsoft Basic Render Driver Direct3D11 vs_5_0 ps_5_0)",
+    "GDI Generic",
+    "ANGLE (Microsoft, WARP Direct3D11)",
+])("recognizes the explicit software renderer %s", name => {
+    expect(isSoftwareRenderer(name)).toBe(true);
+    const original = gl.getParameter.getMockImplementation();
+    gl.getParameter.mockImplementation(parameter => parameter === 1 ? name : original(parameter));
+    expect(logRendererGPU(renderer, "mainView").softwareRendererDetected).toBe(true);
+    expect(log.mock.calls[0][0]).toContain("software renderer=detected");
+});
+
+test.each([
+    "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti Direct3D11)",
+    "ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11)",
+    "ANGLE (Intel, Intel(R) UHD Graphics Direct3D11)",
+    "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro)",
+    "Mesa Intel(R) UHD Graphics 620 (KBL GT2)",
+    "WebKit WebGL", "ANGLE", "Microsoft", "WarpSpeed GPU", "WARP", "", undefined,
+])("does not flag hardware, generic or unavailable identities: %s", name => {
+    expect(isSoftwareRenderer(name)).toBe(false);
+});
+
+test("recognizes WARP only with Microsoft renderer/vendor context", () => {
+    expect(isSoftwareRenderer("WARP", "Microsoft Corporation")).toBe(true);
+    expect(isSoftwareRenderer("WARP", "Example vendor")).toBe(false);
+});
+
+test("a software renderer can still be identified through the standard renderer query", () => {
+    gl.getExtension.mockReturnValue(null);
+    gl.getParameter.mockImplementation(parameter => parameter === 3 ? "llvmpipe" : "Mesa");
+    expect(logRendererGPU(renderer, "mainView")).toMatchObject({
+        rendererName: "llvmpipe", softwareRendererDetected: true,
+        identity: "masked; hardware identity unavailable",
+    });
+});
+
+test("console failures do not hide a software renderer from the user-facing check", () => {
+    gl.getParameter.mockImplementation(() => "SwiftShader");
+    log.mockImplementation(() => { throw new Error("Console unavailable"); });
+    expect(logRendererGPU(renderer, "mainView").softwareRendererDetected).toBe(true);
 });
 
 test.each(["missing extension", "extension query rejected", "unmasked query rejected"])(

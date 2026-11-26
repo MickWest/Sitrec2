@@ -46,6 +46,7 @@ import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
 import {debugLogViewLabel, logRendererGPU, WEBGL_POWER_PREFERENCE} from "../RendererGPUInfo";
+import {removeSoftwareRenderingWarning, updateSoftwareRenderingWarning} from "../SoftwareRenderingWarning";
 import {
     Camera,
     Color,
@@ -85,7 +86,7 @@ import {assert} from "../assert";
 import {V3} from "../threeUtils";
 import {ACESFilmicToneMappingShader} from "../shaders/ACESFilmicToneMappingShader";
 import {ShaderPass} from "three/addons/postprocessing/ShaderPass.js";
-import {isLocal, SITREC_APP} from "../configUtils"
+import {isLocal, SITREC_APP, SITREC_SHARE_APP} from "../configUtils"
 import {VRButton} from 'three/addons/webxr/VRButton.js';
 import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {glintUniforms, updateGlintCamera} from "../js/map33/material/TerrainGlints";
@@ -1852,7 +1853,8 @@ export class CNodeView3D extends CNodeViewCanvas {
             return;
         }
 
-        logRendererGPU(this.renderer, this.id);
+        updateSoftwareRenderingWarning(this.renderer, logRendererGPU(this.renderer, this.id),
+            SITREC_SHARE_APP + "tools/benchmark.html");
 
         if (!isLocal) {
             console.warn("Disabling shader error checking for production performance");
@@ -2024,7 +2026,8 @@ export class CNodeView3D extends CNodeViewCanvas {
 
         this._onContextRestored = () => {
             console.warn(`[WebGL] Context restored on view "${debugLogViewLabel(this.id)}"`);
-            logRendererGPU(this.renderer, this.id, "restored");
+            updateSoftwareRenderingWarning(this.renderer, logRendererGPU(this.renderer, this.id, "restored"),
+                SITREC_SHARE_APP + "tools/benchmark.html");
             this.contextLost = false;
 
             // A decoded PSF lives in a render target, and a render target has no source data
@@ -3376,6 +3379,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     dispose() {
+        removeSoftwareRenderingWarning(this.renderer);
         this.sunGlintArrow?.dispose();
         disposeThermalView(this, true);
         // Also covers individual view removal outside a full sitch teardown.

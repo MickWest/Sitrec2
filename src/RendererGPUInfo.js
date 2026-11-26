@@ -19,6 +19,15 @@ export function debugLogViewLabel(viewId) {
     return LOGGED_VIEW_NAMES.has(viewId) ? viewId : "other 3D view";
 }
 
+// WebGL has no hardware-acceleration boolean. Recognize explicit software
+// renderer names only. A non-match (including a hidden identity) proves nothing
+// about acceleration; integrated Intel/AMD/Apple GPUs are not software renderers.
+export function isSoftwareRenderer(rendererName, vendorName = "") {
+    if (typeof rendererName !== "string") return false;
+    return /\b(?:swiftshader|llvmpipe|softpipe|swrast|software rasterizer|software renderer|microsoft basic render driver|gdi generic)\b/i.test(rendererName) ||
+        (/\bwarp\b/i.test(rendererName) && /\bmicrosoft\b/i.test(`${vendorName} ${rendererName}`));
+}
+
 // Read the view's existing context only at creation/restoration. Privacy settings
 // may hide the hardware identity or reject queries; diagnostics must not stop rendering.
 export function logRendererGPU(renderer, viewId, event = "created") {
@@ -44,12 +53,15 @@ export function logRendererGPU(renderer, viewId, event = "created") {
     } catch {
         // A lost or unavailable context must not make GPU diagnostics fatal.
     }
+    const softwareRendererDetected = isSoftwareRenderer(rendererName, vendorName);
     try {
         console.log(`[WebGL] GPU on view "${debugLogViewLabel(viewId)}" (${event}): `
             + `renderer (${identity})="${rendererName ?? "unavailable"}"; `
             + `vendor="${vendorName ?? "unavailable"}"; `
-            + `requested power preference="${WEBGL_POWER_PREFERENCE}" (hint)`);
+            + `requested power preference="${WEBGL_POWER_PREFERENCE}" (hint); `
+            + `software renderer=${softwareRendererDetected ? "detected" : "not detected (acceleration not verified)"}`);
     } catch {
         // Console capture must not block renderer startup or context recovery.
     }
+    return {rendererName, vendorName, identity, softwareRendererDetected};
 }
