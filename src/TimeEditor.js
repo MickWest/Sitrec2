@@ -107,6 +107,8 @@ export class TimeEditor {
             input.addEventListener("input", () => this.clearError());
             input.addEventListener("change", () => this.commit(input));
             input.addEventListener("keydown", event => this.key(event, input));
+            input.addEventListener("keyup", () => this.finishKeySteps());
+            input.addEventListener("blur", () => this.finishKeySteps());
             this.bindScrub(input, input.dataset.part);
         }
         this.el("paste").addEventListener("focus", () => adapter.pause());
@@ -121,7 +123,7 @@ export class TimeEditor {
             field.addEventListener("focus", () => this.refreshTimelinePreview());
             field.addEventListener("blur", () => this.refreshTimelinePreview());
         }
-        this.onBlur = () => this.stopGesture();
+        this.onBlur = () => { this.finishKeySteps(); this.stopGesture(); };
         window.addEventListener("blur", this.onBlur);
         this.refresh();
         // Paused scenes sleep the render loop. Never poll closed/hidden editors.
@@ -172,9 +174,18 @@ export class TimeEditor {
             event.preventDefault(); this.commit(input); input.blur();
         } else if (["ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(event.key)) {
             event.preventDefault();
+            if (!this.stepping) {
+                this.stepping = true;
+                this.adapter.beginGesture?.();
+            }
             const sign = event.key.endsWith("Up") ? 1 : -1;
             this.step(input.dataset.part, sign * (event.shiftKey || event.key.startsWith("Page") ? 10 : 1), !event.repeat);
         }
+    }
+    finishKeySteps() {
+        if (!this.stepping) return;
+        this.stepping = false;
+        this.adapter.endGesture?.();
     }
     click(event) {
         const button = event.target.closest("button");
@@ -196,6 +207,7 @@ export class TimeEditor {
             this.stopGesture();
             this.adapter.pause();
             const state = this.adapter.read();
+            this.adapter.beginGesture?.();
             const base = this.date(state).getTime();
             const x = event.clientX;
             let previous = 0, changed = false, pending;
@@ -228,6 +240,7 @@ export class TimeEditor {
             element.addEventListener("pointercancel", end);
             element.addEventListener("lostpointercapture", end);
             this.cleanupGesture = () => {
+                this.adapter.endGesture?.();
                 element.removeEventListener("pointermove", move);
                 element.removeEventListener("pointerup", end);
                 element.removeEventListener("pointercancel", end);

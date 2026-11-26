@@ -1,3 +1,8 @@
+import {bindControllerUndo} from "./ControllerUndo";
+import {captureNodeMods, restoreNodeMods, captureTrackChoices} from "./SceneEditState";
+import {ownedSubNodeIds} from "./UserObjects";
+import {makeCreateObjectUndoAction} from "./undoCreateObject";
+import {undoManager} from "./UndoManager";
 import {addRoadTrackControls} from "./RoadTrackGUI";
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
@@ -834,26 +839,8 @@ class CTrackManager extends CManager {
 // we want to make tracks from
     async addTracks(trackFiles, removeDuplicates = false, sphereMask = LAYER.MASK_HELPERS, options = {}) {
 
-        let settingSitchEstablished = false;
-        // Read before any track is built; see setSitchEstablishedByTrackImport.
-        const establishedByUserBeforeImport = isSitchEstablishedByUser();
+        const generation = Globals.loadGeneration;
         const showDialog = options.showDialog !== false && !Globals.deserializing;
-        const syncTime = options.syncTime !== false;
-        // A track that sets the time of a new sitch also sets its time zone (see
-        // setTimeZoneFromTrackStart). Not for the tracks of a sitch definition, which can
-        // name its own zone (Sit.timeZone), and not while a saved sitch loads: it restores
-        // its saved zone.
-        const setTimeZone = options.setTimeZone !== false && !Globals.deserializing;
-
-        // Tracks that centerOnTrack decided the view is allowed to move for. Collected
-        // here rather than acted on there because framing a camera+target pair needs
-        // BOTH tracks, and centerOnTrack runs once per track as each one is built.
-        // See frameLoadedTracks() at the end of this method.
-        this.pendingFramingTracks = [];
-
-        // The TrackData id of the last track this import made from a custom XML wind
-        // profile (CTrackFileSoundingXML), or null. See the end of this method.
-        let importedCustomWindProfileTrack = null;
 
         console.log("-----------------------------------------------------")
         console.log("addTracks called with ", trackFiles)
@@ -871,7 +858,7 @@ class CTrackManager extends CManager {
         // `radius:` a track's marker sphere is created with, so the number in
         // this control and the number in the object's own Radius field agree.
         if (!NodeMan.exists("globalSphereResize")) {
-            new CNodeGUIValue({
+            const control = new CNodeGUIValue({
                 id: "globalSphereResize",
                 value: DEFAULT_TRACK_SPHERE_RADIUS_M,
                 start: 0.01,
@@ -882,7 +869,21 @@ class CTrackManager extends CManager {
                     + "(spheres, icosahedrons, circles and the like) to this radius, in meters.\n"
                     + "Shapes with a second length (capsule, cone, torus) and models are left alone.",
                 onChange: (v) => resizeAllObjectSpheres(v),
-            }, guiMenus.objects)
+            }, guiMenus.objects);
+            bindControllerUndo(control.guiEntry, () => {
+                const radii = [];
+                forEachRadiusObject((id, node) => radii.push([id, node.geometryParams.radius]));
+                return {value: control.value, radii};
+            }, ({value, radii}) => {
+                NodeMan.get("globalSphereResize").guiEntry.setValueQuietly(value);
+                for (const [id, radius] of radii) {
+                    const node = NodeMan.get(id, false);
+                    if (node) {
+                        node.geometryParams.radius = radius;
+                        node.rebuild();
+                    }
+                }
+            });
         }
 
         // Pre-scan: for files with 3+ independently-selectable tracks, show selection dialog
@@ -976,6 +977,122 @@ class CTrackManager extends CManager {
             }
         }
 
+        if (generation !== Globals.loadGeneration || Globals.disposing) return;
+        if (!options.recordUndo || Globals.deserializing) {
+            this.buildSelectedTracks(trackFiles, removeDuplicates, options, selectedIndicesMap, declinedPairing);
+            return;
+        }
+
+        const before = this.captureImportSettings();
+        const prior = new Map();
+        this.iterate((id, track) => prior.set(id, track));
+        const replaced = [];
+        let zoneTrack;
+        try {
+            zoneTrack = this.buildSelectedTracks(trackFiles, removeDuplicates, options, selectedIndicesMap, declinedPairing, null, replaced);
+        } finally {
+            this.recordTrackImport(prior, replaced, before, zoneTrack);
+        }
+    }
+
+    recordTrackImport(prior, replaced, before, zoneTrack) {
+        const added = [];
+        this.iterate((id, track) => { if (prior.get(id) !== track) added.push(id); });
+        if (!added.length && !replaced.length) return;
+        const after = this.captureImportSettings();
+        undoManager.group("Import tracks", () => {
+            undoManager.add({undo: before, redo: () => {}});
+            for (const action of replaced) undoManager.add(action);
+            for (const id of added) {
+                // Capture on first undo. Importers can attach metadata and file
+                // descriptors after addTracks returns to the file loader.
+                let recreate;
+                undoManager.add({undo: () => {
+                    recreate ??= this.captureImportedTrackForUndo(this.get(id));
+                    this.disposeRemove(id);
+                }, redo: () => recreate()});
+            }
+            undoManager.add({undo: () => {}, redo: () => {
+                after();
+                if (zoneTrack) setTimeZoneFromTrackStart(zoneTrack);
+            }});
+        });
+    }
+
+    // Importing a track can also establish the scene, select camera inputs,
+    // move the main view, center the terrain, and synchronize the timeline.
+    captureImportSettings() {
+        const choices = [];
+        NodeMan.iterate((id, node) => {
+            if (node.selectOption && node.choice != null) choices.push([id, node.choice]);
+        });
+        const camera = NodeMan.get("mainCamera", false);
+        const pose = camera && [camera.camera.position, camera.camera.quaternion, camera.camera.up].map(v => v.clone());
+        const defaults = camera && [camera.startPosLLA, camera.lookAtLLA, camera.upLLA];
+        const terrain = NodeMan.get("terrainUI", false);
+        const area = terrain && {lat: terrain.lat, lon: terrain.lon, zoom: terrain.zoom};
+        const wind = CustomManager?._windSourceCtrl?.getValue();
+        const date = GlobalDateTimeNode;
+        const start = date?.dateStart?.getTime();
+        const syncTrack = date?.syncTrack;
+        const zone = date && [date.timeZoneName, date.timeZoneOffset];
+        const {frames, aFrame, bFrame} = Sit;
+        const {sitchEstablished, sitchEstablishedByTrackImport} = Globals;
+        return () => {
+            for (const [id, choice] of choices) {
+                const node = NodeMan.get(id, false);
+                if (node?.inputs[choice] && node.choice !== choice) node.selectOption(choice);
+            }
+            const windControl = CustomManager?._windSourceCtrl;
+            if (wind !== undefined && windControl?.getValue() !== wind) windControl?.setValue(wind);
+            if (date) {
+                if (Sit.frames !== frames) { Sit.frames = frames; date.changedFrames(); }
+                Object.assign(Sit, {aFrame, bFrame});
+                date.syncTrack = syncTrack;
+                date.startTimeZoneLookup();
+                [date.timeZoneName, date.timeZoneOffset] = zone;
+                if (start !== undefined && date.dateStart.getTime() !== start) date.setStartDateTime(new Date(start));
+            }
+            if (area && Object.keys(area).some(key => terrain[key] !== area[key])) {
+                Object.assign(terrain, area);
+                terrain.doRefresh();
+            }
+            if (pose) {
+                camera.camera.position.copy(pose[0]);
+                camera.camera.quaternion.copy(pose[1]);
+                camera.camera.up.copy(pose[2]);
+                camera.camera.updateMatrixWorld();
+                [camera.startPosLLA, camera.lookAtLLA, camera.upLLA] = defaults;
+            }
+            Object.assign(Globals, {sitchEstablished, sitchEstablishedByTrackImport});
+            NodeMan.recalculateAllRootFirst();
+        };
+    }
+
+    // Selection dialogs have finished. Construction from the retained, parsed
+    // source is synchronous, including when undo rebuilds just one sub-track.
+    buildSelectedTracks(trackFiles, removeDuplicates, options, selectedIndicesMap, declinedPairing, restoringTrack, replaced) {
+        let settingSitchEstablished = false;
+        let zoneTrack;
+        // Read before any track is built; see setSitchEstablishedByTrackImport.
+        const establishedByUserBeforeImport = isSitchEstablishedByUser();
+        const syncTime = options.syncTime !== false;
+        // A track that sets the time of a new sitch also sets its time zone (see
+        // setTimeZoneFromTrackStart). Not for the tracks of a sitch definition, which can
+        // name its own zone (Sit.timeZone), and not while a saved sitch loads: it restores
+        // its saved zone.
+        const setTimeZone = options.setTimeZone !== false && !Globals.deserializing;
+
+        // Tracks that centerOnTrack decided the view is allowed to move for. Collected
+        // here rather than acted on there because framing a camera+target pair needs
+        // BOTH tracks, and centerOnTrack runs once per track as each one is built.
+        // See frameLoadedTracks() at the end of this method.
+        this.pendingFramingTracks = [];
+
+        // The TrackData id of the last track this import made from a custom XML wind
+        // profile (CTrackFileSoundingXML), or null. See the end of this method.
+        let importedCustomWindProfileTrack = null;
+
         for (const trackFileName of trackFiles) {
             ////////////////////////////////////////////////////
 
@@ -994,7 +1111,7 @@ class CTrackManager extends CManager {
                 ?? options.shortNames;
 
             let moreTracks = true;
-            let trackIndex = 0;
+            let trackIndex = restoringTrack?.index ?? 0;
             // Whether this file has already re-timed the sitch. See the sync block
             // below: it must fire on the first track actually LOADED, which is not
             // necessarily index 0 once the multi-track picker has filtered.
@@ -1011,9 +1128,15 @@ class CTrackManager extends CManager {
                 moreTracks = false;
 
 
-                const __ret = this.findShortName(trackFileName, trackIndex, moreTracks, configuredShortNames);
-                let shortName = __ret.shortName;
-                moreTracks = __ret.moreTracks;
+                let shortName;
+                if (restoringTrack) {
+                    shortName = restoringTrack.shortName;
+                    this.usedShortNames.add(shortName);
+                } else {
+                    const next = this.findShortName(trackFileName, trackIndex, moreTracks, configuredShortNames);
+                    shortName = next.shortName;
+                    moreTracks = next.moreTracks;
+                }
 
                 // Skip tracks not selected by the user in the multi-track dialog
                 if (selectedSet && !selectedSet.has(trackIndex)) {
@@ -1043,6 +1166,8 @@ class CTrackManager extends CManager {
                             trackColor = trackOb.trackColor; // keep the color of the existing track
 
                             // remove it from the track manager
+                            if (replaced) replaced.push({undo: this.captureImportedTrackForUndo(trackOb),
+                                redo: () => this.disposeRemove(key)});
                             TrackManager.disposeRemove(key);
 
                         }
@@ -1124,7 +1249,10 @@ class CTrackManager extends CManager {
                         syncedFromThisFile = true;
                         // The time and the place now come from this track: show times in
                         // the time zone of where it starts.
-                        if (setTimeZone) setTimeZoneFromTrackStart(trackDataID);
+                        if (setTimeZone) {
+                            zoneTrack = trackDataID;
+                            setTimeZoneFromTrackStart(trackDataID);
+                        }
                     }
 
                     this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder, trackIndex);
@@ -1161,7 +1289,7 @@ class CTrackManager extends CManager {
                         removeTrack : async () => {
                             // "Delete", as on every other track; the loaded file is not changed.
                             if (await showConfirm(`Delete track "${trackOb.displayName ?? shortName}"?`, {title: "Delete Track"})) {
-                                TrackManager.disposeRemove(trackID);
+                                if (this.get(trackID, false) === trackOb) this.deleteImportedTrackWithUndo(trackOb);
                             }
                         },
                         createSpline : () => {
@@ -1180,6 +1308,7 @@ class CTrackManager extends CManager {
                             }
                             trackOb.guiFolder.close();
                             const newTrackOb = TrackManager.addSyntheticTrack({
+                                recordUndo: true,
                                 name: newShortName,
                                 shortName: newShortName,
                                 initialPoints: initialPoints,
@@ -1318,7 +1447,7 @@ class CTrackManager extends CManager {
 
                     this.makeMotionTrack(trackOb, shortName, trackColor, dropColor, trackID);
 
-                    if (!isSondeTrack) {
+                    if (!restoringTrack && !isSondeTrack) {
                         this.centerOnTrack(shortName, trackNumber, trackOb, hasAngles, trackIndex);
                     }
 
@@ -1347,7 +1476,7 @@ class CTrackManager extends CManager {
                     // loading from a saved sitch. For saved sitches, filterEnabled is
                     // restored via deserialization.
                     // Atmospheric deceleration is not an aircraft bad-point artifact.
-                    if (!fireball && trackIndex === 0 && !Globals.deserializing) {
+                    if (!restoringTrack && !fireball && trackIndex === 0 && !Globals.deserializing) {
                         const trackFile = FileManager.get(trackFileName);
                         const rocketDetection = detectRocketLikeTrack(trackFileName, trackDataNode.misb, trackFile);
 
@@ -1418,9 +1547,10 @@ class CTrackManager extends CManager {
         // wind source (that entry is read by altitude for such a file). Not while a
         // saved sitch loads its files: the sitch has its own saved wind source,
         // and the user can have changed it after the import.
-        if (importedCustomWindProfileTrack && !Globals.deserializing) {
+        if (!restoringTrack && importedCustomWindProfileTrack && !Globals.deserializing) {
             CustomManager?.useTrackAsWindSource?.(importedCustomWindProfileTrack);
         }
+        return zoneTrack;
     }
 
 
@@ -3128,7 +3258,101 @@ class CTrackManager extends CManager {
         // tracksChanged when it is made, so it asks by itself.
         scheduleTrackObjectLinksRefresh();
         
+        if (options.recordUndo) this.recordSyntheticTrackCreation(trackOb);
         return trackOb;
+    }
+
+    deleteImportedTrackWithUndo(track) {
+        const {trackID, displayName} = track;
+        const restore = this.captureImportedTrackForUndo(track);
+        const remove = () => this.disposeRemove(trackID);
+        remove();
+        undoManager.add({description: "Delete track " + displayName, undo: restore, redo: remove});
+    }
+
+    captureImportedTrackForUndo(track) {
+        const {trackID, trackFileName: file, trackIndex: index, menuText: shortName, displayName} = track;
+        const entry = {...FileManager.getInfo(file)};
+        const loadedFile = Sit.loadedFiles?.[file];
+        const metadata = FileManager.loadedFilesMetadata?.[file];
+        const allIDs = Object.keys(NodeMan.list);
+        const roots = Object.values(track).filter(node => node?.id && NodeMan.get(node.id, false) === node);
+        const mods = captureNodeMods(roots.flatMap(node => [node.id, ...ownedSubNodeIds(node.id, allIDs)]));
+        const choices = [];
+        NodeMan.iterate((id, node) => {
+            if (node.selectOption && node.choice != null) choices.push([id, node.choice]);
+        });
+        const established = Globals.sitchEstablished;
+        const establishedByImport = Globals.sitchEstablishedByTrackImport;
+        const syncTrack = GlobalDateTimeNode?.syncTrack;
+        return () => {
+            if (!FileManager.exists(file)) {
+                FileManager.add(file, entry.data, entry.original);
+                Object.assign(FileManager.getInfo(file), entry);
+            }
+            if (loadedFile !== undefined) (Sit.loadedFiles ??= {})[file] = loadedFile;
+            if (metadata !== undefined) (FileManager.loadedFilesMetadata ??= {})[file] = metadata;
+            this.buildSelectedTracks([file], false, {syncTime: false}, new Map(), new Set([file]), {index, shortName});
+            const live = this.get(trackID);
+            this.setTrackDisplayName(live, displayName, {linked: false});
+            restoreNodeMods(mods);
+            for (const [id, choice] of choices) {
+                const node = NodeMan.get(id, false);
+                if (node?.inputs[choice] && node.choice !== choice) node.selectOption(choice);
+            }
+            Globals.sitchEstablished = established;
+            Globals.sitchEstablishedByTrackImport = establishedByImport;
+            if (GlobalDateTimeNode) GlobalDateTimeNode.syncTrack = syncTrack;
+            NodeMan.recalculateAllRootFirst();
+        };
+    }
+
+    captureSyntheticTrackForUndo(track, includeObject) {
+        const {trackID, displayTrackID, displayName, objectID, nameShared, editMode} = track;
+        const [data] = this.serialize(trackID);
+        // The object can also be kept by Delete Track Only. Restore its graph
+        // separately so that an existing object never gets a second Location.
+        data.objectData = null;
+        const mods = captureNodeMods([trackID, displayTrackID,
+            ...ownedSubNodeIds(trackID, Object.keys(NodeMan.list)),
+            ...ownedSubNodeIds(displayTrackID, Object.keys(NodeMan.list))]);
+        const restoreObject = objectID && includeObject ? CustomManager.captureObjectForUndo(NodeMan.get(objectID)) : null;
+        const restoreChoices = captureTrackChoices(track.menuText);
+        return () => {
+            this.deserialize([structuredClone(data)]);
+            const live = this.get(trackID);
+            this.setTrackDisplayName(live, displayName, {linked: false});
+            restoreNodeMods(mods);
+            if (restoreObject) restoreObject();
+            Object.assign(live, {objectID, nameShared});
+            restoreChoices();
+            if (editMode) live.setEditMode(true);
+            NodeMan.recalculateAllRootFirst();
+            return {trackID, objectID};
+        };
+    }
+
+    recordSyntheticTrackCreation(track) {
+        const {trackID, objectID, displayName} = track;
+        const action = makeCreateObjectUndoAction({
+            trackID, objectID, trackManager: this,
+            name: objectID ? NodeMan.get(objectID).displayName : displayName,
+            deleteObject: id => CustomManager.deleteObject(NodeMan.get(id)),
+            recreate: this.captureSyntheticTrackForUndo(track, true),
+        });
+        if (!objectID) action.description = "Add track " + displayName;
+        undoManager.add(action);
+    }
+
+    deleteSyntheticTrackWithUndo(track, includeObject) {
+        const {trackID, objectID} = track;
+        const restore = this.captureSyntheticTrackForUndo(track, includeObject);
+        const remove = () => {
+            if (includeObject && objectID) CustomManager.deleteObject(NodeMan.get(objectID));
+            this.disposeSyntheticTrack(trackID);
+        };
+        remove();
+        undoManager.add({description: "Delete track " + track.displayName, undo: restore, redo: remove});
     }
 
     /**
@@ -3150,11 +3374,10 @@ class CTrackManager extends CManager {
                     {label: t("trackManager.cancel"), value: null, cancel: true},
                 ],
             });
-            if (!choice) return;
-            if (choice === "both") CustomManager.deleteObject(object);
-            this.disposeSyntheticTrack(trackID);
+            if (!choice || this.get(trackID, false) !== trackOb) return;
+            this.deleteSyntheticTrackWithUndo(trackOb, choice === "both" && NodeMan.get(object.id, false) === object);
         } else if (await showConfirm(question, {title: t("trackManager.deleteTrack")})) {
-            this.disposeSyntheticTrack(trackID);
+            if (this.get(trackID, false) === trackOb) this.deleteSyntheticTrackWithUndo(trackOb, false);
         }
     }
 
@@ -3434,9 +3657,7 @@ class CTrackManager extends CManager {
 
         // the balloon sphere (unlike synthetic tracks, the object is intrinsic
         // to the balloon, so deleting the balloon deletes it too)
-        if (trackOb.objectID) {
-            NodeMan.unlinkDisposeRemove(trackOb.objectID);
-        }
+        this.disposeGeneratedObject(trackOb.objectID);
 
         NodeMan.unlinkDisposeRemove(trackID + "_startAltitude");
         NodeMan.unlinkDisposeRemove(trackID + "_launchDelay");
@@ -3565,6 +3786,34 @@ class CTrackManager extends CManager {
         }).fadeWhenFolderOff();
     }
 
+    deleteGeneratedTrackWithUndo(trackOb, kind) {
+        const {trackID, objectID, displayTrackID, lineDisplayID, displayName, nameShared} = trackOb;
+        const records = kind === "kite" ? this.serializeKites() : this.serializeBalloons();
+        const record = records.find(entry => entry.trackID === trackID);
+        const ids = Object.keys(NodeMan.list);
+        const mods = captureNodeMods([trackID, objectID, displayTrackID, lineDisplayID,
+            ...ownedSubNodeIds(trackID, ids), ...ownedSubNodeIds(objectID, ids)].filter(Boolean));
+        const restoreChoices = captureTrackChoices(trackOb.menuText);
+        const remove = () => this.disposeRemove(trackID);
+        remove();
+        undoManager.add({description: "Delete " + displayName, redo: remove, undo: () => {
+            const saved = {...record, displayName};
+            const live = kind === "kite" ? this.addKiteTrack(saved) : this.addBalloonTrack(saved);
+            restoreNodeMods(mods);
+            live.nameShared = nameShared;
+            restoreChoices();
+            NodeMan.recalculateAllRootFirst();
+        }});
+    }
+
+    disposeGeneratedObject(id) {
+        if (!id) return;
+        for (const child of ownedSubNodeIds(id, Object.keys(NodeMan.list))) {
+            if (NodeMan.exists(child)) NodeMan.unlinkDisposeRemove(child);
+        }
+        NodeMan.unlinkDisposeRemove(id);
+    }
+
     // The Delete Track button of a balloon or a kite. Its object goes with it.
     addGeneratedTrackDeleteButton(trackOb, kind, tooltip) {
         const title = kind[0].toUpperCase() + kind.slice(1);
@@ -3573,7 +3822,7 @@ class CTrackManager extends CManager {
                 // by the name the user sees, which a rename changes
                 const name = trackOb.displayName ?? trackOb.menuText;
                 if (await showConfirm(`Delete ${kind} "${name}"?`, {title: `Delete ${title}`})) {
-                    this.disposeRemove(trackOb.trackID);
+                    if (this.get(trackOb.trackID, false) === trackOb) this.deleteGeneratedTrackWithUndo(trackOb, kind);
                 }
             }
         };
@@ -3781,9 +4030,7 @@ class CTrackManager extends CManager {
         NodeMan.unlinkDisposeRemove("colorKite_" + trackID);
 
         // the kite object belongs to the kite, so it goes with it
-        if (trackOb.objectID) {
-            NodeMan.unlinkDisposeRemove(trackOb.objectID);
-        }
+        this.disposeGeneratedObject(trackOb.objectID);
 
         for (const suffix of ["_anchorAltitude", "_lineLength", "_lineWeight", "_lineDiameter", "_windVariability", "_seed"]) {
             NodeMan.unlinkDisposeRemove(trackID + suffix);
@@ -3873,7 +4120,7 @@ class CTrackManager extends CManager {
         folder._lookupId = trackOb.trackID;
         folder.title(trackOb.displayName);
         addCustomGraphControl(folder, () => ({entityId: trackOb.trackID, title: trackOb.displayName}));
-        addNameControl(folder, trackOb, {
+        const nameControl = addNameControl(folder, trackOb, {
             property: "displayName",
             id: trackOb.trackID,
             first: true,
@@ -3885,6 +4132,8 @@ class CTrackManager extends CManager {
                 if (unique !== value) this.setTrackDisplayName(trackOb, unique);
             },
         });
+        const id = trackOb.trackID;
+        bindControllerUndo(nameControl, () => trackOb.displayName, value => this.setTrackDisplayName(this.get(id), value));
     }
 
     /**
@@ -4039,11 +4288,11 @@ class CTrackManager extends CManager {
         });
     }
 
-    serialize() {
+    serialize(onlyID) {
         const syntheticTracks = [];
         
         this.iterate((key, trackOb) => {
-            if (trackOb.isSynthetic) {
+            if (trackOb.isSynthetic && (onlyID === undefined || key === onlyID)) {
                 // Get the spline editor node to extract control points
                 // The actual spline editor is in the _unsmoothed version
                 const unsmoothedID = trackOb.trackID + "_unsmoothed";

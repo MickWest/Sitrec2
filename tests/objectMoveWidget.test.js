@@ -45,6 +45,8 @@ function balloon() {
 }
 let moveNodes;
 function startMove(node, frame = 0) {
+    node.id ??= "fixedPosition";
+    moveNodes.set(node.id, node);
     const widget = ObjectMoveWidget;
     widget.node = objectFor(node);
     widget.target = widget.movableTarget(widget.node);
@@ -435,6 +437,7 @@ test("a ground projector uses the surface widget and follows its snapped positio
     };
     const node = {id: "projector", group, groundMoveOnly: true, getPositionEditTarget: () => position};
     const move = ObjectMoveWidget;
+    moveNodes.set(node.id, node);
     move.node = node;
     move.target = move.movableTarget(node);
     move.proxy = new Object3D();

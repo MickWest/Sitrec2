@@ -1,3 +1,4 @@
+import {bindControllerUndo} from "../ControllerUndo";
 import {objectThermalState, setupObjectThermalMenu} from "../rendering/ThermalLoader";
 import {effectiveRenderMode} from "../rendering/ViewRenderMode";
 import {SolarSurfacePatches} from "../rendering/SolarSurfacePatches";
@@ -435,6 +436,8 @@ export class CNode3DObject extends CNode3DGroup {
                 if (unique !== name) this.setDisplayName(unique);
             },
         });
+        const objectID = this.id;
+        bindControllerUndo(this.nameController, () => this.displayName, name => NodeMan.get(objectID).setDisplayName(name));
         this.nameController.isCommon = true;
         // Renaming a hidden object is still useful, so Name is not greyed out with the rest.
         this.nameController.keepLiveWhenFolderOff();
@@ -477,6 +480,9 @@ export class CNode3DObject extends CNode3DGroup {
         this.reflectionArrowIds = [];
 
         this.rebuild();
+        for (const control of [this.modelOrGeometryMenu, this.modelMenu, this.flockController, visibleController]) {
+            this.bindObjectParameter(control);
+        }
         this.flock.setEnabled(this.flockEnabled);
 
         // move the material folder to the end
@@ -534,7 +540,7 @@ export class CNode3DObject extends CNode3DGroup {
     async confirmDelete() {
         const ok = await showConfirm(t("nodes3dObject.deleteObject.confirm", {name: this.displayName}),
             {title: t("nodes3dObject.deleteObject.label")});
-        if (ok) CustomManager.deleteObject(this);
+        if (ok && NodeMan.get(this.id, false) === this) CustomManager.deleteObjectWithUndo(this);
     }
 
     // A controller can add controls (ObjectTilt adds Banking, Tilt and Sway); Delete Object
@@ -1432,9 +1438,18 @@ ${trackPlacemark}    </Document>
                     }).tooltip(tip);
             }
 
+            this.bindObjectParameter(controller);
             controller.isCommon = isCommon;
 
         }
+    }
+
+    bindObjectParameter(control) {
+        const id = this.id;
+        // Changing a geometry or model can replace its parameter controls.
+        // Restore the saved object description through its regular load path.
+        bindControllerUndo(control, () => JSON.parse(JSON.stringify(this.modSerialize())),
+            state => NodeMan.get(id).modDeserialize(structuredClone(state)));
     }
 
     updateControlVisibility() {

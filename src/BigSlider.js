@@ -25,6 +25,7 @@
  */
 
 import {CValueBox} from "./CValueBox";
+import {beginControllerEdit} from "./ControllerUndo";
 
 // How long the pointer must rest on a normal slider before the big one appears.
 const HOVER_DELAY_MS = 3000;
@@ -344,6 +345,7 @@ function startDrag(e) {
     }
     open.dragPointerID = e.pointerId;
     track.classList.add('active');
+    beginControllerEdit(controller);
     controller._setDraggingStyle(true);
     controller._dragStart(e.clientX, track, false);
     setZone(e.clientX);

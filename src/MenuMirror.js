@@ -1,3 +1,4 @@
+import {listenForControllerEdit} from "./ControllerUndo";
 // Mirror individual lil-gui controllers into other menus.
 //
 // Surfaces an existing control (e.g. the Show menu's "Labels in Look" checkbox) inside
@@ -263,6 +264,7 @@ function linkTwin(source, twin, opts) {
         };
     }
     connection.twins.set(twin, opts);
+    listenForControllerEdit(twin, source);
     twin.onChange(() => {
         source._callOnChange();
         forceUpdateDisplay(source);

@@ -46,6 +46,7 @@ import {
     withTestUser
 } from "./Globals";
 import {isUserMadeObjectId, ownedSubNodeIds} from "./UserObjects";
+import {captureNodeMods, restoreNodeMods, captureTrackChoices} from "./SceneEditState";
 import {unlistManualObject} from "./TrackSelectors";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
@@ -505,6 +506,36 @@ export class CCustomManager {
         // Finally unlink and dispose the object itself. Using unlinkDisposeRemove
         // avoids leaving controller inputs or other graph edges attached.
         NodeMan.unlinkDisposeRemove(nodeId);
+    }
+
+    captureObjectForUndo(node) {
+        const {id, displayName, fixedObjectPositionID} = node;
+        const positionID = fixedObjectPositionID ?? id + "_manualPosition";
+        const position = NodeMan.get(positionID);
+        const lla = position._LLA.slice();
+        const agl = position.agl;
+        const track = TrackManager.trackForObject(id);
+        const trackID = track?.objectID === id ? track.trackID : null;
+        const nameShared = track?.nameShared;
+        const mods = captureNodeMods([id, positionID, ...ownedSubNodeIds(id, Object.keys(NodeMan.list))]);
+        const restoreChoices = captureTrackChoices(id);
+        return () => {
+            const object = this.createFixedObject(id, positionID, lla, agl, displayName);
+            if (!fixedObjectPositionID) delete object.fixedObjectPositionID;
+            const liveTrack = trackID && TrackManager.get(trackID, false);
+            if (liveTrack) Object.assign(liveTrack, {objectID: id, nameShared});
+            restoreNodeMods(mods);
+            restoreChoices();
+            NodeMan.recalculateAllRootFirst();
+        };
+    }
+
+    deleteObjectWithUndo(node) {
+        const {id, displayName} = node;
+        const restore = this.captureObjectForUndo(node);
+        const remove = () => this.deleteObject(NodeMan.get(id));
+        remove();
+        UndoManager.add({description: "Delete " + displayName, undo: restore, redo: remove});
     }
 
     /**
@@ -1812,19 +1843,27 @@ export class CCustomManager {
     }
 
 
-    removeAllTracks() {
+    removeAllTracks(record = false) {
         // First the objects that the user made: they go too, on a track or not. Each is
         // removed as its own Delete Object button removes it.
         const objects = [];
         NodeMan.iterate((id, node) => {
             if (isUserMadeObjectId(id) && node instanceof CNode3DObject) objects.push(node);
         });
-        for (const node of objects) this.deleteObject(node);
-
-        // Then dispose all tracks
-        TrackManager.iterate((id, track) => {
-            TrackManager.disposeRemove(id)
-        })
+        const remove = () => {
+            for (const node of objects) {
+                if (record) this.deleteObjectWithUndo(node);
+                else this.deleteObject(node);
+            }
+            TrackManager.iterate((id, track) => {
+                if (!record) TrackManager.disposeRemove(id);
+                else if (track.isSynthetic) TrackManager.deleteSyntheticTrackWithUndo(track, false);
+                else if (track.isBalloon || track.isKite) TrackManager.deleteGeneratedTrackWithUndo(track, track.isKite ? "kite" : "balloon");
+                else TrackManager.deleteImportedTrackWithUndo(track);
+            });
+        };
+        if (record) UndoManager.group("Remove all tracks", remove);
+        else remove();
         setRenderOne(true);
 
     }
@@ -1834,7 +1873,7 @@ export class CCustomManager {
     }
 
     removeAllBuildings() {
-        Synth3DManager.removeAllBuildings();
+        Synth3DManager.removeAllBuildings(true);
         setRenderOne(true);
     }
 
@@ -1859,6 +1898,7 @@ export class CCustomManager {
 
         const lastFrame = Math.max(0, (Sit.frames ?? 1) - 1);
         TrackManager.addSyntheticTrack({
+            recordUndo: true,
             name: "Camera LOS",
             curveType: "linear",
             editMode: false,

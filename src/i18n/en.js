@@ -2205,7 +2205,7 @@ const en = {
             },
             clearRegions: {
                 label: "Clear All Regions",
-                tooltip: "Remove all text extraction regions. It asks first, because you cannot undo it.",
+                tooltip: "Remove all text extraction regions after confirmation. Undo restores the regions and their extracted text.",
             },
             startExtract: {
                 label: "Start Extraction",
@@ -2441,7 +2441,7 @@ const en = {
             limitTracksInOut: { label: "Limit Tracks In/Out", tooltip: "Draw each track only between the In and Out points.\nThe full data tracks are not drawn" },
             showCompassElevation: { label: "Show Compass Elevation", tooltip: "Show compass elevation (angle above the local ground plane) in addition to bearing (azimuth)" },
             filterTracks: { label: "Filter Tracks", tooltip: "Open a dialog that hides the loaded data tracks that fail the filters you set:\nan altitude range, crossing the look camera's view frustum, or moving away from the camera" },
-            removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove every track from the sitch.\nObjects that you added with Add Object or the right-click menu are removed too. The camera and traverse objects stay.\nTo get an imported track back, drop its file again" },
+            removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove every track from the sitch.\nObjects that you added with Add Object or the right-click menu are removed too. The camera and traverse objects stay.\nUndo restores the tracks and their objects" },
             addTrackFromCameraLOS: { label: "Track from Camera LOS", tooltip: "Create a two-point synthetic track along the current camera's line of sight.\nFirst point is at the camera, second point is where the LOS hits the ground,\nor 300 miles along the LOS if it does not hit the ground." },
             importADSBTrace: { label: "Import ADS-B Track...", tooltip: "Fetch an aircraft's last ~24 hours of ADS-B positions from adsb.lol\nby its ICAO 24-bit hex address (e.g. a1b2c3), and add it as a track.\nData: adsb.lol (ODbL)" },
             liveTraffic: {
@@ -3679,7 +3679,7 @@ const en = {
         },
         removeTrack: {
             label: "Remove Track",
-            tooltip: "Delete this series and all its values. You cannot undo this.",
+            tooltip: "Delete this series and all its values. Undo restores the series.",
         },
         folderTitle: {
             label: "OSD Tracker",

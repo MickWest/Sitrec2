@@ -159,6 +159,7 @@ import {
 } from "./CMotionAnalysisUI";
 import {addObjectTrackingMenu, resetObjectTracking} from "./CObjectTracking";
 import {disposeStarTracker} from "./starTrack/StarTrackerUI";
+import {resetTextExtraction} from "./CTextExtraction";
 import {resetHorizonExtractor} from "./CHorizonExtractor";
 import {addTextExtractionMenu} from "./CTextExtraction";
 import {addScriptedVideoMenu} from "./CScriptedVideo";
@@ -3567,6 +3568,7 @@ function disposeEverything() {
     resetMotionAnalysis();
     resetObjectTracking();
     resetHorizonExtractor();
+    resetTextExtraction();
     // Star Tracker holds a solve tied to the old video, plus a GUI folder the menu bar is about
     // to destroy; both must go or the result draws over the next sitch's video and the menu
     // never rebuilds.

@@ -9,7 +9,7 @@ import {KeyframeRegistry} from "../CKeyframeRegistry";
 import {lastSitFrame} from "../UpdateSitFrames";
 import {CValueBox} from "../CValueBox";
 import {TimelineMarkers} from "../TimelineMarkers";
-import {markerDisplayName, showTimelineMenu} from "../TimelineMenu";
+import {markerDisplayName, resetInOut, showTimelineMenu} from "../TimelineMenu";
 
 // The thumb of the range input is the playhead. The browser draws it and has no
 // API for its size; 16 px is the Chrome default. Its center moves from half a
@@ -755,16 +755,13 @@ export class CNodeFrameSlider extends CNode {
             if (this.getNearLimit(mousePos.x, mousePos.y)) return;
             const clickFrame = this.canvasXToFrame(mousePos.x);
             if (clickFrame < Sit.aFrame) {
-                Sit.aFrame = 0;
+                resetInOut(0, Sit.bFrame);
             } else if (clickFrame > Sit.bFrame) {
-                Sit.bFrame = Sit.frames - 1;
+                resetInOut(Sit.aFrame, Sit.frames - 1);
             } else {
                 return; // inside the A-B range: nothing to reset
             }
-            markSitchDirty();
             this.needsCanvasRedraw = true;
-            setRenderOne(true);
-            EventManager.dispatchEvent("abFrameChanged");
         });
 
         // Right-click: the timeline menu (markers, Reset In/Out) instead of the

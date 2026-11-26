@@ -1,3 +1,4 @@
+import {isTextEntry} from "./NativeKeyRouting";
 import {FileManager, Globals, gui, guiShowHide, NodeMan, setRenderOne, Sit, UndoManager} from "./Globals";
 import {par, stopControlledPlayback} from "./par";
 import {closeFullscreen, openFullscreen} from "./utils";
@@ -302,15 +303,7 @@ export function showHider(_ob, id, visible, key) {
 let isFullScreen = false;
 
 function isTextInputFocused() {
-    const activeElement = document.activeElement;
-    if (!activeElement) return false;
-    
-    const tagName = activeElement.tagName.toLowerCase();
-    if (tagName === 'input') {
-        const inputType = (activeElement.type || 'text').toLowerCase();
-        return ['text', 'number', 'email', 'password', 'search', 'tel', 'url'].includes(inputType);
-    }
-    return tagName === 'textarea';
+    return isTextEntry(document.activeElement);
 }
 
 export function initKeyboard() {
@@ -437,6 +430,7 @@ export function initKeyboard() {
 
         if (keyCode === 'KeyI' || keyCode === 'KeyO') {
             const frame = Math.max(0, Math.min(Sit.frames - 1, Math.round(par.frame)));
+            const before = [Sit.aFrame, Sit.bFrame];
             if (keyCode === 'KeyI') {
                 Sit.aFrame = frame;
                 if (Sit.aFrame > Sit.bFrame) Sit.bFrame = Sit.aFrame;
@@ -444,9 +438,16 @@ export function initKeyboard() {
                 Sit.bFrame = frame;
                 if (Sit.bFrame < Sit.aFrame) Sit.aFrame = Sit.bFrame;
             }
-            updateFrameSlider();
-            NodeMan.recalculateAllRootFirst();
-            EventManager.dispatchEvent("abFrameChanged");
+            const restore = ([a, b]) => {
+                Sit.aFrame = a;
+                Sit.bFrame = b;
+                updateFrameSlider();
+                NodeMan.recalculateAllRootFirst();
+                EventManager.dispatchEvent("abFrameChanged");
+            };
+            const after = [Sit.aFrame, Sit.bFrame];
+            restore(after);
+            UndoManager?.recordState("Set playback limit", before, after, restore);
             e.preventDefault();
             return;
         }

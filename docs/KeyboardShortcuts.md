@@ -193,6 +193,10 @@ camera has its own `W` `A` `S` `D` movement, not the walk described above.
 | `Cmd`/`Ctrl` + `Z` | Undo |
 | `Cmd`/`Ctrl` + `Y` or `Shift`+`Cmd`/`Ctrl`+`Z` | Redo |
 
+Release the pointer to finish a drag. Undo returns the object, slider, or view to where it
+started. A point-tracking run also takes one step, even when you stop it early. In a text
+field, the shortcut edits the text. Leave the field to use scene history.
+
 ## Panels and overlays
 
 | Key | Action |

@@ -1,3 +1,5 @@
+import {bindControllerUndo} from "../ControllerUndo";
+import {undoManager} from "../UndoManager";
 import {CNode, CNodeConstant} from "./CNode";
 import {guiMenus, NodeMan, registerFrameBlocker, setRenderOne, Sit, unregisterFrameBlocker} from "../Globals";
 import {par} from "../par";
@@ -122,7 +124,22 @@ class COSDDataSeries {
     }
 
     setValue(frame, value) {
-        this.frameData[frame] = value;
+        const before = this.frameData[frame];
+        if (before === value) return;
+        this.applyValue(frame, value);
+        undoManager.recordState("Edit OSD value", before, value, saved => this.applyValue(frame, saved));
+    }
+
+    applyValue(frame, value) {
+        if (value === undefined) delete this.frameData[frame];
+        else this.frameData[frame] = value;
+        if ((undoManager.isUndoing || undoManager.isRedoing) &&
+            this.controller.activeTrack === this && frame === Math.floor(par.frame)) {
+            const displayed = this.getValue(frame);
+            this.controller.editingText = displayed === PLACEHOLDER_TEXT ? "" : displayed;
+            this.controller.editingModified = false;
+            this.controller.cursorPos = this.controller.editingText.length;
+        }
         this.controller.updateSliderStatus();
         this.controller.updateGraph();
         this.controller.updateDataTrack();
@@ -194,6 +211,12 @@ class COSDDataSeries {
             })
             .tooltip(t("osdController.seriesLock.tooltip"));
 
+        for (const control of this.guiFolder.controllers) {
+            const key = control.property;
+            bindControllerUndo(control, () => this[key], value => {
+                this.guiFolder.controllers.find(c => c.property === key).load(value);
+            });
+        }
         this.guiFolder.add(this, "remove").name(t("osdController.removeTrack.label"))
             .tooltip(t("osdController.removeTrack.tooltip"));
     }
@@ -617,30 +640,43 @@ export class CNodeOSDDataSeriesController extends CNode {
 
     addNewTrack() {
         const track = new COSDDataSeries(this, this.tracks.length);
-        this.tracks.push(track);
-        track.setupGUI(this.guiFolder);
-        this.updateSliderStatus();
-        this.rebuildGraphDropdowns();
-        this.updateVideoInfoVisibility();
-        setRenderOne();
+        const index = this.tracks.length;
+        this.insertSeries(track, index);
+        undoManager.add({description: "Add OSD series",
+            undo: () => this.detachSeries(track), redo: () => this.insertSeries(track, index)});
         return track;
     }
 
     removeTrack(track) {
         const index = this.tracks.indexOf(track);
-        if (index !== -1) {
-            if (this.activeTrack === track) {
-                this.stopEditing();
-            }
-            track.disposeGUI();
-            this.tracks.splice(index, 1);
-            this.updateSliderStatus();
-            this.rebuildGraphDropdowns();
-            this.updateGraph();
-            this.updateDataTrack();
-            this.updateVideoInfoVisibility();
-            setRenderOne();
-        }
+        if (index < 0) return;
+        this.detachSeries(track);
+        undoManager.add({description: "Remove OSD series",
+            undo: () => this.insertSeries(track, index), redo: () => this.detachSeries(track)});
+    }
+
+    insertSeries(track, index) {
+        this.tracks.splice(index, 0, track);
+        track.setupGUI(this.guiFolder);
+        const next = this.tracks[index + 1]?.guiFolder;
+        if (next) next.domElement.before(track.guiFolder.domElement);
+        this.refreshSeries();
+    }
+
+    detachSeries(track) {
+        if (this.activeTrack === track) this.stopEditing();
+        track.disposeGUI();
+        this.tracks.splice(this.tracks.indexOf(track), 1);
+        this.refreshSeries();
+    }
+
+    refreshSeries() {
+        this.updateSliderStatus();
+        this.rebuildGraphDropdowns();
+        this.updateGraph();
+        this.updateDataTrack();
+        this.updateVideoInfoVisibility();
+        setRenderOne();
     }
 
     getVisibleTracks() {
@@ -729,6 +765,14 @@ export class CNodeOSDDataSeriesController extends CNode {
         
         const frame = Math.floor(par.frame);
         
+        if ((e.ctrlKey || e.metaKey) && ["z", "y"].includes(e.key.toLowerCase())) {
+            if (this.editingModified) this.activeTrack.setValue(frame, this.editingText);
+            if (e.shiftKey || e.key.toLowerCase() === "y") undoManager.redo();
+            else undoManager.undo();
+            setRenderOne();
+            return;
+        }
+
         if (e.key === '[') {
             if (this.editingModified) {
                 this.activeTrack.setValue(frame, this.editingText);

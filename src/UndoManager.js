@@ -2,7 +2,7 @@
 // Provides a generic undo/redo system that can be used across the application
 // Actions are stored as { undo: function, redo: function, description: string }
 
-import {setRenderOne} from "./Globals";
+import {Globals, markSitchDirty, setRenderOne} from "./Globals";
 
 class UndoManager {
     constructor() {
@@ -19,17 +19,22 @@ class UndoManager {
      */
     add(action) {
         // Don't add actions while we're undoing/redoing
-        if (this.isUndoing || this.isRedoing) {
+        if (this.isUndoing || this.isRedoing || Globals?.disposing || Globals?.deserializing) {
             return;
         }
         
-        if (!action.undo || !action.redo) {
+        if (typeof action.undo !== "function" || typeof action.redo !== "function") {
             console.error("UndoManager: Action must have undo and redo functions", action);
             return;
         }
         
+        if (this.groupActions) {
+            this.groupActions.push(action);
+            return;
+        }
         // Add to undo stack
         this.undoStack.push(action);
+        markSitchDirty?.();
         
         // Limit stack size
         if (this.undoStack.length > this.maxStackSize) {
@@ -42,66 +47,77 @@ class UndoManager {
 //        console.log(`UndoManager: Added action "${action.description || 'unnamed'}". Undo stack: ${this.undoStack.length}`);
     }
     
-    /**
-     * Undo the last action
-     */
+    // A synchronous bulk command can reuse the individual commands, including
+    // ones that skip invalid items. Only its completed edits enter history.
+    group(description, edit) {
+        if (this.groupActions) return edit();
+        const actions = this.groupActions = [];
+        try {
+            return edit();
+        } finally {
+            this.groupActions = null;
+            let applied = actions.length;
+            if (applied) this.add({
+                description,
+                undo: () => {
+                    while (applied > 0) {
+                        actions[applied - 1].undo();
+                        applied--;
+                    }
+                },
+                redo: () => {
+                    while (applied < actions.length) {
+                        actions[applied].redo();
+                        applied++;
+                    }
+                },
+            });
+        }
+    }
+
+    // Both snapshots must be detached, JSON-compatible edit state.
+    recordState(description, before, after, restore) {
+        if (JSON.stringify(before) === JSON.stringify(after)) return;
+        this.add({description, undo: () => restore(before), redo: () => restore(after)});
+    }
+
     undo() {
-        if (this.undoStack.length === 0) {
-            console.log("UndoManager: Nothing to undo");
-            return false;
-        }
-        
-        const action = this.undoStack.pop();
-        this.isUndoing = true;
-        
-        try {
-            console.log(`UndoManager: Undoing "${action.description || 'unnamed'}"`);
-            action.undo();
-            this.redoStack.push(action);
-            setRenderOne(true);
-            return true;
-        } catch (e) {
-            console.error("UndoManager: Error during undo", e);
-            // Put it back on the stack if undo failed
-            this.undoStack.push(action);
-            return false;
-        } finally {
-            this.isUndoing = false;
-        }
+        return this.replay("undo", this.undoStack, this.redoStack);
     }
-    
-    /**
-     * Redo the last undone action
-     */
+
     redo() {
-        if (this.redoStack.length === 0) {
-            console.log("UndoManager: Nothing to redo");
-            return false;
-        }
-        
-        const action = this.redoStack.pop();
-        this.isRedoing = true;
-        
+        return this.replay("redo", this.redoStack, this.undoStack);
+    }
+
+    replay(direction, source, destination) {
+        if (this.isUndoing || this.isRedoing || this.groupActions || !source.length) return false;
+        const action = source[source.length - 1];
+        this.isUndoing = direction === "undo";
+        this.isRedoing = direction === "redo";
         try {
-            console.log(`UndoManager: Redoing "${action.description || 'unnamed'}"`);
-            action.redo();
-            this.undoStack.push(action);
-            setRenderOne(true);
-            return true;
-        } catch (e) {
-            console.error("UndoManager: Error during redo", e);
-            // Put it back on the stack if redo failed
-            this.redoStack.push(action);
+            action[direction]();
+        } catch (error) {
+            console.error(`UndoManager: Could not ${direction} "${action.description ?? "unnamed"}"`, error);
             return false;
         } finally {
-            this.isRedoing = false;
+            this.isUndoing = this.isRedoing = false;
         }
+
+        // A load during replay replaced both stacks. Nothing from the old
+        // sitch should be reachable from the new one.
+        if (source !== (direction === "undo" ? this.undoStack : this.redoStack)) return false;
+        source.pop();
+        destination.push(action);
+        markSitchDirty?.();
+        setRenderOne(true);
+        return true;
     }
-    
+
     /**
      * Clear both stacks
      */
     clear() {
+        if (this.groupActions) this.groupActions.length = 0;
         this.undoStack = [];
         this.redoStack = [];
         console.log("UndoManager: Stacks cleared");

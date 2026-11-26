@@ -31,6 +31,8 @@ import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture, getPointTrac
     showPointTrackFrequencyGraph, removePointTrackFrequencyGraph, clampFrequencyRadiusOverride,
     setPointTrackFrequencyRadius, showNewPointTrackFrequencyGraph} from './PointTrackFrequencyGraph';
 import {maxOf, minOf} from "./SafeArrays";
+import {undoManager} from "./UndoManager";
+import {PointTrackEdit} from "./PointTrackEdit";
 import {pointTracks} from './PointTrackRegistry';
 
 let cv = null;
@@ -344,6 +346,13 @@ export class ObjectTracker {
         }
     }
     
+    finishPointEdit(edit, description) {
+        if (!edit || (this.trackId && !pointTracks.includes(this))) return;
+        const id = this.trackId;
+        const action = edit.action(this, description, () => id ? pointTracks.find(track => track.trackId === id) : this);
+        if (action) undoManager.add(action);
+    }
+
     hookMouseHandler() {
         const view = this.videoView;
         const mouse = view.mouse;
@@ -366,6 +375,7 @@ export class ObjectTracker {
                 mouse.newPosition(e, true);
                 this.isDragging = true;
                 this.draggingKeyframe = grab.keyframe;
+                this.dragEdit = new PointTrackEdit(this);
                 this.lastMouseX = grab.vX;
                 this.lastMouseY = grab.vY;
             },
@@ -378,6 +388,7 @@ export class ObjectTracker {
                 this.lastMouseX = vX;
                 this.lastMouseY = vY;
 
+                this.dragEdit?.touch(this, this.draggingKeyframe ?? Math.floor(par.frame));
                 if (this.draggingKeyframe !== null) {
                     const pos = this.trackedPositions.get(this.draggingKeyframe);
                     if (pos) {
@@ -394,8 +405,17 @@ export class ObjectTracker {
                 }
                 this.updateSliderStatus();
             },
+            rollback: () => {
+                const action = this.dragEdit?.action(this, "", () => this);
+                action?.undo();
+                this.dragEdit = null;
+                this.isDragging = false;
+                this.draggingKeyframe = null;
+            },
             end: () => {
                 if (!this.isDragging) return;
+                if (!this.runEdit && !this.holdLoopActive) this.finishPointEdit(this.dragEdit, "Move tracked point");
+                this.dragEdit = null;
                 this.isDragging = false;
                 this.draggingKeyframe = null;
                 if (this.tracking) {
@@ -424,8 +444,11 @@ export class ObjectTracker {
                 const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
                 const clickedKeyframe = this.findClickedKeyframe(vX, vY);
                 if (clickedKeyframe !== null) {
+                    const edit = new PointTrackEdit(this);
+                    edit.touch(this, clickedKeyframe);
                     this.trackedPositions.delete(clickedKeyframe);
                     this.manualKeyframes.delete(clickedKeyframe);
+                    if (!this.runEdit && !this.holdLoopActive) this.finishPointEdit(edit, "Delete tracked point");
                     this.updateSliderStatus();
                     setRenderOne(true);
                 }
@@ -461,6 +484,7 @@ export class ObjectTracker {
         const firstFrame = Sit.aFrame ?? 0;
         const heldKey = direction === 'forward' ? "'" : ";";
 
+        const edit = new PointTrackEdit(this, true);
         const savedPaused = par.paused;
         par.paused = true;
 
@@ -529,6 +553,7 @@ export class ObjectTracker {
             }
             par.paused = savedPaused;
             this.holdLoopActive = false;
+            this.finishPointEdit(edit, direction === "forward" ? "Track forward" : "Rewind tracked points");
             setRenderOne(true);
         }
     }
@@ -611,6 +636,7 @@ export class ObjectTracker {
         if (!this.enabled || !this.editable || this.tracking || this.holdLoopActive) return;
         this.playbackControl = acquirePlaybackControl(() => this.stopTracking());
         if (!this.playbackControl) return;
+        this.runEdit = new PointTrackEdit(this, true);
         this.trackingRunId = (this.trackingRunId || 0) + 1;
         this.tracking = true;
         this.lastTrackedFrame = Math.floor(par.frame);
@@ -754,6 +780,8 @@ export class ObjectTracker {
             par.frame = this.lastTrackedFrame;
         }
         Globals.justVideoAnalysis = false;
+        this.finishPointEdit(this.runEdit, "Track object");
+        this.runEdit = null;
         this.refreshSmoothedOutput();
         this.updateSliderStatus();
         NodeMan.get('FrameSlider', false)?.updatePlaybackControls();
@@ -2912,6 +2940,7 @@ export class ObjectTracker {
     }
     
     clearTrack() {
+        const edit = new PointTrackEdit(this, true);
         this.trackedPositions.clear();
         this.manualKeyframes.clear();
         this.resetMotionHistory();
@@ -2926,18 +2955,33 @@ export class ObjectTracker {
         this.updateSliderStatus();
         
         const videoData = this.videoView?.videoData;
-        if (videoData && !videoData.stabilizationAffine) {
-            videoData.setStabilizationEnabled(false);
-            videoData.stabilizationData = null;
-            videoData.stabilizationReferencePoint = null;
-        }
-
+        undoManager.group("Clear point track", () => {
+            this.finishPointEdit(edit, "Clear tracked points");
+            if (videoData && !videoData.stabilizationAffine) {
+                const points = videoData.stabilizationData;
+                const reference = videoData.stabilizationReferencePoint;
+                const direct = videoData.stabilizationDirectOffset;
+                const enabled = videoData.stabilizationEnabled;
+                const clear = () => {
+                    videoData.setStabilizationEnabled(false);
+                    videoData.stabilizationData = null;
+                    videoData.stabilizationReferencePoint = null;
+                    stabilizeToggleMenuItem?.name(t("tracking.stabilizeToggle.enableLabel"));
+                };
+                clear();
+                if (points) undoManager.add({description: "Clear track stabilization",
+                    undo: () => {
+                        videoData.setStabilizationData(points, reference, direct);
+                        videoData.setStabilizationEnabled(enabled);
+                        stabilizeToggleMenuItem?.name(t(enabled ? "tracking.stabilizeToggle.disableLabel" : "tracking.stabilizeToggle.enableLabel"));
+                    }, redo: clear});
+            }
+        });
         setRenderOne(true);
     }
 
-    clearFromHere() {
-        const currentFrame = Math.floor(par.frame);
-        const bFrame = Sit.bFrame ?? (Sit.frames - 1);
+    clearFromHere(currentFrame = Math.floor(par.frame), bFrame = Sit.bFrame ?? (Sit.frames - 1)) {
+        const edit = new PointTrackEdit(this, true);
         for (const f of this.trackedPositions.keys()) {
             if (f >= currentFrame && f <= bFrame) {
                 this.trackedPositions.delete(f);
@@ -2949,6 +2993,7 @@ export class ObjectTracker {
         }
         this.updateSliderStatus();
         setRenderOne(true);
+        if (!this.runEdit && !this.holdLoopActive) this.finishPointEdit(edit, "Clear tracked range");
     }
 
     get trackedPositions() { return this._trackedPositions; }
@@ -3044,13 +3089,16 @@ export class ObjectTracker {
     }
 
     clearUserPoints() {
+        const edit = new PointTrackEdit(this, true);
         for (const f of Array.from(this.manualKeyframes)) this.trackedPositions.delete(f);
         this.manualKeyframes.clear();
         this.updateSliderStatus();
         setRenderOne(true);
+        if (!this.runEdit && !this.holdLoopActive) this.finishPointEdit(edit, "Clear manual track points");
     }
 
     clearAutoPoints() {
+        const edit = new PointTrackEdit(this, true);
         for (const f of Array.from(this.trackedPositions.keys())) {
             if (!this.manualKeyframes.has(f)) this.trackedPositions.delete(f);
         }
@@ -3065,6 +3113,7 @@ export class ObjectTracker {
         this.motionLastFrame = null;
         this.updateSliderStatus();
         setRenderOne(true);
+        if (!this.runEdit && !this.holdLoopActive) this.finishPointEdit(edit, "Clear automatic track points");
     }
     
     updateSliderStatus() {
@@ -3182,6 +3231,7 @@ export function addPointTrack() {
     if (par.playbackLocked || objectTracker?.holdLoopActive || objectTracker?.analysingObject || objectTracker?.analysisResolutionSession) return null;
     const videoView = NodeMan.get('video', false);
     if (!videoView) return null;
+    const previousId = objectTracker?.trackId;
     // Start the new cursor in the middle of the image; no measurements are copied.
     const tracker = createPointTracker(videoView);
     selectPointTrack(tracker.trackId);
@@ -3189,6 +3239,7 @@ export function addPointTrack() {
     showNewPointTrackFrequencyGraph(tracker.trackId);
     refreshPointTrackList();
     syncTrackControls();
+    recordPointTrackPresence(tracker, true, previousId);
     return tracker;
 }
 
@@ -3203,12 +3254,42 @@ function disposePointTracker(tracker) {
     tracker.resetTemplates();
 }
 
-export function removePointTrack(id) {
+function recordPointTrackPresence(tracker, created, previousId) {
+    const saved = structuredClone(serializePointTracker(tracker));
+    const index = pointTracks.indexOf(tracker);
+    const activeId = objectTracker?.trackId;
+    const graph = getPointTrackFrequencyView(tracker.trackId);
+    const showGraph = graph?.visible;
+    const view = tracker.videoView;
+    const insert = () => {
+        const restored = createPointTracker(view, saved);
+        pointTracks.pop();
+        pointTracks.splice(index, 0, restored);
+        restorePointTracker(restored, saved, view.videoData ?? {});
+        if (activeId === saved.trackId) selectPointTrack(saved.trackId);
+        if (saved.enabled) restored.enable();
+        if (activeId === saved.trackId && saved.stabilizationEnabled && !view.videoData?.stabilizationAffine) {
+            applyTrackStabilization(view.videoData, saved.stabilizeCenters, saved.stabilizationDirectOffset);
+        }
+        if (showGraph) showPointTrackFrequencyGraph(true, null, saved.trackId);
+        refreshPointTrackList();
+        syncTrackControls();
+    };
+    const remove = () => {
+        if (!removePointTrack(saved.trackId, false)) throw new Error("Point track is busy");
+        if (created && previousId) selectPointTrack(previousId);
+    };
+    undoManager.add({description: created ? "Add point track" : "Delete point track",
+        undo: created ? remove : insert, redo: created ? insert : remove});
+}
+
+export function removePointTrack(id, record = true) {
     if (par.playbackLocked || objectTracker?.holdLoopActive || objectTracker?.analysingObject || objectTracker?.analysisResolutionSession) return false;
     const index = pointTracks.findIndex(track => track.trackId === id);
     if (index < 0) return false;
     const tracker = pointTracks[index];
     const wasActive = tracker === objectTracker;
+    if (record) recordPointTrackPresence(tracker, false);
     disposePointTracker(tracker);
     removePointTrackFrequencyGraph(id);
     pointTracks.splice(index, 1);
@@ -3267,7 +3348,7 @@ function addPointTrackListMenu(folder) {
             if (!tracker) return;
             if (!await showConfirm(`Delete "${tracker.trackName}" and all its points?`,
                 {title: 'Delete Point Track', yesLabel: 'Delete', noLabel: 'Keep'})) return;
-            removePointTrack(tracker.trackId);
+            if (pointTracks.includes(tracker)) removePointTrack(tracker.trackId);
         },
     };
     editTrackMenuItem = folder.add(proxy, 'editTrack', {'No tracks': ''}).name('Edit Track').listen().perm()
@@ -3485,11 +3566,11 @@ async function clearFromHere() {
     if (placed > 0) {
         const ok = await showConfirm(
             `Delete the tracked points from frame ${from} to ${to}, including the ${placed} `
-            + `point${placed === 1 ? "" : "s"} you placed by hand? You cannot undo it.`,
+            + `point${placed === 1 ? "" : "s"} you placed by hand?`,
             {title: "Clear from Here", yesLabel: "Delete", noLabel: "Keep"});
         if (!ok || objectTracker !== tracker) return;
     }
-    tracker.clearFromHere();
+    tracker.clearFromHere(from, to);
 }
 
 // Go to Next Untracked. The video says which frames the playhead is now at, or
@@ -3844,14 +3925,15 @@ export function addObjectTrackingMenu() {
     const clearActions = {
         async clearUserPoints() {
             if (!objectTracker) return;
-            const count = objectTracker.manualKeyframes.size;
+            const tracker = objectTracker;
+            const count = tracker.manualKeyframes.size;
             if (count === 0) return;
             const ok = await showConfirm(
                 `Delete the ${count} point${count === 1 ? "" : "s"} you placed by hand? `
                 + "The automatically tracked points are not affected, and cannot replace "
                 + "these — they are what the tracker uses to correct itself.",
                 {title: "Clear User Points", yesLabel: "Delete", noLabel: "Keep"});
-            if (ok) objectTracker.clearUserPoints();
+            if (ok && objectTracker === tracker) tracker.clearUserPoints();
         },
         clearAutoPoints() {
             if (objectTracker) objectTracker.clearAutoPoints();

@@ -52,8 +52,10 @@ beforeEach(() => {
     menuData = undefined;
     menu = makeMenu();
     Globals.menuBar = {createStandaloneMenu: jest.fn(() => menu)};
-    camera = {id: "fixedCameraPosition", agl: false, setLLA: jest.fn()};
-    target = {id: "fixedTargetPositionWind", agl: false, setLLA: jest.fn()};
+    const position = id => ({id, agl: false, _LLA: [0, 0, 0],
+        setLLA: jest.fn(function (...lla) { this._LLA = lla; })});
+    camera = position("fixedCameraPosition");
+    target = position("fixedTargetPositionWind");
     nodeMan.add("fixedCameraPosition", camera);
     nodeMan.add("fixedTargetPositionWind", target);
 });

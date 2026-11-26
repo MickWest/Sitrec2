@@ -1115,6 +1115,7 @@ class CDragDropHandler {
         });
 
         if (overlay) {
+            Synth3DManager.recordPresence(overlay, true);
             // Enter edit mode so user can adjust position/size
             overlay.setEditMode(true);
             console.log(`Created ground overlay "${overlay.name}" from image at screen center`);
@@ -1391,7 +1392,7 @@ class CDragDropHandler {
             // exception out of animate() skips its re-arm, so the render loop
             // stopped until the next interaction woke it. Catch, log, report.
             try {
-                FileManager.parseResult(drop.filename, drop.result, drop.newStaticURL, {returnMeta: true})
+                FileManager.parseResult(drop.filename, drop.result, drop.newStaticURL, {returnMeta: true, trackOptions: {recordUndo: true}})
                     .then(({changesSerializedState}) => {
                         if (changesSerializedState) {
                             markSitchDirty();

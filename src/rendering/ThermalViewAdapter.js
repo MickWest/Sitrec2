@@ -1,4 +1,5 @@
 import {Vector3} from "three";
+import {bindControllerUndo} from "../ControllerUndo";
 import {ThermalPipeline} from "../../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings, settingsForPreset, THERMAL_PARAMETERS} from "../../tools/thermal/thermalSchema.js";
 import {SENSOR_PRESETS} from "../../tools/thermal/sensorPresets.js";
@@ -304,6 +305,19 @@ export function createThermalViewAdapter(view, {reuseBudgetMs = 10} = {}) {
         const policy = {get lensSource() {return lensSource();}, set lensSource(value) {set("lensSource", value);}};
         optics.add(policy, "lensSource", {[t("thermal.viewLens.view")]: "view", [t("thermal.viewLens.sensor")]: "sensor"})
             .name(t("thermal.viewLens.title")).listen().tooltip(t("thermal.viewLens.tooltip"));
+        // A preset and an optics edit can change several saved fields together.
+        // Read the authored settings; the per-frame resolved lens is transient.
+        const capture = () => JSON.parse(JSON.stringify({sensor: view.cameraNode.thermalSensor, environment: Sit.thermalEnvironment}));
+        const restore = saved => {
+            const {sensor, environment} = JSON.parse(JSON.stringify(saved));
+            view.cameraNode.thermalSensor = sensor;
+            Sit.thermalEnvironment = environment;
+            view._thermalAdapter?.refreshSettings();
+        };
+        const keys = new Set(["lensSource", ...THERMAL_PARAMETERS.map(p => p.key)]);
+        for (const control of view._thermalFolder.controllersRecursive()) {
+            if (keys.has(control.property)) bindControllerUndo(control, capture, restore);
+        }
         controls.refresh();
     }
     const debug = {pipeline, get settings() {return settings();}, get mapping() {return mapping;},
@@ -317,7 +331,8 @@ export function createThermalViewAdapter(view, {reuseBudgetMs = 10} = {}) {
         // Why the last paused frame could not be reused (null when a key was built).
         get reuseKeyNullReason() {return reuseKey.lastNullReason;}};
     const detachDebug = typeof window === "undefined" ? () => {} : attachThermalDebug(window, debug, "lookThermal");
-    return {pipeline, set, render(scene, frame, baseVerticalFovDeg = view.camera.fov) {
+    return {pipeline, set, refreshSettings() { lastSettings = null; controls?.refresh(); },
+        render(scene, frame, baseVerticalFovDeg = view.camera.fov) {
         // Per-frame camera data sets this frame's lens step and polarity; the saved settings stay unchanged.
         const cameraState = NodeMan.get("cameraState", false);
         cameraData = thermalSettingsForCameraState(thermalSettings(view.cameraNode, Sit),

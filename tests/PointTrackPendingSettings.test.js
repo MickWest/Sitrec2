@@ -26,6 +26,7 @@ jest.mock('../src/PointTrackFrequencyGraph', () => ({
     addPointTrackFrequencyMenu: jest.fn(),
     clampFrequencyRadiusOverride: value => Number(value) > 0 ? Math.max(2, Number(value)) : 0,
     showNewPointTrackFrequencyGraph: jest.fn(),
+    getPointTrackFrequencyView: jest.fn(() => null),
     getPointTrackFrequencyAperture: jest.fn(() => null),
     removePointTrackFrequencyGraph: jest.fn(),
 }));
@@ -277,4 +278,26 @@ test('restoring tracks preserves another analysis render hook without drawing tr
     videoView.renderCanvas(0);
     expect(otherOverlay).toHaveBeenCalledTimes(1);
     expect(draw).toHaveBeenCalledTimes(1);
+});
+
+test('undoing deletion restores a live point track for earlier edits', () => {
+    const {tracking, enable} = load();
+    const {undoManager} = require('../src/UndoManager');
+    enable();
+    const track = tracking.addPointTrack();
+    const id = track.trackId;
+    track.trackedPositions.set(3, {x: 19, y: 21});
+    track.clearAutoPoints();
+    expect(track.trackedPositions.has(3)).toBe(false);
+    tracking.removePointTrack(id);
+    expect(undoManager.undo()).toBe(true);
+    const restored = tracking.getObjectTracker(id);
+    expect(restored).toBeTruthy();
+    expect(restored).not.toBe(track);
+    expect(undoManager.undo()).toBe(true);
+    expect(restored.trackedPositions.get(3)).toEqual({x: 19, y: 21});
+    expect(undoManager.redo()).toBe(true);
+    expect(restored.trackedPositions.has(3)).toBe(false);
+    expect(undoManager.redo()).toBe(true);
+    expect(tracking.getObjectTracker(id)).toBeNull();
 });

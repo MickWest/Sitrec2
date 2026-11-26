@@ -1677,20 +1677,8 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const kind = this.kindName;
         const kindTitle = kind.charAt(0).toUpperCase() + kind.slice(1);
         if (await showConfirm(`Delete ${kind} "${this.name}"?`, {title: `Delete ${kindTitle}`})) {
-            if (UndoManager) {
-                const overlayState = this.serialize();
-                const overlayID = this.overlayID;
-
-                UndoManager.add({
-                    undo: () => {
-                        Synth3DManager.addOverlay(overlayState);
-                    },
-                    redo: () => {
-                        Synth3DManager.removeOverlay(overlayID);
-                    },
-                    description: `Delete ${kind} "${this.name}"`
-                });
-            }
+            if (NodeMan.get(this.id, false) !== this) return;
+            Synth3DManager.recordPresence(this, false);
 
             Synth3DManager.removeOverlay(this.overlayID);
         }

@@ -1,3 +1,4 @@
+import {bindControllerUndo} from "../ControllerUndo";
 import {CNode} from "./CNode";
 import {addOptionToGUIMenu, relabelOptionInGUIMenu, removeOptionFromGUIMenu} from "../lil-gui-extras";
 import {isConsole, isLocal} from "../configUtils";
@@ -103,6 +104,8 @@ class CNodeSwitch extends CNode {
 
                 })
 
+            const id = this.id;
+            bindControllerUndo(this.controller, () => this.choice, value => NodeMan.get(id).selectOption(value));
             if (v.tooltip) {
                 this.controller.tooltip(v.tooltip);
             }

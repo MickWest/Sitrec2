@@ -42,7 +42,7 @@ test("a file read that finishes after the paused loop sleeps is parsed without i
     expect(FileManager.parseResult).not.toHaveBeenCalled();
     jest.runOnlyPendingTimers();
     await Promise.resolve();
-    expect(FileManager.parseResult).toHaveBeenCalledWith("track.csv", bytes, null, {returnMeta: true});
+    expect(FileManager.parseResult).toHaveBeenCalledWith("track.csv", bytes, null, {returnMeta: true, trackOptions: {recordUndo: true}});
     expect(DragDropHandler.dropQueue).toEqual([]);
     expect(sleeps()).toBe(true);
 });

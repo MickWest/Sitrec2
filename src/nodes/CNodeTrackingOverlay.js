@@ -377,7 +377,11 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
         this.manualTrackingFolder.add(this, "showTracking").name(t("trackingOverlay.showTracking.label")).listen()
             .tooltip(t("trackingOverlay.showTracking.tooltip"))
 
-        this.manualTrackingFolder.add(this, "resetDraggable").name(t("trackingOverlay.reset.label"))
+        this.manualTrackingFolder.add({resetDraggable: () => {
+            const before = this.captureTrackingEdit();
+            this.resetDraggable();
+            undoManager.recordState("Clear manual tracking points", before, [], state => this.restoreTrackingEdit(state));
+        }}, "resetDraggable").name(t("trackingOverlay.reset.label"))
             .tooltip(t("trackingOverlay.reset.tooltip"))
 
 
@@ -905,6 +909,7 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             if (k.b) this.makeBPoint(point, k.b.x, k.b.y, k.b.edited);
             return point;
         });
+        this.syncBPoints();
         this.updateSizeSolution();
         this.recalculateCascade();
         setRenderOne(true);

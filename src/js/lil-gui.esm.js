@@ -15,6 +15,7 @@ import {setRenderOne} from "../Globals";
 import {showError} from "../showError";
 import {cleanFloat} from "../utils";
 import {panelKeepsKey} from "../NativeKeyRouting";
+import {beginControllerEdit, finishControllerEdit} from "../ControllerUndo";
 import {notifyUIRecordingObserver} from "../UIRecordingHooks";
 
 /**
@@ -197,6 +198,7 @@ class Controller {
      */
     _callOnChange() {
 
+        if (this._pendingUndo) this._pendingUndo.changed = true;
         this.parent._callOnChange( this );
 
         if ( this._onChange !== undefined ) {
@@ -254,6 +256,7 @@ class Controller {
 
         }
 
+        if (this._pendingUndo) finishControllerEdit(this);
         this._changed = false;
 
     }
@@ -706,6 +709,7 @@ class ColorController extends Controller {
             this._setValueFromHexString( this.$input.value );
         } );
 
+        this.$input.addEventListener( 'change', () => this._callOnFinishChange() );
         this.$input.addEventListener( 'blur', () => {
             this._callOnFinishChange();
         } );
@@ -1200,6 +1204,7 @@ class NumberController extends Controller {
 
                     e.preventDefault();
                     this.$input.blur();
+                    beginControllerEdit(this);
                     testingForVerticalDrag = false;
                     this._setDraggingStyle( true, 'vertical' );
 

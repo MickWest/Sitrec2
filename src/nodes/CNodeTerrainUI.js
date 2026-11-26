@@ -1496,7 +1496,7 @@ export class CNodeTerrainUI extends CNode {
         // Root: reset everything (drop saved edits + restore original geometry).
         root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.clearAllEdits(); }}, "restore")
             .name("Restore Geometry")
-            .tooltip("Discard all saved brush strokes and restore all tiles to their original geometry. This cannot be undone.\nIf Flatten Trees is on, the automatic pass runs again.");
+            .tooltip("Discard all saved brush strokes and restore all tiles to their original geometry. Undo restores the strokes.\nIf Flatten Trees is on, the automatic pass runs again.");
 
         // Pass 2 — automatic tree-removal heuristics in a sub-menu at the BOTTOM,
         // with their own sub-sub-folders grouped by def.folder.
@@ -1566,7 +1566,7 @@ export class CNodeTerrainUI extends CNode {
 
         root.add({clear: () => painter.clearAllPaint()}, "clear")
             .name("Clear Paint")
-            .tooltip("Discard every stroke and restore all tiles to their original imagery. This cannot be undone.");
+            .tooltip("Discard every stroke and restore all tiles to their original imagery. Undo restores the strokes.");
     }
 
     buildGlintsGUI() {

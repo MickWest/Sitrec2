@@ -29,7 +29,6 @@ import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {exitTrackEditMode, trackAndObjectMenuActions} from "./TrackEditMode";
-import {makeCreateObjectUndoAction} from "./undoCreateObject";
 import {OBJECT_MANUAL_POSITION, syncManualObject} from "./TrackSelectors";
 import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 import {GlobalScene} from "./LocalFrame";
@@ -220,6 +219,8 @@ export const menuMethods = {
 
         // Create track and associate with object
         const trackOb = TrackManager.addSyntheticTrack({
+            recordUndo: true,
+            trackID,
             startPoint: ecefPosition,
             name: pairNames.trackName,
             objectID: objectID,
@@ -229,36 +230,7 @@ export const menuMethods = {
 
         console.log(`Created object "${name}" at ${lat}, ${lon}, ${finalAlt}m`);
 
-        // Make object creation undoable. Both entry points — the "Add Object" menu
-        // (index.js) and the addObjectAtLLA API (CSitrecAPI) — route through here, and
-        // previously neither pushed an undo action, so a created object could not be
-        // undone (unlike synth buildings/clouds/overlays, which already register undo in
-        // this file). Mirror that pattern: undo removes the object with deleteObject (the
-        // one function that removes an object and every node it made) and then the
-        // synthetic track; redo re-creates via this same method. We hold the live ids in
-        // closure vars because redo gets fresh ids — the nested add() below is a no-op
-        // while UndoManager.isRedoing, so it does not stack a duplicate action.
-        if (UndoManager && trackOb) {
-            UndoManager.add(makeCreateObjectUndoAction({
-                name,
-                objectID,
-                trackID: trackOb.trackID ?? trackID,
-                trackManager: TrackManager,
-                deleteObject: (id) => this.deleteObject(NodeMan.get(id, false)),
-                // Redo re-creates via this same method (the nested UndoManager.add is a no-op
-                // while isRedoing, so it does not stack a duplicate action) and returns the
-                // fresh ids so a subsequent undo targets the recreated pair.
-                recreate: () => {
-                    const r = this.createObjectFromInput(name, lat, lon, finalAlt, true);
-                    return {
-                        objectID: r.objectID,
-                        trackID: r.trackOb?.trackID ?? r.trackID,
-                    };
-                },
-            }));
-        }
-
-        return { objectNode, trackOb, objectID, trackID, name };
+        return { objectNode, trackOb, objectID, trackID: trackOb?.trackID, name };
     },
 
     /**
@@ -551,6 +523,12 @@ export const menuMethods = {
             return objectID;
         };
 
+        const movePosition = (node, altitude) => {
+            const id = node.id;
+            const before = node._LLA.slice();
+            node.setLLA(lat, lon, altitude);
+            UndoManager?.recordState("Move " + id, before, node._LLA.slice(), lla => NodeMan.get(id).setLLA(...lla));
+        };
         // Create an object to hold the menu actions
         const menuData = {
             setCameraAbove: () => {
@@ -558,7 +536,7 @@ export const menuMethods = {
                     const camera = NodeMan.get("fixedCameraPosition");
                     // Maintain current altitude, only update lat/lon
                     const currentAlt = camera.getAltitude();
-                    camera.setLLA(lat, lon, currentAlt);
+                    movePosition(camera, currentAlt);
                     console.log(`Camera set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
                 closeMenu();
@@ -570,7 +548,7 @@ export const menuMethods = {
                     // mode the altitude is already measured from the ground, so adding the
                     // ground's MSL height would count it twice.
                     const alt = camera.agl ? 2 : altMSL + 2;
-                    camera.setLLA(lat, lon, alt);
+                    movePosition(camera, alt);
                     console.log(`Camera set to ground: ${lat}, ${lon}, ${alt}m ${camera.agl ? "AGL" : "MSL"}`);
                 }
                 closeMenu();
@@ -580,7 +558,7 @@ export const menuMethods = {
                     const target = NodeMan.get("fixedTargetPositionWind");
                     // Maintain current altitude, only update lat/lon
                     const currentAlt = target.getAltitude();
-                    target.setLLA(lat, lon, currentAlt);
+                    movePosition(target, currentAlt);
                     console.log(`Target set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
                 closeMenu();
@@ -590,7 +568,7 @@ export const menuMethods = {
                     const target = NodeMan.get("fixedTargetPositionWind");
                     // Set target at ground level (0 above the ground in AGL mode)
                     const alt = target.agl ? 0 : altMSL;
-                    target.setLLA(lat, lon, alt);
+                    movePosition(target, alt);
                     console.log(`Target set to ground: ${lat}, ${lon}, ${alt}m ${target.agl ? "AGL" : "MSL"}`);
                 }
                 closeMenu();
@@ -598,9 +576,15 @@ export const menuMethods = {
             centerTerrain: () => {
                 if (NodeMan.exists("terrainUI")) {
                     const terrainUI = NodeMan.get("terrainUI");
+                    const before = [terrainUI.lat, terrainUI.lon];
                     terrainUI.lat = lat;
                     terrainUI.lon = lon;
                     terrainUI.flagForRecalculation();
+                    UndoManager?.recordState("Center terrain", before, [lat, lon], ([lat, lon]) => {
+                        const terrain = NodeMan.get("terrainUI");
+                        Object.assign(terrain, {lat, lon});
+                        terrain.flagForRecalculation();
+                    });
                     console.log(`Centered terrain at: ${lat}, ${lon}`);
                 }
                 closeMenu();
@@ -608,6 +592,7 @@ export const menuMethods = {
             createSyntheticTrack: () => {
                 // Create a track at the clicked point using TrackManager
                 TrackManager.addSyntheticTrack({
+                    recordUndo: true,
                     startPoint: groundPoint,
                     editMode: true,
                     startFrame: par.frame,
@@ -725,6 +710,7 @@ export const menuMethods = {
                 // Create track and associate with object using TrackManager
                 // Controllers (TrackPosition and ObjectTilt) are added automatically by addSyntheticTrack
                 const trackOb = TrackManager.addSyntheticTrack({
+                    recordUndo: true,
                     startPoint: groundPoint,
                     name: trackName,
                     objectID: objectID,
@@ -761,6 +747,7 @@ export const menuMethods = {
                 const outPoint = groundPoint.clone().addScaledVector(right, view.pixelsToMeters(groundPoint, 200));
 
                 TrackManager.addSyntheticTrack({
+                    recordUndo: true,
                     initialPoints: [
                         [frame0, groundPoint.x, groundPoint.y, groundPoint.z],
                         [frame1, outPoint.x, outPoint.y, outPoint.z],
@@ -801,22 +788,7 @@ export const menuMethods = {
                 const building = Synth3DManager.createBuildingAtPoint(groundPoint);
 
                 // Add undo action for building creation
-                if (building && UndoManager) {
-                    const buildingID = building.buildingID;
-                    const buildingState = building.serialize();
-
-                    UndoManager.add({
-                        undo: () => {
-                            // Delete the created building
-                            Synth3DManager.removeBuilding(buildingID);
-                        },
-                        redo: () => {
-                            // Recreate the building
-                            Synth3DManager.addBuilding(buildingState);
-                        },
-                        description: `Create building "${building.name}"`
-                    });
-                }
+                if (building) Synth3DManager.recordPresence(building, true);
 
                 if (building) {
                     building.setEditMode(true);
@@ -828,20 +800,7 @@ export const menuMethods = {
 
                 const clouds = Synth3DManager.createCloudsAtPoint(groundPoint);
 
-                if (clouds && UndoManager) {
-                    const cloudsID = clouds.cloudsID;
-                    const cloudsState = clouds.serialize();
-
-                    UndoManager.add({
-                        undo: () => {
-                            Synth3DManager.removeClouds(cloudsID);
-                        },
-                        redo: () => {
-                            Synth3DManager.addClouds(cloudsState);
-                        },
-                        description: `Create cloud layer "${clouds.name}"`
-                    });
-                }
+                if (clouds) Synth3DManager.recordPresence(clouds, true);
 
                 if (clouds) {
                     clouds.setEditMode(true);
@@ -853,20 +812,7 @@ export const menuMethods = {
 
                 const overlay = Synth3DManager.createOverlayAtPoint(groundPoint);
 
-                if (overlay && UndoManager) {
-                    const overlayID = overlay.overlayID;
-                    const overlayState = overlay.serialize();
-
-                    UndoManager.add({
-                        undo: () => {
-                            Synth3DManager.removeOverlay(overlayID);
-                        },
-                        redo: () => {
-                            Synth3DManager.addOverlay(overlayState);
-                        },
-                        description: `Create ground overlay "${overlay.name}"`
-                    });
-                }
+                if (overlay) Synth3DManager.recordPresence(overlay, true);
 
                 if (overlay) {
                     overlay.setEditMode(true);
@@ -878,20 +824,7 @@ export const menuMethods = {
 
                 const grid = Synth3DManager.createGridAtPoint(groundPoint);
 
-                if (grid && UndoManager) {
-                    const gridID = grid.overlayID;
-                    const gridState = grid.serialize();
-
-                    UndoManager.add({
-                        undo: () => {
-                            Synth3DManager.removeOverlay(gridID);
-                        },
-                        redo: () => {
-                            Synth3DManager.addOverlay(gridState);
-                        },
-                        description: `Create ground grid "${grid.name}"`
-                    });
-                }
+                if (grid) Synth3DManager.recordPresence(grid, true);
 
                 if (grid) {
                     grid.setEditMode(true);

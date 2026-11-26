@@ -975,10 +975,10 @@ export const eventMethods = {
                     
                     UndoManager.add({
                         undo: () => {
-                            this.restoreState(stateBefore);
+                            NodeMan.get(this.id)?.restoreState(stateBefore);
                         },
                         redo: () => {
-                            this.restoreState(stateAfterDrag);
+                            NodeMan.get(this.id)?.restoreState(stateAfterDrag);
                         },
                         description: actionDescription
                     });

@@ -1,3 +1,4 @@
+import {undoManager} from "../src/UndoManager";
 import {ObjectTracker, pointTrackingShift} from '../src/CObjectTracking';
 import {NodeMan, Sit} from '../src/Globals';
 import {par, resetPar, stopControlledPlayback} from '../src/par';
@@ -787,4 +788,26 @@ test("one wrong measurement next to the latest does not set the search direction
     t.trackedPositions.set(10, {x: 100, y: 84});   // one bad frame, 34 px off
     // Velocity is taken over about five frames, so the prediction moves 34/5 per frame, not 34.
     expect(t.predictPosition(11).y).toBeCloseTo(84 + 34 / 5, 5);
+});
+
+test("a tracking run records the changed samples once and preserves prior manual and missing samples", async () => {
+    const {t} = startTestRun();
+    undoManager.clear();
+    t.trackedPositions.set(0, {x: 34, y: 56});
+    t.manualKeyframes.add(0);
+    t.trackedPositions.markUnmeasured(2);
+    const before = [...t.trackedPositions];
+    Sit.bFrame = 3;
+    t.startTracking();
+    expect(undoManager.canUndo()).toBe(false);
+    await t.trackingPromise;
+    const after = [...t.trackedPositions];
+    expect(after).not.toEqual(before);
+    expect(undoManager.getStatus().undoCount).toBe(1);
+    expect(undoManager.undo()).toBe(true);
+    expect([...t.trackedPositions]).toEqual(before);
+    expect(t.manualKeyframes.has(0)).toBe(true);
+    expect(t.trackedPositions.unmeasuredFrames.has(2)).toBe(true);
+    expect(undoManager.redo()).toBe(true);
+    expect([...t.trackedPositions].sort()).toEqual(after.sort());
 });

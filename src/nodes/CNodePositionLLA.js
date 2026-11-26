@@ -527,12 +527,9 @@ export class CNodePositionLLA extends CNodeTrack {
                 if (this.undoLLA && UndoManager) {
                     const oldLLA = this.undoLLA.slice();
                     const newLLA = this._LLA.slice();
-                    const self = this;
-                    UndoManager.add({
-                        description: "Move position " + this.id,
-                        undo: () => { self.setLLA(oldLLA[0], oldLLA[1], oldLLA[2]); },
-                        redo: () => { self.setLLA(newLLA[0], newLLA[1], newLLA[2]); }
-                    });
+                    const id = this.id;
+                    UndoManager.recordState("Move position " + id, oldLLA, newLLA,
+                        lla => NodeMan.get(id).setLLA(...lla));
                 }
                 this.undoLLA = null;
             }

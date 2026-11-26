@@ -1,3 +1,4 @@
+import {undoManager} from "./UndoManager";
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
 // Adjacency-based shared-edge layout (Strategy C — replaces the old guillotine split-tree).
 //
@@ -233,7 +234,7 @@ class CLayoutManager {
             end: () => { const active = this._activeSeam; this._activeSeam = null; active?.end(); this.updateSeams(); },
             rollback: () => {
                 const active = this._activeSeam; this._activeSeam = null;
-                active?.restore(); active?.end(); this.updateSeams();
+                active?.restore(); active?.end(false); this.updateSeams();
             },
         });
         return el;
@@ -302,16 +303,19 @@ class CLayoutManager {
 
         const {before, after, isV} = this._snapSeam(seam);
         if (!before.length || !after.length) return;
+        const views = [...before, ...after].map(s => s.v);
+        const original = this._layoutState(views);
         const startX = e.clientX, startY = e.clientY;
 
         const onMove = (ev) => {
             const raw = isV ? ev.clientX - startX : ev.clientY - startY;
             this._applySeam(before, after, this._clampSeamDelta(before, after, raw, isV), isV);
         };
-        const onUp = () => {
+        const onUp = (commit = true) => {
+            if (commit) this._recordLayout("Resize adjacent views", original, views);
             if (el) { el._dragging = false; if (el._line) el._line.style.background = "var(--sitrec-border-area, rgba(255,255,255,0.18))"; }
         };
-        this._activeSeam = {move: onMove, end: onUp, restore: () => this._applySeam(before, after, 0, isV),
+        this._activeSeam = {move: onMove, end: onUp, restore: () => this._restoreLayout(original),
             valid: () => [...before, ...after].every(({v}) => v.visible && !v.windowed && ViewMan.get(v.id, false) === v)};
     }
 
@@ -330,9 +334,30 @@ class CLayoutManager {
 
     _setViewFrac(v, l, t, w, h) { v.left = l; v.top = t; v.width = w; v.height = h; }
 
+    _layoutState(views) {
+        return views.map(({id, left, top, width, height}) => ({id, left, top, width, height}));
+    }
+
+    _restoreLayout(state) {
+        for (const {id, ...rect} of state) {
+            const view = ViewMan.get(id, false);
+            if (view) {
+                Object.assign(view, rect);
+                view.updateWH?.();
+            }
+        }
+        this._sig = "";
+        setRenderOne(true);
+    }
+
+    _recordLayout(label, before, views) {
+        undoManager.recordState(label, before, this._layoutState(views), state => this._restoreLayout(state));
+    }
+
     resetLayout() {
         const views = this._tileableViews();
         if (views.length < 2) return false;
+        const before = this._layoutState(views);
         const main = views.find(v => v.id === "mainView");
         if (main) {
             this._setViewFrac(main, 0, 0, 0.5, 1);
@@ -345,6 +370,7 @@ class CLayoutManager {
         }
         this._sig = "";
         setRenderOne(true);
+        this._recordLayout("Reset view layout", before, views);
         return true;
     }
 

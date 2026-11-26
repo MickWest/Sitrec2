@@ -13,6 +13,8 @@
 
 import GUI from '../src/js/lil-gui.esm';
 import {closeBigSlider, openBigSlider} from '../src/BigSlider';
+import {bindControllerUndo} from '../src/ControllerUndo';
+import {undoManager} from '../src/UndoManager';
 
 jest.mock('../src/Globals', () => ({
     setRenderOne: jest.fn(),
@@ -218,6 +220,25 @@ describe('the big slider bar', () => {
 
         // The value rides the top of the range rather than being left behind by it.
         expect(controller.getValue()).toBeGreaterThan(700);
+    });
+
+    it('records a popup drag including its range changes once at release', () => {
+        const controller = makeElasticController();
+        bindControllerUndo(controller, () => controller.getValue(), value => controller.load(value));
+        undoManager.clear();
+        const track = openOnBigBar(controller);
+        pressOn(track, BIG_TRACK.right - ZONE_PX / 2);
+        frameAt(0);
+        frameAt(500);
+        frameAt(900);
+        const final = controller.getValue();
+        expect(undoManager.canUndo()).toBe(false);
+        release();
+        expect(undoManager.getStatus().undoCount).toBe(1);
+        expect(undoManager.undo()).toBe(true);
+        expect(controller.getValue()).toBe(50);
+        expect(undoManager.redo()).toBe(true);
+        expect(controller.getValue()).toBe(final);
     });
 
     it('shrinks the range while a drag is held in the left-hand zone', () => {

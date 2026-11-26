@@ -1,3 +1,4 @@
+import {bindControllerUndo} from "./ControllerUndo";
 // Manager for Synthetic 3D Objects (buildings, structures, etc.)
 // Handles creation, editing, deletion, and persistence
 
@@ -54,6 +55,57 @@ export class C3DSynthManager extends CManager {
         }
     }
     
+    // The menu, API and bulk commands all use the same saved IDs. A later
+    // edit can therefore resolve the live element after a delete/undo cycle.
+    bindElementControls(element) {
+        const {id} = element;
+        for (const control of element.guiFolder?.controllersRecursive() ?? []) {
+            const key = control.property;
+            if (typeof control.getValue() === "function" || key === "editMode") continue;
+            // Height controls can change both roof heights. Free transform can
+            // discard all four corners. Replay their geometry as one edit.
+            if ((element.buildingID && control._unitType) || key === "freeTransform") {
+                bindControllerUndo(control, () => element.captureState(), state => NodeMan.get(id).restoreState(state));
+            } else if (element instanceof CNodeGroundGrid) {
+                bindControllerUndo(control, () => element.serialize(), state => {
+                    const grid = NodeMan.get(id);
+                    const {id: savedID, type, ...properties} = state;
+                    Object.assign(grid, properties);
+                    grid.guiFolder.title("Grid: " + grid.name);
+                    grid.applyColorLock();
+                    grid.applyLatLonMode();
+                    grid.show(grid.visible);
+                    grid.updateGUIControllers();
+                });
+            } else {
+                bindControllerUndo(control, () => control._unitType ? control.getSIValue() : control.save(), value => {
+                    const live = NodeMan.get(id).guiFolder.controllersRecursive().find(c => c.property === key);
+                    if (live._unitType) {
+                        live.setSIValue(value);
+                        live._callOnChange();
+                        live._callOnFinishChange();
+                    } else live.load(value);
+                });
+            }
+        }
+    }
+
+    recordPresence(element, created) {
+        const state = structuredClone(element.serialize());
+        let add, remove;
+        if (element.buildingID) {
+            add = this.addBuilding; remove = this.removeBuilding;
+        } else if (element.cloudsID) {
+            add = this.addClouds; remove = this.removeClouds;
+        } else {
+            add = this.addOverlay; remove = this.removeOverlay;
+        }
+        const insert = () => add.call(this, structuredClone(state));
+        const erase = () => remove.call(this, state.id);
+        UndoManager?.add({description: (created ? "Create " : "Delete ") + element.name,
+            undo: created ? erase : insert, redo: created ? insert : erase});
+    }
+
     /**
      * Add a new building
      */
@@ -69,6 +121,7 @@ export class C3DSynthManager extends CManager {
         
         // Add to manager using inherited CManager.add() method
         this.add(id, building);
+        this.bindElementControls(building);
         console.log(`Added building: ${id}`);
         setRenderOne(true);
         return building;
@@ -248,6 +301,7 @@ export class C3DSynthManager extends CManager {
         });
         
         this.cloudsList[id] = clouds;
+        this.bindElementControls(clouds);
         console.log(`Added clouds: ${id}`);
         setRenderOne(true);
         return clouds;
@@ -355,6 +409,7 @@ export class C3DSynthManager extends CManager {
             });
         
         this.overlaysList[id] = overlay;
+        this.bindElementControls(overlay);
         console.log(`Added overlay: ${id}`);
         setRenderOne(true);
         
@@ -543,11 +598,14 @@ export class C3DSynthManager extends CManager {
      * Remove every building. Snapshots IDs first because removeBuilding
      * mutates this.list, which would otherwise corrupt iteration.
      */
-    removeAllBuildings() {
+    removeAllBuildings(record = false) {
         const buildingIds = Object.keys(this.list);
-        buildingIds.forEach(id => {
+        const remove = () => buildingIds.forEach(id => {
+            if (record) this.recordPresence(this.getBuilding(id), false);
             this.removeBuilding(id);
         });
+        if (record && UndoManager) UndoManager.group("Remove all buildings", remove);
+        else remove();
     }
 
     /**

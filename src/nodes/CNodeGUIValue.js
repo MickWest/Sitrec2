@@ -1,3 +1,4 @@
+import {bindControllerUndo} from "../ControllerUndo";
 // a node that lets you choose a value with a slider/input box
 import {CNodeConstant} from "./CNode";
 import {isLocal} from "../configUtils"
@@ -92,6 +93,15 @@ export class CNodeGUIValue extends CNodeGUIConstant {
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
 
+        // Store the physical value so changing display units between edit and
+        // undo still restores the same distance, speed or angle.
+        const id = this.id;
+        bindControllerUndo(this.guiEntry, () => this.getValueFrame(0), si => {
+            const node = NodeMan.get(id);
+            const scale = node.unitType === "none" ? 1 : Units[node.unitType].toM;
+            node.guiEntry.setValue(si / scale);
+            node.guiEntry._callOnFinishChange();
+        });
         this.guiEntry._maxMax = this.maxMax;
 
         if (v.noSlider) {
@@ -431,6 +441,8 @@ export class CNodeGUIFlag extends CNodeConstant {
                 setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
+        const id = this.id;
+        bindControllerUndo(this.guiEntry, () => this.value, value => NodeMan.get(id).guiEntry.load(value));
         if (v.tip) this.guiEntry.tooltip(v.tip);
         if (v.tooltip) this.guiEntry.tooltip(v.tooltip);
     }
@@ -483,6 +495,8 @@ export class CNodeGUISelect extends CNodeConstant {
             markSitchDirty();
             setRenderOne(true);
         }).name(v.desc ? v.desc : "<no desc>").listen()
+        const id = this.id;
+        bindControllerUndo(this.guiEntry, () => this.value, value => NodeMan.get(id).guiEntry.load(value));
         if (v.tip) this.guiEntry.tooltip(v.tip);
     }
 

@@ -16,6 +16,7 @@
 // a display node might also be an input, like something you can drag with the mouse
 
 import {par} from "../par";
+import {bindControllerUndo} from "../ControllerUndo";
 import {FileManager, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {assert} from "../assert";
 import {V3} from "../threeUtils";
@@ -137,14 +138,24 @@ class CNode {
     // maybe this should be in the base class
     addGUIValue(variable, start, end, step, name) {
         assert(this.gui, `No GUI in addGUIValue for node ${this.id}`);
-        this.addSimpleSerial(variable)
-        return this.gui.add(this, variable, start, end, step).name(name).listen().onChange(()=>this.recalculate());
+        return this.bindSimpleGUI(this.gui.add(this, variable, start, end, step), name);
     }
 
     addGUIBoolean(variable, name) {
         assert(this.gui, `No GUI in addGUIBoolean for node ${this.id}`);
-        this.addSimpleSerial(variable)
-        return this.gui.add(this, variable).name(name).listen().onChange(()=>this.recalculate());
+        return this.bindSimpleGUI(this.gui.add(this, variable), name);
+    }
+
+    bindSimpleGUI(control, name) {
+        const {id} = this;
+        const property = control.property;
+        this.addSimpleSerial(property);
+        bindControllerUndo(control, () => this[property], value => {
+            const node = NodeMan.get(id);
+            const live = node.gui.controllersRecursive().find(c => c.object === node && c.property === property);
+            live.load(value);
+        });
+        return control.name(name).listen().onChange(() => this.recalculate());
     }
 
 

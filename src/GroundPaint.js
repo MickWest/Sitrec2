@@ -391,11 +391,13 @@ export class CGroundPainter {
 
     // "Clear Paint" — drop every stroke and restore the original imagery.
     clearAllPaint() {
-        if (this.brush) { this.brush.hidePreview(); this.brush.resetPaintAnchor(); }
-        this.dabs.length = 0;
-        this._dabsWorld = [];
-        this._lastDab = null;
-        this._invalidate();
+        const before = this.snapshotDabs();
+        this.restoreDabsState([]);
+        if (before.length) UndoManager.add({
+            description: "Clear ground paint",
+            undo: () => this.restoreDabsState(before),
+            redo: () => this.restoreDabsState([]),
+        });
     }
 
     // "Apply Paint" toggled.

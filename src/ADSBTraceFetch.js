@@ -94,7 +94,7 @@ export async function importADSBTraceByHex(hex) {
         const buffer = await response.arrayBuffer();
         // Synthetic filename with the canonical trace name, so the JSON branch
         // and CTrackFileADSBTrace.canHandle pick it up like a dropped file.
-        await FileManager.parseResult("trace_full_" + hex + ".json", buffer);
+        await FileManager.parseResult("trace_full_" + hex + ".json", buffer, null, {trackOptions: {recordUndo: true}});
         return true;
     } catch (e) {
         const message = (e?.name === "TimeoutError" || e?.name === "AbortError")

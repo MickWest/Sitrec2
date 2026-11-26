@@ -5,7 +5,8 @@ import {isLocal} from "../configUtils"
 import {assert} from "../assert";
 import {Color} from "three";
 import {CNodeGUIConstant} from "./CNodeGUIValue";
-import {setRenderOne} from "../Globals";
+import {bindControllerUndo} from "../ControllerUndo";
+import {NodeMan, setRenderOne} from "../Globals";
 
 export class CNodeGUIColor extends CNodeGUIConstant {
     constructor(v, _guiMenu) {
@@ -53,6 +54,9 @@ export class CNodeGUIColor extends CNodeGUIConstant {
                 setRenderOne(true);
             }
         ).name(v.desc ? v.desc : "<no desc>").listen()
+
+        const id = this.id;
+        bindControllerUndo(this.guiEntry, () => this.guiEntry.save(), hex => NodeMan.get(id).guiEntry.load(hex));
 
         // set it invisible
         if (v.hidden) {

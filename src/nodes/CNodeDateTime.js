@@ -1,3 +1,5 @@
+import {beginControllerEdit, bindControllerUndo, finishControllerEdit} from "../ControllerUndo";
+import {undoManager} from "../UndoManager";
 import {Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, setSitchEstablished, Sit, TrackManager} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
@@ -274,6 +276,11 @@ export class CNodeDateTime extends CNode {
         const guiSecond = this.dateTimeFolder.add(this.dateTime, "second", 0, 59, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiMinute).name(t("dateTime.second.label")).tooltip(t("dateTime.second.tooltip"))
         const guiMillisecond = this.dateTimeFolder.add(this.dateTime, "millisecond", 0, 999, 1).listen().onChange(v => this.updateDateTime(v)).wrap(guiSecond).name(t("dateTime.millisecond.label")).tooltip(t("dateTime.millisecond.tooltip"))
 
+        for (const control of [guiYear, guiMonth, this.guiDay, guiHour, guiMinute, guiSecond, guiMillisecond]) {
+            bindControllerUndo(control, () => this.dateStart.getTime(),
+                ms => this.editTime(new Date(ms), "start", false));
+        }
+
         // A one-line advisory under the sliders, for dates where something in the
         // simulation is no longer trustworthy. Read-only text, same pattern as the
         // startTime/nowTime rows above; hidden entirely whenever the date is
@@ -356,7 +363,7 @@ export class CNodeDateTime extends CNode {
 
 
         // add the time zon flag
-        this.dateTimeFolder.add( this, "useTimeZone").name(t("dateTime.useTimeZone.label")).listen().onChange(v=>{
+        const useZoneControl = this.dateTimeFolder.add( this, "useTimeZone").name(t("dateTime.useTimeZone.label")).listen().onChange(v=>{
             this.adjustGUIForTimezone();
             this.populate(true);
             forceUpdateUIText();
@@ -365,7 +372,7 @@ export class CNodeDateTime extends CNode {
         .tooltip(t("dateTime.useTimeZone.tooltip"));
 
 
-        this.dateTimeFolder.add(this, "timeZoneName", timeZoneKeys).name(t("dateTime.timeZone.label")).listen().onChange(
+        const zoneControl = this.dateTimeFolder.add(this, "timeZoneName", timeZoneKeys).name(t("dateTime.timeZone.label")).listen().onChange(
             v => {
                 console.log("Timezone "+v)
                 this._bumpTimeZoneSerial(); // a zone picked by hand wins over a lookup still loading
@@ -375,6 +382,9 @@ export class CNodeDateTime extends CNode {
             }
         )
             .tooltip(t("dateTime.timeZone.tooltip"));
+        for (const control of [zoneControl, useZoneControl]) {
+            bindControllerUndo(control, () => this.zoneState(), value => this.restoreZone(value));
+        }
 
         this.dateTimeFolder.add(this, "setTimeZoneFromCameraLocation")
             .name(t("dateTime.setTimeZoneFromCameraLocation.label"))
@@ -383,7 +393,7 @@ export class CNodeDateTime extends CNode {
 
         this.oldSimSpeed = Sit.simSpeed;
 
-        this.dateTimeFolder.add(Sit, 'simSpeed', 0.01, 1200, 0.01).name(t("dateTime.simSpeed.label")).listen().onChange(
+        const speedControl = this.dateTimeFolder.add(Sit, 'simSpeed', 0.01, 1200, 0.01).name(t("dateTime.simSpeed.label")).listen().onChange(
             v => {
                 // if the simSpeed changes, we need to update the start time
                 // but we want the nowTime to remain the same, so we need to calculate
@@ -401,7 +411,14 @@ export class CNodeDateTime extends CNode {
                 setRenderOne(true);
             }
         )
-            .tooltip(t("dateTime.simSpeed.tooltip"))
+            .tooltip(t("dateTime.simSpeed.tooltip"));
+        bindControllerUndo(speedControl, () => [Sit.simSpeed, this.dateStart.getTime(), par.playbackSpeed], ([speed, start, rate]) => {
+            Sit.simSpeed = speed;
+            par.playbackSpeed = rate;
+            this.setStartDateTime(new Date(start));
+            NodeMan.recalculateAllRootFirst();
+            EventManager.dispatchEvent("abFrameChanged");
+        });
 
 
         /// these are duplicate of the "Sync Time to" menu
@@ -480,13 +497,23 @@ export class CNodeDateTime extends CNode {
         })
             .tooltip(t("dateTime.bFrame.tooltip"))
 
+        for (const control of [this.guiAFrame, this.guiBFrame]) {
+            bindControllerUndo(control, () => [Sit.aFrame, Sit.bFrame], ([a, b]) => {
+                Sit.aFrame = a;
+                Sit.bFrame = b;
+                updateFrameSlider();
+                NodeMan.recalculateAllRootFirst();
+                EventManager.dispatchEvent("abFrameChanged");
+            });
+        }
+
         this.dateTimeFolder.add(par, "pingPong").name(t("dateTime.pingPong.label")).listen().onChange(() => {
             setRenderOne(true);
         })
             .tooltip(t("dateTime.pingPong.tooltip"))
 
 
-        this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onChange((v) => {
+        const fpsControl = this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onChange((v) => {
             // A hand-set rate survives save/reload and later video loads (see setSitFpsFromVideo).
             // onChange, not onFinishChange: setValue() from the API or setMenuValue fires only this.
             Sit.fpsOverride = v;
@@ -505,6 +532,17 @@ export class CNodeDateTime extends CNode {
             .tooltip(t("dateTime.timingAnalysis.tooltip"));
 
         this.update(0);
+
+        for (const control of [fpsControl, this.guiSitchDuration, this.guiSitchFrames]) {
+            bindControllerUndo(control, () => ({
+                frames: Sit.frames, fps: Sit.fps, fpsOverride: Sit.fpsOverride, aFrame: Sit.aFrame, bFrame: Sit.bFrame,
+            }), state => {
+                Object.assign(Sit, state);
+                this.lastFrames = state.frames;
+                this.changedFrames();
+                EventManager.dispatchEvent("abFrameChanged");
+            });
+        }
 
         this.lastFrames = Sit.frames;
 
@@ -578,8 +616,29 @@ export class CNodeDateTime extends CNode {
         this.editTime(new Date(this.timeEditHistory.pop()), "start", false);
     }
 
+    captureTimeEdit() {
+        return {start: this.dateStart.getTime(), history: this.canUndoTimeEdit() ? [...this.timeEditHistory] : []};
+    }
+
+    recordTimeEdit(before) {
+        if (!before) return;
+        const after = this.captureTimeEdit();
+        if (after.start === before.start) {
+            this.timeEditHistory = before.history;
+            return;
+        }
+        const restore = state => {
+            this.editTime(new Date(state.start), "start", false);
+            this.timeEditHistory = [...state.history];
+            this.timeEditExpected = state.start;
+        };
+        undoManager.add({description: "Edit sitch time", timeEditor: this, start: after.start,
+            undo: () => restore(before), redo: () => restore(after)});
+    }
+
     createTimeEditor(container) {
         const control = (object, property) => this.dateTimeFolder.controllers.find(c => c.object === object && c.property === property);
+        let gestureStart;
         return new TimeEditor(container, {
             zones: timeZoneKeys,
             read: () => ({
@@ -592,19 +651,41 @@ export class CNodeDateTime extends CNode {
             pause: () => this.pauseTimeEditing(),
             location: () => this.getTimeLocation(),
             previewTime: (source, preview) => NodeMan.get("FrameSlider", false)?.setTimeEditPreview(source, preview),
-            edit: (date, target, begin) => this.editTime(date, target, begin),
-            undo: () => this.undoTimeEdit(),
+            beginGesture: () => { gestureStart ??= this.captureTimeEdit(); },
+            endGesture: () => {
+                this.recordTimeEdit(gestureStart);
+                gestureStart = undefined;
+            },
+            edit: (date, target, begin) => {
+                const before = gestureStart ? null : this.captureTimeEdit();
+                this.editTime(date, target, begin);
+                this.recordTimeEdit(before);
+            },
+            undo: () => {
+                const last = undoManager.undoStack.at(-1);
+                if (last?.timeEditor === this && last.start === this.dateStart.getTime()) undoManager.undo();
+                else {
+                    const before = this.captureTimeEdit();
+                    this.undoTimeEdit();
+                    this.recordTimeEdit(before);
+                }
+            },
             zone: value => {
+                const before = this.zoneState();
                 if (value !== "__utc__") control(this, "timeZoneName").setValue(value);
                 control(this, "useTimeZone").setValue(value !== "__utc__");
-                markSitchDirty();
+                undoManager.recordState("Set time zone", before, this.zoneState(), state => this.restoreZone(state));
             },
             cameraZone: () => {
-                control(this, "useTimeZone").setValue(true);
-                this.setTimeZoneFromCameraLocation();
-                markSitchDirty();
+                this.setTimeZoneFromCameraLocation(true);
             },
-            speed: value => { control(Sit, "simSpeed").setValue(value); par.playbackSpeed = 1; markSitchDirty(); },
+            speed: value => {
+                const speed = control(Sit, "simSpeed");
+                beginControllerEdit(speed);
+                speed.setValue(value);
+                par.playbackSpeed = 1;
+                finishControllerEdit(speed);
+            },
             play: () => {
                 if (this.liveMode) this.pauseTimeEditing();
                 else { par.paused = !par.paused; par.direction = 1; setRenderOne(true); }
@@ -1027,7 +1108,20 @@ export class CNodeDateTime extends CNode {
     }
 
     // Menu item: the zone at the look camera, which is where the sighting was seen from.
-    setTimeZoneFromCameraLocation() {
+    zoneState() {
+        return [this.timeZoneName, this.timeZoneOffset, this.useTimeZone];
+    }
+
+    restoreZone(state) {
+        this._bumpTimeZoneSerial();
+        [this.timeZoneName, this.timeZoneOffset, this.useTimeZone] = state;
+        this.adjustGUIForTimezone();
+        this.populate(true);
+        forceUpdateUIText();
+    }
+
+    setTimeZoneFromCameraLocation(enableZone = false) {
+        const before = this.zoneState();
         const position = NodeMan.get("lookCamera", false)?.camera?.position;
         let lat = Sit.lat, lon = Sit.lon;
         if (position && position.lengthSq() > 0) {
@@ -1035,10 +1129,16 @@ export class CNodeDateTime extends CNode {
             lat = lla.x;
             lon = lla.y;
         }
-        this.setTimeZoneFromLocation(lat, lon)
+        return this.setTimeZoneFromLocation(lat, lon)
             .then(zone => {
                 console.log(`Time zone at ${lat}, ${lon}: ${zone ?? "not found"} -> ${this.timeZoneName}`);
                 if (!zone) return;
+                if (enableZone === true) {
+                    this.useTimeZone = true;
+                    this.adjustGUIForTimezone();
+                    this.populate(true);
+                }
+                undoManager.recordState("Set time zone from camera", before, this.zoneState(), state => this.restoreZone(state));
                 // The zone is saved with the sitch, so this is a change to warn about on unload.
                 markSitchDirty();
                 // The menu shows only the new name, so also say it where the user can see it.

@@ -1,3 +1,6 @@
+import {beginControllerEdit, finishControllerEdit} from "./ControllerUndo";
+import {undoManager} from "./UndoManager";
+import {captureNodeMods, restoreNodeMods} from "./SceneEditState";
 // Client-side Sitrec API with callable functions and documentation
 import * as LAYER from "./LayerMasks";
 import {
@@ -1159,7 +1162,7 @@ class CSitrecAPI {
                     if (v.objects.length === 0) {
                         return {success: false, error: "objects array is empty"};
                     }
-                    const results = v.objects.map((ob, i) => {
+                    const results = undoManager.group("Add objects", () => v.objects.map((ob, i) => {
                         try {
                             // The same as addObjectAtLLA: `name` is the object's display name
                             // (its folder title in the Objects menu); the id stays
@@ -1176,7 +1179,7 @@ class CSitrecAPI {
                         } catch (e) {
                             return {success: false, error: `Object ${i + 1}: ${e.message}`};
                         }
-                    });
+                    }));
                     const failed = results.filter(r => !r.success);
                     // Partial success is reported as such rather than thrown away: forty of
                     // fifty objects placed is a useful outcome the model can build on, and
@@ -1354,19 +1357,9 @@ class CSitrecAPI {
                                 }
                             }
                         }
-                        if (existing) {
-                            const tid = existing._walkerTrackID;
-                            if (tid && TrackManager.exists(tid)) TrackManager.disposeRemove(tid);
-                            // sweep ONLY the derived nodes recorded at creation (plus the
-                            // walker itself) — never a blind `${name}_*` prefix sweep,
-                            // which would take unrelated nodes another system created
-                            // inside the namespace afterwards (e.g. a synth building
-                            // the user id'ed "car_annex" while walker "car" existed)
-                            const ids = [name, ...(existing._walkerOwnedIds ?? [])]
-                                .filter((id) => NodeMan.exists(id));
-                            for (const id of ids) { const n = NodeMan.get(id, false); if (n) { n.outputs = []; n.inputs = {}; } }
-                            for (const id of ids) { try { NodeMan.disposeRemove(id); } catch (e) { /* ignore */ } }
-                        }
+                        const record = !v.reuseTrackID && !Globals.deserializing && !undoManager.isUndoing && !undoManager.isRedoing;
+                        const previous = record && existing && Globals.walkerSpecs?.[name] ? this._captureWalker(name) : null;
+                        if (existing) this._removeWalker(name);
                         const start = new Vector3(pts[0][1], pts[0][2], pts[0][3]);
                         // snapshot before construction: everything under `${name}_` that
                         // appears between here and the ownership recording below is a
@@ -1448,6 +1441,19 @@ class CSitrecAPI {
                             ...(v.rotateY !== undefined ? {rotateY: v.rotateY} : {}),
                             startFrame, endFrame, upright: v.upright ?? true, trackID,
                         };
+                        if (record) {
+                            let next;
+                            undoManager.add({description: (previous ? "Replace " : "Create ") + name,
+                                undo: () => {
+                                    next ??= this._captureWalker(name);
+                                    this._removeWalker(name);
+                                    previous?.();
+                                },
+                                redo: () => {
+                                    if (previous) this._removeWalker(name);
+                                    next();
+                                }});
+                        }
                         markSitchDirty();
                         return { success: true, name, trackID, waypoints: pts.length, startFrame, endFrame };
                     } catch (e) {
@@ -1567,10 +1573,10 @@ class CSitrecAPI {
                 },
                 fn: (v) => {
                     if (!Array.isArray(v.buildings)) return { success: false, error: "buildings must be an array" };
-                    const results = v.buildings.map((building) => this._createSynthBuilding({
+                    const results = undoManager.group("Create buildings", () => v.buildings.map((building) => this._createSynthBuilding({
                         editMode: v.editMode === true,
                         ...building
-                    }));
+                    })));
                     const failed = results.filter(r => !r.success);
                     return { success: failed.length === 0, count: results.length, failed: failed.length, buildings: results };
                 }
@@ -1653,7 +1659,7 @@ class CSitrecAPI {
                         ? v.elements
                         : (Array.isArray(v.ids) ? v.ids.map(id => ({ type: v.type, id })) : []);
                     if (elements.length === 0) return { success: false, error: "Pass elements or type plus ids" };
-                    const results = elements.map(e => this._deleteSynthElement(e.type, e.id));
+                    const results = undoManager.group("Delete scene elements", () => elements.map(e => this._deleteSynthElement(e.type, e.id)));
                     const failed = results.filter(r => !r.success);
                     return { success: failed.length === 0, count: results.length, failed: failed.length, results };
                 }
@@ -2364,8 +2370,7 @@ class CSitrecAPI {
                 doc: "Undo the last action.",
                 fn: () => {
                     if (!UndoManager) return { error: "UndoManager not available" };
-                    UndoManager.undo();
-                    return { success: true };
+                    return { success: UndoManager.undo() };
                 }
             },
 
@@ -2373,8 +2378,7 @@ class CSitrecAPI {
                 doc: "Redo the last undone action.",
                 fn: () => {
                     if (!UndoManager) return { error: "UndoManager not available" };
-                    UndoManager.redo();
-                    return { success: true };
+                    return { success: UndoManager.redo() };
                 }
             },
 
@@ -2556,6 +2560,30 @@ class CSitrecAPI {
     }
 
     // ---- Fit Camera to Points helpers (see the fitPoints* API entries) ----
+
+    _removeWalker(name) {
+        const node = NodeMan.get(name);
+        if (TrackManager.exists(node._walkerTrackID)) TrackManager.disposeRemove(node._walkerTrackID);
+        // The recorded children belong to this walker. Other nodes can share the prefix.
+        for (const id of [...(node._walkerOwnedIds ?? []), name]) {
+            if (NodeMan.exists(id)) NodeMan.unlinkDisposeRemove(id);
+        }
+        if (Globals.walkerSpecs) delete Globals.walkerSpecs[name];
+    }
+
+    _captureWalker(name) {
+        const node = NodeMan.get(name);
+        const spec = JSON.parse(JSON.stringify(Globals.walkerSpecs[name]));
+        const mods = captureNodeMods([name, ...(node._walkerOwnedIds ?? [])]);
+        const trackID = node._walkerTrackID;
+        const restoreTrack = TrackManager.captureSyntheticTrackForUndo(TrackManager.get(trackID), false);
+        return () => {
+            restoreTrack();
+            const result = this.api.createWalker.fn({...spec, reuseTrackID: trackID});
+            if (!result.success) throw new Error(result.error);
+            restoreNodeMods(mods);
+        };
+    }
 
     _fitNode() {
         return NodeMan.get("fitCameraPoints", false);
@@ -3074,7 +3102,15 @@ class CSitrecAPI {
                 }
             }
             
-            controller.setValue(finalValue);
+            beginControllerEdit(controller);
+            try {
+                controller.setValue(finalValue);
+                controller._callOnFinishChange?.();
+                finishControllerEdit(controller);
+            } catch (error) {
+                controller._pendingUndo = null;
+                throw error;
+            }
             this.invalidateMenuDocCache();
             return { success: true, oldValue, newValue: finalValue };
         } catch (e) {
@@ -3861,6 +3897,7 @@ class CSitrecAPI {
             if (v.editMode === true) building.setEditMode(true);
             else this._closeSynthEditMenus();
             par.renderOne = true;
+            Synth3DManager.recordPresence(building, true);
             return { success: true, type: "building", id: building.buildingID, element: this._serializeSynthElement(building) };
         } catch (e) {
             return { success: false, error: e.message ?? String(e) };
@@ -3885,6 +3922,7 @@ class CSitrecAPI {
             if (v.editMode === true) clouds.setEditMode(true);
             else this._closeSynthEditMenus();
             par.renderOne = true;
+            Synth3DManager.recordPresence(clouds, true);
             return { success: true, type: "clouds", id: clouds.cloudsID, element: this._serializeSynthElement(clouds) };
         } catch (e) {
             return { success: false, error: e.message ?? String(e) };
@@ -3912,19 +3950,21 @@ class CSitrecAPI {
             if (v.editMode === true) overlay.setEditMode(true);
             else this._closeSynthEditMenus();
             par.renderOne = true;
+            Synth3DManager.recordPresence(overlay, true);
             return { success: true, type: "overlay", id: overlay.overlayID, element: this._serializeSynthElement(overlay) };
         } catch (e) {
             return { success: false, error: e.message ?? String(e) };
         }
     }
 
-    _updateSynthElement(type, id, patch = {}) {
+    _updateSynthElement(type, id, patch = {}, record = true) {
         try {
             this._requireSynthManager();
             const normalized = this._normalizeSynthType(type);
             const element = this._getSynthElement(normalized, id);
             if (!element) return { success: false, error: `Synth ${type} '${id}' not found` };
 
+            const before = record ? structuredClone(element.serialize()) : null;
             if (normalized === "building") {
                 if (Array.isArray(patch.cornerLatLons)) {
                     element.cornerLatLons = patch.cornerLatLons.map(c => ({lat: Number(c.lat), lon: Number(c.lon)}));
@@ -3972,7 +4012,9 @@ class CSitrecAPI {
                 if (patch.lat !== undefined) element.centerLat = patch.lat;
                 if (patch.lon !== undefined) element.centerLon = patch.lon;
                 this._setVisibilityIfProvided(element, patch.visible);
+                element.updateGroupPosition?.();
                 element.buildCloudMesh();
+                if (element.editMode) element.createControlHandles?.();
                 element.updateGUIControllers();
             } else if (normalized === "overlay") {
                 const boundsPatch = (patch.north !== undefined || patch.south !== undefined || patch.east !== undefined || patch.west !== undefined)
@@ -3983,7 +4025,9 @@ class CSitrecAPI {
                         width: patch.width,
                         depth: patch.depth,
                     }) : {});
+                const imageChanged = patch.imageURL !== undefined && element.imageURL !== patch.imageURL;
                 Object.assign(element, patch, boundsPatch);
+                if (imageChanged) element.loadTexture();
                 this._setVisibilityIfProvided(element, patch.visible);
                 element.updateMesh();
                 element.updateGUIControllers();
@@ -3993,6 +4037,12 @@ class CSitrecAPI {
 
             if (patch.editMode === true && element.setEditMode) element.setEditMode(true);
             if (patch.editMode === false && element.setEditMode) element.setEditMode(false);
+            if (record) {
+                undoManager.recordState("Edit " + element.name, before, structuredClone(element.serialize()), state => {
+                    const result = this._updateSynthElement(normalized, id, structuredClone(state), false);
+                    if (!result.success) throw new Error(result.error);
+                });
+            }
             par.renderOne = true;
             return { success: true, type: normalized, id: this._getSynthElementID(element), element: this._serializeSynthElement(element) };
         } catch (e) {
@@ -4004,18 +4054,12 @@ class CSitrecAPI {
         try {
             this._requireSynthManager();
             const normalized = this._normalizeSynthType(type);
-            if (normalized === "building") {
-                if (!Synth3DManager.getBuilding(id)) return { success: false, type: normalized, id, error: "Building not found" };
-                Synth3DManager.removeBuilding(id);
-            } else if (normalized === "clouds") {
-                if (!Synth3DManager.getClouds(id)) return { success: false, type: normalized, id, error: "Cloud layer not found" };
-                Synth3DManager.removeClouds(id);
-            } else if (normalized === "overlay") {
-                if (!Synth3DManager.getOverlay(id)) return { success: false, type: normalized, id, error: "Overlay not found" };
-                Synth3DManager.removeOverlay(id);
-            } else {
-                return { success: false, error: `Unknown synth type '${type}'` };
-            }
+            const element = this._getSynthElement(normalized, id);
+            if (!element) return {success: false, type: normalized, id, error: "Scene element not found"};
+            Synth3DManager.recordPresence(element, false);
+            if (normalized === "building") Synth3DManager.removeBuilding(id);
+            else if (normalized === "clouds") Synth3DManager.removeClouds(id);
+            else Synth3DManager.removeOverlay(id);
             this._closeSynthEditMenus();
             par.renderOne = true;
             return { success: true, type: normalized, id };

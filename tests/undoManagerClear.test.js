@@ -21,6 +21,22 @@ function makeAction(description = 'act') {
 
 describe('UndoManager.clear', () => {
 
+    test('loading another sitch during a compound action or replay drops previous-sitch history', () => {
+        const um = new UndoManager();
+        um.group("Load", () => {
+            um.add(makeAction("old scene"));
+            um.clear();
+        });
+        expect(um.canUndo()).toBe(false);
+        um.add({undo: () => um.clear(), redo: jest.fn()});
+        expect(um.undo()).toBe(false);
+        expect(um.canRedo()).toBe(false);
+        um.add({undo: jest.fn(), redo: () => um.clear()});
+        expect(um.undo()).toBe(true);
+        expect(um.redo()).toBe(false);
+        expect(um.canUndo()).toBe(false);
+    });
+
     test('empties both stacks', () => {
         const um = new UndoManager();
         um.add(makeAction('a'));
@@ -99,4 +115,25 @@ describe('sitch teardown clears the undo history', () => {
     test('index.js imports the undoManager singleton it clears', () => {
         expect(indexSource).toMatch(/import\s*\{[^}]*\bundoManager\b[^}]*\}\s*from\s*["']\.\/UndoManager["']/);
     });
+});
+
+test('nested bulk edits undo in reverse order and retry from the first unfinished child', () => {
+    const manager = new UndoManager();
+    const events = [];
+    let fail = true;
+    const add = key => manager.add({description: key,
+        redo: () => events.push("+" + key),
+        undo: () => {
+            if (key === "b" && fail) { fail = false; throw Error("busy"); }
+            events.push("-" + key);
+        }});
+    manager.group("bulk edit", () => {
+        add("a");
+        manager.group("within", () => { add("b"); add("c"); });
+    });
+    expect(manager.getStatus()).toMatchObject({undoCount: 1, nextUndo: "bulk edit"});
+    expect(manager.undo()).toBe(false);
+    expect(manager.undo()).toBe(true);
+    expect(manager.redo()).toBe(true);
+    expect(events).toEqual(["-c", "-b", "-a", "+a", "+b", "+c"]);
 });

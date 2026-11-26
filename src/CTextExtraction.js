@@ -1,4 +1,5 @@
 import {guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
+import {undoManager} from "./UndoManager";
 import {par} from "./par";
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {getTesseract, loadTesseract} from "./tesseractLoader";
@@ -128,6 +129,7 @@ export class TextExtractor {
                     this.isDragging = true;
                     this.dragRegion = hit.region;
                     this.dragCorner = hit.corner;
+                    this.beforeDrag = this.regionBounds(hit.region);
                     this.lastMouseX = vX;
                     this.lastMouseY = vY;
                     return;
@@ -182,8 +184,7 @@ export class TextExtractor {
                         this.newRegionStart.x, this.newRegionStart.y,
                         this.newRegionEnd.x, this.newRegionEnd.y
                     );
-                    this.regions.push(region);
-                    this.selectedRegion = region;
+                    this.setRegions("Add text region", [...this.regions, region], region);
                 }
                 this.newRegionStart = null;
                 this.newRegionEnd = null;
@@ -193,12 +194,23 @@ export class TextExtractor {
                 return;
             }
             if (this.isDragging) {
-                this.isDragging = false;
-                this.dragRegion = null;
-                this.dragCorner = null;
+                this.finishDrag();
             }
             if (originalUp) originalUp(e);
         };
+    }
+
+    regionBounds({x1, x2, y1, y2}) {
+        return {x1, x2, y1, y2};
+    }
+
+    finishDrag() {
+        if (!this.isDragging) return;
+        const region = this.dragRegion;
+        undoManager.recordState("Edit text region", this.beforeDrag, this.regionBounds(region),
+            bounds => Object.assign(region, bounds));
+        this.isDragging = false;
+        this.dragRegion = this.dragCorner = this.beforeDrag = null;
     }
 
     findRegionCorner(vX, vY) {
@@ -245,6 +257,9 @@ export class TextExtractor {
     }
 
     disable() {
+        this.finishDrag();
+        this.isDefiningRegion = false;
+        this.newRegionStart = this.newRegionEnd = null;
         this.enabled = false;
         this.extracting = false;
         if (this.extractionSession) this.extractionSession.cancelled = true;
@@ -257,19 +272,27 @@ export class TextExtractor {
         setMenuItemLabel(addRegionMenuItem, "menu.addRegion.drawingLabel");
     }
 
-    removeSelectedRegion() {
-        if (this.selectedRegion) {
-            const idx = this.regions.indexOf(this.selectedRegion);
-            if (idx >= 0) this.regions.splice(idx, 1);
-            this.selectedRegion = this.regions.length > 0 ? this.regions[this.regions.length - 1] : null;
+    setRegions(description, next, selected) {
+        this.finishDrag();
+        const previous = this.regions, priorSelection = this.selectedRegion;
+        const apply = (regions, selection) => {
+            this.regions = regions;
+            this.selectedRegion = selection;
             setRenderOne(true);
-        }
+        };
+        apply(next, selected);
+        undoManager.add({description,
+            undo: () => apply(previous, priorSelection), redo: () => apply(next, selected)});
+    }
+
+    removeSelectedRegion() {
+        if (!this.selectedRegion) return;
+        const next = this.regions.filter(region => region !== this.selectedRegion);
+        this.setRegions("Remove text region", next, next.at(-1) ?? null);
     }
 
     clearAllRegions() {
-        this.regions = [];
-        this.selectedRegion = null;
-        setRenderOne(true);
+        if (this.regions.length) this.setRegions("Clear text regions", [], null);
     }
 
     getCharIndexAtPosition(vX, vY, region) {
@@ -330,7 +353,11 @@ export class TextExtractor {
         const imageData = ctx.getImageData(0, 0, w, h);
         const normalized = this.normalizeTemplate(imageData);
 
+        const previous = this.templates.get(char);
         this.templates.set(char, normalized);
+        undoManager.add({description: "Learn character template",
+            undo: () => previous ? this.templates.set(char, previous) : this.templates.delete(char),
+            redo: () => this.templates.set(char, normalized)});
         console.log(`Learned template for '${char}' (${this.templates.size} templates total)`);
         setRenderOne(true);
     }
@@ -401,7 +428,11 @@ export class TextExtractor {
     }
 
     clearTemplates() {
+        if (!this.templates.size) return;
+        const saved = new Map(this.templates);
         this.templates.clear();
+        undoManager.add({description: "Clear character templates",
+            undo: () => { this.templates = new Map(saved); }, redo: () => this.templates.clear()});
         console.log("Templates cleared");
         setRenderOne(true);
     }
@@ -415,11 +446,24 @@ export class TextExtractor {
         }
         const session = beginVideoAnalysis(this.videoView?.videoData, () => { this.extracting = false; });
         this.extractionSession = session;
+        // OCR writes many frames asynchronously. Keep only the cells it changes.
+        session.textEdits = [];
         try { return await this.startExtractionAtResolution(session); }
         finally {
             this.extracting = false;
             this.extractionSession = null;
             session.end();
+            const edits = session.textEdits;
+            if (edits.length && !this.disposed) {
+                undoManager.add({description: "Extract text",
+                    undo: () => {
+                        for (const {region, frame, before} of edits) {
+                            if (before === undefined) region.extractedText.delete(frame);
+                            else region.setTextForFrame(frame, before);
+                        }
+                    },
+                    redo: () => { for (const {region, frame, after} of edits) region.setTextForFrame(frame, after); }});
+            }
             setMenuItemLabel(startExtractMenuItem, "menu.startExtract.label");
         }
     }
@@ -461,7 +505,11 @@ export class TextExtractor {
             for (const region of this.regions) {
                 const text = await this.extractTextFromRegion(Tesseract, image, region);
                 if (session.cancelled || !this.extracting) break;
-                region.setTextForFrame(frame, text);
+                const before = region.extractedText.get(frame);
+                if (before !== text && this.regions.includes(region)) {
+                    session.textEdits.push({region, frame, before, after: text});
+                    region.setTextForFrame(frame, text);
+                }
             }
 
             if (this.videoView && this.videoView.renderCanvas) {
@@ -712,13 +760,12 @@ export function addTextExtractionMenu() {
         enableExtraction: toggleEnableExtraction,
         addRegion: () => textExtractor?.startAddRegion(),
         removeRegion: () => textExtractor?.removeSelectedRegion(),
-        // The regions are drawn by hand and cannot be undone, so it asks first.
         clearRegions: async () => {
             const te = textExtractor;
             const n = te?.regions?.length ?? 0;
             if (!n) return;
             const ok = await showConfirm(
-                `Delete all ${n} text region${n === 1 ? "" : "s"}? You cannot undo it.`,
+                `Delete all ${n} text region${n === 1 ? "" : "s"}?`,
                 {title: "Clear Regions", yesLabel: "Delete", noLabel: "Keep"});
             if (ok && textExtractor === te) te.clearAllRegions();
         },
@@ -802,6 +849,16 @@ export function addTextExtractionMenu() {
         .name(tt("menu.useTemplates.label"))
         .tooltip(tt("menu.useTemplates.tooltip"))
         .perm();
+}
+
+export function resetTextExtraction() {
+    if (textExtractor) {
+        textExtractor.disposed = true;
+        textExtractor.disable();
+    }
+    textExtractor = null;
+    renderHooked = false;
+    setMenuItemLabel(enableExtractMenuItem, "menu.enable.label");
 }
 
 export function getTextExtractor() {

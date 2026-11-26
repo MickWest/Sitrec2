@@ -242,6 +242,7 @@ class CNodeView extends CNode {
                     shiftKey: this.shiftDrag,
                     requiredKey: this.dragKey,
                     onDragStart: (event, data) => {
+                        this.layoutBeforeDrag = this.captureLayoutEdit();
                         this.onViewDragStart?.(event, {...data, viewInstance: this});
                     },
                     onDrag: (event, data) => {
@@ -258,6 +259,7 @@ class CNodeView extends CNode {
                     },
                     onDragEnd: (event, data) => {
                         data.viewInstance?.onViewDragEnd?.(event, data);
+                        this.finishLayoutEdit("Move view", data.cancelled);
                     },
                 });
             }
@@ -267,10 +269,11 @@ class CNodeView extends CNode {
                     handles: 'all',
                     aspectRatio: !this.freeAspect,
                     viewInstance: this,
-                    onResize: (event, data) => {
-                        const view = data.viewInstance;
-                        return true;
-                    }
+                    onResizeStart: () => { this.layoutBeforeDrag = this.captureLayoutEdit(); },
+                    onResizeEnd: (event, data) => {
+                        if (!data.cancelled) this.setFromDiv(this.div);
+                        this.finishLayoutEdit("Resize view", data.cancelled);
+                    },
                 });
             }
 
@@ -483,6 +486,7 @@ class CNodeView extends CNode {
                 handle: bar.bar,
                 viewInstance: this,
                 onDragStart: (event, data) => {
+                    this.layoutBeforeDrag = this.captureLayoutEdit();
                     data.viewInstance?._setHeaderDragging(true, event);
                 },
                 onDrag: (event, data) => {
@@ -494,6 +498,7 @@ class CNodeView extends CNode {
                 onDragEnd: (event, data) => {
                     data.viewInstance?._setHeaderDragging(false, event);
                     data.viewInstance?.onViewDragEnd?.(event, data);
+                    this.finishLayoutEdit("Move view", data.cancelled);
                 },
             });
         }
@@ -1579,6 +1584,39 @@ class CNodeView extends CNode {
         return true;
     }
 
+    captureLayoutEdit() {
+        const {left, top, width, height, dockedSidebar, dockedAspectRatio, floatingRectBeforeDock} = this;
+        return {left, top, width, height, dockedSidebar, dockedAspectRatio,
+            floatingRectBeforeDock: dockedSidebar && floatingRectBeforeDock ? {...floatingRectBeforeDock} : null};
+    }
+
+    restoreLayoutEdit(state) {
+        if (this.dockedSidebar && this.dockedSidebar !== state.dockedSidebar) this.undockFromSidebar();
+        // An undock normally preserves its pixel size on the next frame.
+        // A history replay supplies the exact target size itself.
+        this.floatingResizeVersion = (this.floatingResizeVersion ?? 0) + 1;
+        const {left, top, width, height} = state;
+        Object.assign(this, {left, top, width, height});
+        this.updateWH();
+        if (state.dockedSidebar) {
+            if (this.dockedSidebar !== state.dockedSidebar) this.dockToSidebar(state.dockedSidebar);
+            this.floatingRectBeforeDock = {...state.floatingRectBeforeDock};
+            this.dockedAspectRatio = state.dockedAspectRatio;
+            this.updateDockedWH();
+        }
+        setRenderOne(true);
+    }
+
+    finishLayoutEdit(description, cancelled) {
+        const before = this.layoutBeforeDrag;
+        this.layoutBeforeDrag = null;
+        if (!before) return;
+        if (cancelled) return this.restoreLayoutEdit(before);
+        const id = this.id;
+        UndoManager?.recordState(description + " " + id, before, this.captureLayoutEdit(),
+            state => ViewMan.get(id).restoreLayoutEdit(state));
+    }
+
     onViewDragEnd(event, data = {}) {
         if (!this.visible) return;
 
@@ -1789,8 +1827,9 @@ class CNodeView extends CNode {
     }
 
     deferFloatingPixelSizeRestore(widthPx, heightPx) {
+        const version = this.floatingResizeVersion;
         requestAnimationFrame(() => {
-            if (this.dockedSidebar || !this.div) return;
+            if (version !== this.floatingResizeVersion || this.dockedSidebar || !this.div) return;
             this.widthPx = widthPx;
             this.heightPx = heightPx;
             this.leftPx = this.clamp(this.leftPx, 0, Math.max(0, this.containerWidth() - widthPx));

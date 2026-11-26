@@ -74,6 +74,7 @@ jest.mock('../src/Globals', () => {
             get: (...args) => mockNodeGet(...args),
             exists: (...args) => mockNodeExists(...args),
             disposeRemove: (...args) => mockNodeDispose(...args),
+            unlinkDisposeRemove: (...args) => mockNodeDispose(...args),
             list: mockNodeList = {},
         },
         Sit: mockSit,
@@ -777,6 +778,7 @@ describe('createWalker input validation (before any destructive teardown)', () =
 
     beforeEach(() => {
         mockSit.frames = 900;
+        mockGlobalsState.walkerSpecs = {};
         mockNodeGet.mockReturnValue(undefined);
         Object.keys(mockNodeList).forEach((k) => delete mockNodeList[k]);
         // LLAToECEF reads the earth model from Globals
@@ -962,6 +964,46 @@ describe('createWalker input validation (before any destructive teardown)', () =
         const disposed = mockNodeDispose.mock.calls.map((c) => c[0]);
         expect(disposed).toEqual(expect.arrayContaining(['car', 'car_size']));
         expect(disposed).not.toContain('car_annex');
+    });
+
+    test('creating and replacing a waypoint object each replay with their original track ids', async () => {
+        const {undoManager} = require('../src/UndoManager');
+        const {CNode3DObject} = require('../src/nodes/CNode3DObject');
+        const tracks = new Map();
+        mockNodeGet.mockImplementation(id => mockNodeList[id]);
+        mockNodeExists.mockImplementation(id => !!mockNodeList[id]);
+        mockNodeDispose.mockImplementation(id => { delete mockNodeList[id]; });
+        for (let i = 0; i < 5; i++) CNode3DObject.mockImplementationOnce(function ({id}) {
+            this.id = id;
+            this.group = {quaternion: {setFromUnitVectors() {}}};
+            this.addController = () => {};
+            mockNodeList[id] = this;
+        });
+        let sequence = 0;
+        mockTrackManager.addSyntheticTrack.mockImplementation(() => {
+            const track = {trackID: "route" + ++sequence};
+            tracks.set(track.trackID, track);
+            return track;
+        });
+        mockTrackManager.exists.mockImplementation(id => tracks.has(id));
+        mockTrackManager.get.mockImplementation(id => tracks.get(id));
+        mockTrackManager.disposeRemove.mockImplementation(id => tracks.delete(id));
+        mockTrackManager.captureSyntheticTrackForUndo = track => () => tracks.set(track.trackID, {...track});
+        undoManager.clear();
+        const a = await walk({name: "marker", alt: 50});
+        const b = await walk({name: "marker", alt: 75});
+        expect(a.success && b.success).toBe(true);
+        expect(undoManager.getStatus().undoCount).toBe(2);
+        expect(undoManager.undo()).toBe(true);
+        expect(mockGlobalsState.walkerSpecs.marker).toMatchObject({trackID: a.trackID, alt: 50});
+        expect(undoManager.undo()).toBe(true);
+        expect(tracks.size).toBe(0);
+        expect(mockGlobalsState.walkerSpecs.marker).toBeUndefined();
+        expect(undoManager.redo()).toBe(true);
+        expect(mockNodeList.marker._walkerTrackID).toBe(a.trackID);
+        expect(undoManager.redo()).toBe(true);
+        expect([...tracks.keys()]).toEqual([b.trackID]);
+        expect(mockGlobalsState.walkerSpecs.marker.alt).toBe(75);
     });
 
     test('refuses to replace a non-walker node that owns the name (no core-node deletion)', async () => {

@@ -54,8 +54,8 @@ export function inOutIsReset() {
 }
 
 // In back to the first frame and Out to the last, undoably.
-export function resetInOut() {
-    if (inOutIsReset()) return;
+export function resetInOut(a = 0, b = Sit.frames - 1) {
+    if (a === Sit.aFrame && b === Sit.bFrame) return;
     const before = {a: Sit.aFrame, b: Sit.bFrame};
     const apply = ({a, b}) => {
         Sit.aFrame = a;
@@ -63,7 +63,7 @@ export function resetInOut() {
         EventManager.dispatchEvent("abFrameChanged");
         changed();
     };
-    const after = {a: 0, b: Sit.frames - 1};
+    const after = {a, b};
     apply(after);
     UndoManager?.add({undo: () => apply(before), redo: () => apply(after), description: t("timelineMarkers.resetInOut")});
 }
@@ -150,7 +150,7 @@ export function showTimelineMenu(event, cursorFrame, marker) {
         }, true, t("timelineMarkers.tips.deleteAll"));
     }
 
-    item(menu, t("timelineMarkers.resetInOut"), resetInOut, !inOutIsReset(), t("timelineMarkers.tips.resetInOut"));
+    item(menu, t("timelineMarkers.resetInOut"), () => resetInOut(), !inOutIsReset(), t("timelineMarkers.tips.resetInOut"));
 
     menu.open();
     // createStandaloneMenu sized the empty menu; the slider is at the bottom

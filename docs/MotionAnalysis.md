@@ -429,7 +429,7 @@ cross, positive clockwise.
 |---|---|
 | **Enable / Disable Horizon Extractor** | Shows or hides the cross |
 | **Delete Keyframe at Current Frame** | Deletes the keyframe here. Right-click on the cross center, then **Delete Keyframe**, does the same |
-| **Clear All Keyframes** | Deletes every keyframe. It asks first, because you cannot undo it |
+| **Clear All Keyframes** | Deletes every keyframe. Undo restores the keyframes |
 | **Show Hint** | Shows the on-screen help again |
 | `J` / `K` | Go to the previous / next keyframe |
 

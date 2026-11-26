@@ -30,6 +30,7 @@ import {
     Globals,
     guiMenus,
     markShadowCastersDirty,
+    NodeMan,
     setRenderOne,
     Synth3DManager,
     UndoManager
@@ -1603,20 +1604,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      */
     async deleteBuilding() {
         if (await showConfirm(`Delete building "${this.name}"?`, {title: "Delete Building"})) {
-            if (UndoManager) {
-                const buildingState = this.serialize();
-                const buildingID = this.buildingID;
-
-                UndoManager.add({
-                    undo: () => {
-                        Synth3DManager.addBuilding(buildingState);
-                    },
-                    redo: () => {
-                        Synth3DManager.removeBuilding(buildingID);
-                    },
-                    description: `Delete building "${this.name}"`
-                });
-            }
+            if (NodeMan.get(this.id, false) !== this) return;
+            Synth3DManager.recordPresence(this, false);
 
             Synth3DManager.removeBuilding(this.buildingID);
         }

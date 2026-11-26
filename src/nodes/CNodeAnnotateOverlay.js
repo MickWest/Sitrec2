@@ -12,6 +12,7 @@ import {NodeMan, setRenderOne, guiMenus} from "../Globals";
 import {par} from "../par";
 import {mouseToCanvas} from "../ViewUtils";
 import {undoManager} from "../UndoManager";
+import {bindControllerUndo} from "../ControllerUndo";
 import {assert} from "../assert";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {viewMenuKey} from "../ViewUIBarMenus";
@@ -195,6 +196,15 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
             .tooltip("Color of new strokes and text.");
 
         this.gui.add(this, "clearAll").name("Clear All").tooltip("Delete every annotation stroke (undoable).");
+        for (const control of this.gui.controllers) {
+            const key = control.property;
+            if (["opacity", "fadeFrames", "color", "strokeWidth"].includes(key)) {
+                bindControllerUndo(control, () => this[key], value => {
+                    control.setValue(value);
+                    this._refreshControls();
+                });
+            }
+        }
     }
 
     // ---------- Toolbar (DOM, lives inside the video view's div) ----------
@@ -244,16 +254,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
             width: "28px", height: "28px", padding: "0", border: "1px solid #555",
             borderRadius: "3px", background: "transparent", cursor: "pointer",
         });
-        this._colorInput.addEventListener("input", () => {
-            this.color = this._colorInput.value;
-            // If a stroke is selected, also recolor it in-place (user expects
-            // the color picker to edit the selection, not just the next stroke).
-            if (this.selectedStroke && this.selectedStroke.tool !== "image") {
-                this.selectedStroke.color = this.color;
-                setRenderOne(true);
-            }
-            this.gui?.controllersRecursive?.().forEach(c => c.updateDisplay?.());
-        });
+        this._bindStrokeStyleInput(this._colorInput, "color", "color", () => this._colorInput.value);
         bar.appendChild(this._colorInput);
 
         // Width control (number + slider)
@@ -265,14 +266,7 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         this._widthSlider.value = String(this.strokeWidth);
         this._widthSlider.title = "Line width";
         Object.assign(this._widthSlider.style, { width: "90px", verticalAlign: "middle" });
-        this._widthSlider.addEventListener("input", () => {
-            this.strokeWidth = parseFloat(this._widthSlider.value);
-            // Apply width change to the selected stroke (if any & meaningful).
-            if (this.selectedStroke && this.selectedStroke.tool !== "image") {
-                this.selectedStroke.width = this.strokeWidth;
-                setRenderOne(true);
-            }
-        });
+        this._bindStrokeStyleInput(this._widthSlider, "strokeWidth", "width", () => this._widthSlider.valueAsNumber);
         bar.appendChild(this._widthSlider);
 
         bar.appendChild(this._makeSeparator());
@@ -301,6 +295,30 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         host.appendChild(bar);
         this._toolbar = bar;
         this._refreshToolButtons();
+    }
+
+    _bindStrokeStyleInput(input, property, strokeKey, read) {
+        let edit;
+        const state = stroke => ({value: this[property], strokeValue: stroke?.[strokeKey]});
+        input.addEventListener("input", () => {
+            const stroke = this.selectedStroke?.tool === "image" ? null : this.selectedStroke;
+            edit ??= {stroke, before: state(stroke)};
+            this[property] = read();
+            if (edit.stroke) edit.stroke[strokeKey] = this[property];
+            setRenderOne(true);
+        });
+        const finish = () => {
+            if (!edit) return;
+            const {stroke, before} = edit;
+            edit = null;
+            undoManager.recordState("Change annotation " + strokeKey, before, state(stroke), saved => {
+                this[property] = saved.value;
+                if (stroke) stroke[strokeKey] = saved.strokeValue;
+                this._refreshControls();
+            });
+        };
+        input.addEventListener("change", finish);
+        input.addEventListener("blur", finish);
     }
 
     _makeSeparator() {

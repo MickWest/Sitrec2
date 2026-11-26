@@ -776,8 +776,7 @@ These are in **Objects → Building: *name*** and in the editor.
 | **Material → Depth Test** | on | Turn off to draw the building on top of everything in front of it |
 | **Delete Building** | | Deletes the building, after asking you |
 
-**Objects → Remove all Buildings** deletes every synthetic building at once. It does not ask first,
-you cannot undo it, and it does not affect clouds, overlays or grids.
+**Objects → Remove all Buildings** deletes every synthetic building at once. Undo restores all the buildings in one step.
 
 ### Clouds
 

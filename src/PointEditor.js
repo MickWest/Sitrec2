@@ -31,6 +31,10 @@ import {CNodeMeasureAltitude, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 
 export class PointEditor {
+    historyTarget() {
+        return this.parentNode?.id ? NodeMan.get(this.parentNode.id).splineEditor : this;
+    }
+
     constructor(_scene, _camera, _renderer, controls, onChange, initialPoints, isLLA=false, legacyEUS=false) {
 
         this.splineHelperObjects = [];  // the objects that are the control points
@@ -83,12 +87,14 @@ export class PointEditor {
                     if (stateChanged) {
                         UndoManager.add({
                             undo: () => {
-                                if (lockChanged) this.parentNode.setAltitudeLockFromDrag(lockBefore);
-                                this.restoreState(stateBefore);
+                                const target = this.historyTarget();
+                                if (lockChanged) target.parentNode.setAltitudeLockFromDrag(lockBefore);
+                                target.restoreState(stateBefore);
                             },
                             redo: () => {
-                                if (lockChanged) this.parentNode.setAltitudeLockFromDrag(lockAfter);
-                                this.restoreState(stateAfterDrag);
+                                const target = this.historyTarget();
+                                if (lockChanged) target.parentNode.setAltitudeLockFromDrag(lockAfter);
+                                target.restoreState(stateAfterDrag);
                             },
                             description: "Move track control point"
                         });
@@ -479,16 +485,18 @@ export class PointEditor {
             UndoManager.add({
                 description: previous ? "Move track control point" : "Add track control point",
                 undo: () => {
-                    if (previous) this.insertPoint(frame, previous.clone());
+                    const target = this.historyTarget();
+                    if (previous) target.insertPoint(frame, previous.clone());
                     else {
-                        const i = this.frameNumbers.indexOf(frame);
-                        if (i >= 0) this.removePointByIndex(i);
+                        const i = target.frameNumbers.indexOf(frame);
+                        if (i >= 0) target.removePointByIndex(i);
                     }
-                    if (this.onChange) this.onChange();
+                    if (target.onChange) target.onChange();
                 },
                 redo: () => {
-                    this.insertPoint(frame, placed.clone());
-                    if (this.onChange) this.onChange();
+                    const target = this.historyTarget();
+                    target.insertPoint(frame, placed.clone());
+                    if (target.onChange) target.onChange();
                 },
             });
         }
@@ -509,10 +517,11 @@ export class PointEditor {
                 // By frame, not by the index captured here: an unrelated edit in between
                 // would have shifted it. insertPoint replaces at a matching frame, so
                 // repeating either direction is harmless.
-                undo: () => this.insertPoint(frame, position.clone()),
+                undo: () => this.historyTarget().insertPoint(frame, position.clone()),
                 redo: () => {
-                    const at = this.frameNumbers.indexOf(frame);
-                    if (at >= 0) this.removePointByIndex(at);
+                    const target = this.historyTarget();
+                    const at = target.frameNumbers.indexOf(frame);
+                    if (at >= 0) target.removePointByIndex(at);
                 },
             });
         }

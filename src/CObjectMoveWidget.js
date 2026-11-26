@@ -865,14 +865,17 @@ class CObjectMoveWidget {
             const before = this.dragStartLLA.slice();
             const after = position.getLLA();
             if (before.every((value, i) => value === after[i])) return;
-            UndoManager.add({
-                description: "Move " + (this.node?.id ?? node.id),
-                undo: () => position.setLLA(...before),
-                redo: () => position.setLLA(...after),
-            });
+            const id = node.id;
+            const restore = lla => {
+                const live = NodeMan.get(id);
+                (live.getPositionEditTarget?.() ?? live).setLLA(...lla);
+            };
+            UndoManager.add({description: "Move " + (this.node?.id ?? id),
+                undo: () => restore(before), redo: () => restore(after)});
             return;
         }
 
+        const nodeID = this.target.node.id;
         const splineEditor = this.target.node.splineEditor;
         const description = "Move " + (this.node?.id ?? this.target.node.id);
 
@@ -888,12 +891,13 @@ class CObjectMoveWidget {
             UndoManager.add({
                 description,
                 undo: () => {
-                    const index = splineEditor.frameNumbers.indexOf(frame);
-                    if (index >= 0) splineEditor.removePointByIndex(index);
+                    const editor = NodeMan.get(nodeID).splineEditor;
+                    const index = editor.frameNumbers.indexOf(frame);
+                    if (index >= 0) editor.removePointByIndex(index);
                 },
                 // insertPoint REPLACES a point at the same frame, so this is safe to
                 // repeat and cannot stack duplicates.
-                redo: () => splineEditor.insertPoint(frame, position.clone()),
+                redo: () => NodeMan.get(nodeID).splineEditor.insertPoint(frame, position.clone()),
             });
             return;
         }
@@ -906,17 +910,12 @@ class CObjectMoveWidget {
         const lockAfter = node.altitudeLock;
         const lockMoved = lockBefore !== null && lockBefore !== lockAfter;
         if (!lockMoved && JSON.stringify(before) === JSON.stringify(after)) return;
-        UndoManager.add({
-            description,
-            undo: () => {
-                if (lockMoved) node.setAltitudeLockFromDrag(lockBefore);
-                splineEditor.restoreState(before);
-            },
-            redo: () => {
-                if (lockMoved) node.setAltitudeLockFromDrag(lockAfter);
-                splineEditor.restoreState(after);
-            },
-        });
+        const restore = (state, lock) => {
+            const live = NodeMan.get(nodeID);
+            if (lockMoved) live.setAltitudeLockFromDrag(lock);
+            live.splineEditor.restoreState(state);
+        };
+        UndoManager.add({description, undo: () => restore(before, lockBefore), redo: () => restore(after, lockAfter)});
     }
 }
 

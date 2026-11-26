@@ -305,6 +305,7 @@ export function importSplineJSON(filename, json) {
         splineEditorNode.recalculateCascade();
     }
 
+    TrackManager.recordSyntheticTrackCreation(trackOb);
     console.log(`Imported spline "${name}" from ${filename} as synthetic track ${trackOb.trackID}`);
 
     if (json.fps !== undefined && Sit.fps !== undefined && Math.abs(json.fps - Sit.fps) > 0.01) {

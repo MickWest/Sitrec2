@@ -1,3 +1,4 @@
+import {bindControllerUndo} from "./ControllerUndo";
 import {registerEditorInteraction} from "./EditorInteraction";
 import {getInteractiveViewAt} from "./ViewUtils";
 import {CManager} from "./CManager";
@@ -73,9 +74,20 @@ class CFeatureManager extends CManager {
             text: (typeof name === "string" ? name.trim() : "") || `${lat}, ${lon}`,
             positionLLA: {lat, lon, alt},
         });
+        this.recordPinPresence(feature, true);
         markSitchDirty();
         setRenderOne(true);
         return feature;
+    }
+
+    recordPinPresence(feature, created) {
+        const id = feature.id;
+        const options = {id, text: feature.text, positionLLA: {...feature.lla},
+            arrowLength: feature.arrowLength, arrowColor: feature.arrowColor, textColor: feature.textColor};
+        const add = () => this.addFeature({...options, positionLLA: {...options.positionLLA}});
+        const remove = () => this.removeFeature(id);
+        UndoManager?.add({description: created ? "Drop pin" : "Delete pin",
+            undo: created ? remove : add, redo: created ? add : remove});
     }
 
     /**
@@ -376,6 +388,22 @@ class CFeatureManager extends CManager {
                 featureNode.color = hexString;
             });
         
+        const id = featureNode.id;
+        for (const control of standaloneMenu.controllers) {
+            const key = control.property;
+            if (!["text", "arrowLength", "arrowColor", "textColor"].includes(key)) continue;
+            bindControllerUndo(control, () => featureNode[key], value => {
+                const live = this.get(id);
+                const row = this.editingFeature === live && this.editMenu?.controllers.find(c => c.property === key);
+                if (row) row.load(value);
+                else {
+                    live[key] = value;
+                    if (key === "arrowLength") live.offset.y = value;
+                    if (key === "textColor") live.color = "#" + value.toString(16).padStart(6, "0");
+                }
+            });
+        }
+
         // Add Delete button
         const deleteObj = {
             deleteFeature: async () => {
@@ -383,7 +411,10 @@ class CFeatureManager extends CManager {
                 const featureName = featureNode.text || 'this feature';
                 if (await showConfirm(`Delete "${featureName}"?`, {title: "Delete Pin"})) {
                     // Remove the feature - this also closes the edit menu
+                    if (this.get(featureNode.id, false) !== featureNode) return;
+                    this.recordPinPresence(featureNode, false);
                     this.removeFeature(featureNode.id);
+                    markSitchDirty();
                 }
             }
         };

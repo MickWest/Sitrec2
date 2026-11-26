@@ -13,6 +13,8 @@
 // before the module graph is touched, or every slider in this file fails to construct.
 window.matchMedia = window.matchMedia || (() => ({matches: false, addListener() {}, removeListener() {}}));
 
+import {undoManager} from "../src/UndoManager";
+import {bindControllerUndo} from "../src/ControllerUndo";
 import GUI from "../src/js/lil-gui.esm";
 import "../src/lil-gui-extras";      // adds Controller.tooltip(), which mirrors carry across
 import {
@@ -450,4 +452,30 @@ describe("shared custom presentations", () => {
         source.destroy();
         expect(host.controllers).toHaveLength(0);
     });
+});
+
+test("a slider and its mirror each commit one completed gesture", () => {
+    undoManager.clear();
+    const state = {radius: 5};
+    const source = makeGUI().add(state, "radius", 1, 100, 1);
+    bindControllerUndo(source, () => source.save(), value => source.load(value));
+    const twin = source.mirrorTo(makeGUI());
+    const drag = (control, values, count) => {
+        control.domElement.dispatchEvent(new Event("pointerdown", {bubbles: true}));
+        for (const value of values) control.setValue(value);
+        expect(undoManager.getStatus().undoCount).toBe(count);
+        control._callOnFinishChange();
+    };
+    source.load(7);   // initialization
+    drag(twin, [9, 12, 15], 0);
+    drag(source, [16, 19, 21], 1);
+    expect(undoManager.getStatus().undoCount).toBe(2);
+    expect(undoManager.undo()).toBe(true);
+    expect(state.radius).toBe(15);
+    drag(source, [16, 15], 1); // returned to its starting value
+    expect(undoManager.undo()).toBe(true);
+    expect(state.radius).toBe(7);
+    expect(undoManager.redo()).toBe(true);
+    expect(undoManager.redo()).toBe(true);
+    expect(state.radius).toBe(21);
 });

@@ -1,6 +1,7 @@
 import {CNodeView} from "./CNodeView";
 import {setTooltip} from "../Tooltips";
-import {guiShowHide, setRenderOne} from "../Globals";
+import {guiShowHide, NodeMan, setRenderOne} from "../Globals";
+import {undoManager} from "../UndoManager";
 import {blockViewEvents, clampBelowMenuBar} from "../DragResizeUtils";
 import {ViewMan} from "../CViewManager";
 import {t} from "../i18n";
@@ -100,12 +101,14 @@ class CNodeNotes extends CNodeView {
         this.textArea.placeholder = "Enter your notes here...";
         
         this.textArea.addEventListener('input', () => {
+            this.notesBeforeEdit ??= this.notesText;
             this.notesText = this.textArea.value;
             this.updateModeUI();   // the toggle appears as soon as there is a link to show
             setRenderOne();
         });
 
         this.textArea.addEventListener('blur', (event) => {
+            this.finishNotesEdit();
             // Already showing links — nothing to do (and no re-entry from the blur() in
             // linkifyContent()).
             if (this.textArea.style.display === 'none') return;
@@ -416,6 +419,8 @@ class CNodeNotes extends CNodeView {
     // content), make the window visible, and scroll to the end so the newly
     // added text is in view. Used e.g. when stashing an unrecognized dropped URL.
     appendAndShow(text) {
+        this.finishNotesEdit();
+        this.notesBeforeEdit = this.notesText;
         const addition = String(text ?? "");
         const separator = this.notesText && this.notesText.length ? "\n\n" : "";
         this.notesText += separator + addition;
@@ -428,6 +433,19 @@ class CNodeNotes extends CNodeView {
         // Scroll after layout has settled so scrollHeight is correct.
         this.scrollToEnd();
         requestAnimationFrame(() => this.scrollToEnd());
+        this.finishNotesEdit();
+    }
+
+    finishNotesEdit() {
+        if (this.notesBeforeEdit === undefined) return;
+        const id = this.id;
+        undoManager.recordState("Edit notes", this.notesBeforeEdit, this.notesText, text => {
+            const view = NodeMan.get(id);
+            view.notesText = text;
+            view.textArea.value = text;
+            view.linkifyContent();
+        });
+        this.notesBeforeEdit = undefined;
     }
 
     // Scroll whichever content element is currently displayed (the editable

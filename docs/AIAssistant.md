@@ -133,14 +133,10 @@ unsaved changes, exactly as if you had made the change yourself: closing the tab
 and "point at" requests are the exception. They do not mark the sitch as changed, so closing the tab
 gives no warning for them alone. A save still stores the camera, the start time and the view layout.
 
-**Undo does not cover everything the assistant does.** An object that the assistant adds at a
-position and camera fit points that it places can be undone with **Ctrl+Z** (**Cmd+Z** on a Mac).
-Click outside the Assistant window first, because its input box keeps that key for its own text. A
-synthetic building, cloud layer, ground overlay or waypoint object that the assistant creates has no
-undo step, so undo skips it and undoes the action before it. Ask the assistant to delete a building,
-cloud layer or overlay. It cannot delete a waypoint object, but it can hide one. Most menu settings
-cannot be undone, whoever changed them. If you are about to ask for something sweeping — "make
-all the objects spheres" — save first.
+Use **Ctrl+Z** (**Cmd+Z** on a Mac) to undo a placed pin, a camera fit point, an object added at a
+position, a waypoint object, or an edit to a synthetic building, cloud layer or ground overlay. A batch of buildings or
+objects takes one undo step. Click outside the Assistant input first to use scene history.
+Some menu commands and media operations still have no undo step.
 
 The assistant can also undo and redo on request, which drives the same stack: "undo that" works.
 

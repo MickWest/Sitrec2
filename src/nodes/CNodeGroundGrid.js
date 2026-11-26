@@ -531,7 +531,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         this.guiFolder.tooltip(t("groundGrid.folder.tooltip"));
 
         this.guiFolder.add(this, 'name').name(t("groundGrid.name.label")).tooltip(t("groundGrid.name.tooltip")).onChange(() => {
-            this.guiFolder.title = `Grid: ${this.name}`;
+            this.guiFolder.title(`Grid: ${this.name}`);
         }).keepLiveWhenFolderOff();
 
         this.guiFolder.add(this, 'visible').name(t("groundGrid.visible.label")).tooltip(t("groundGrid.visible.tooltip")).onChange((value) => {

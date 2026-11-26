@@ -1,3 +1,4 @@
+import {beginControllerEdit} from "./ControllerUndo";
 /**
  * Slider settings popup, NumberController prototype overrides, and the
  * Help-menu search UI.
@@ -193,6 +194,7 @@ NumberController.prototype.displayZeroThreshold = function(threshold) {
 
 NumberController.prototype.resetToDefault = function() {
     if (this._disabled) return this;
+    beginControllerEdit(this);
     this.setValue(this._defaultValue);
     this._callOnFinishChange();
     return this;

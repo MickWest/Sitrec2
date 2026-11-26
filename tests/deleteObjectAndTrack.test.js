@@ -6,6 +6,7 @@
 // node manager.
 
 import fs from "fs";
+import {UndoManager} from "../src/UndoManager";
 import vm from "vm";
 import {transformSync} from "@babel/core";
 import {CNode} from "../src/nodes/CNode";
@@ -14,6 +15,8 @@ import {CManager} from "../src/CManager";
 import {setFileManager, setNodeMan, setSit} from "../src/Globals";
 import {isUserMadeObjectId, ownedSubNodeIds} from "../src/UserObjects";
 import {unlistManualObject} from "../src/TrackSelectors";
+import {captureNodeMods, restoreNodeMods} from "../src/SceneEditState";
+import {hasOtherTrackSourceReference} from "../src/trackSourceUtils";
 import {t} from "../src/i18n";
 
 class TestNode extends CNode {
@@ -48,7 +51,7 @@ beforeEach(() => {
     setFileManager({removeExportButton: () => {}});
     setSit({dropTargets: {track: []}});
     context = {
-        console, t, NodeMan: nodeMan, CManager, ownedSubNodeIds, isUserMadeObjectId, unlistManualObject,
+        console, t, undoManager: new UndoManager(), NodeMan: nodeMan, CManager, ownedSubNodeIds, isUserMadeObjectId, unlistManualObject,
         CNode3DObject: TestObject,
         EventManager: {removeEventListener: jest.fn()},
         Globals: {menuBar: {persistentMenus: []}},
@@ -58,9 +61,15 @@ beforeEach(() => {
         showConfirm: jest.fn(),
     };
     const trackMethods = classMethods("../src/TrackManager.js", "CTrackManager",
-        ["objectForTrack", "detachObject", "trackForObject", "confirmDeleteSyntheticTrack"], context);
+        ["objectForTrack", "detachObject", "trackForObject", "confirmDeleteSyntheticTrack", "deleteSyntheticTrackWithUndo",
+            "deleteImportedTrackWithUndo", "captureImportedTrackForUndo", "addTracks", "captureImportSettings", "recordTrackImport",
+            "disposeRemove"], context);
     trackManager = Object.assign(Object.create(trackMethods), new CManager());
     trackManager.disposeSyntheticTrack = jest.fn(id => trackManager.remove(id));
+    trackManager.captureSyntheticTrackForUndo = track => {
+        const state = {...track};
+        return () => trackManager.add(state.trackID, {...state});
+    };
     context.TrackManager = trackManager;
     context.CustomManager = customManager = Object.create(classMethods("../src/CustomSupport.js", "CCustomManager",
         ["clearEditingObject", "disposeObjectWithControllers", "deleteObject", "removeAllTracks"], context));
@@ -140,6 +149,10 @@ test("a track without an object asks a plain yes or no", async () => {
     expect(context.showConfirm).toHaveBeenCalledWith('Delete track "Track 7"?', {title: "Delete Track"});
     expect(context.showChoice).not.toHaveBeenCalled();
     expect(trackManager.exists("syntheticTrack_7")).toBe(false);
+    expect(context.undoManager.undo()).toBe(true);
+    expect(trackManager.get("syntheticTrack_7").trackID).toBe("syntheticTrack_7");
+    expect(context.undoManager.redo()).toBe(true);
+    expect(trackManager.exists("syntheticTrack_7")).toBe(false);
 });
 
 // The sub-nodes that a live Add Object makes under the id of the object.
@@ -206,4 +219,86 @@ test("Remove All Tracks removes each user-made object with Delete Object, and th
     expect(panel.destroy).toHaveBeenCalled();
     expect(trackManager.disposeRemove).toHaveBeenCalledWith(track.trackID);
     expect(trackManager.exists(track.trackID)).toBe(false);
+});
+
+test("Remove All Tracks restores two tracks from the same source as one repeatable action", () => {
+    const file = "Flights.kml";
+    const files = new CManager();
+    const bytes = new ArrayBuffer(4);
+    const parsed = {names: ["North", "South"]};
+    const metadata = {filename: file};
+    files.add(file, parsed, bytes);
+    files.loadedFilesMetadata = {[file]: metadata};
+    Object.assign(context, {
+        UndoManager: context.undoManager, FileManager: files, Sit: {loadedFiles: {[file]: file}},
+        captureNodeMods, restoreNodeMods, hasOtherTrackSourceReference, GlobalDateTimeNode: null,
+        isSitchEstablishedByUser: () => true,
+    });
+    const add = (index, shortName) => {
+        const trackID = "Track_" + shortName;
+        return trackManager.add(trackID, {trackID, trackFileName: file, trackIndex: index, menuText: shortName,
+            displayName: shortName});
+    };
+    add(0, "North").displayName = "North renamed";
+    add(1, "South");
+    trackManager.notifyTracksChanged = jest.fn();
+    trackManager.buildSelectedTracks = jest.fn(([source], _removeDuplicates, options, _selection, _declined, {index, shortName}) => {
+        expect(files.get(source)).toBe(parsed);
+        expect(files.getInfo(source).original).toBe(bytes);
+        expect(parsed.names[index]).toBe(shortName);
+        expect(options.syncTime).toBe(false);
+        add(index, shortName);
+    });
+    trackManager.setTrackDisplayName = (track, name) => { track.displayName = name; };
+
+    customManager.removeAllTracks(true);
+    expect(context.undoManager.getStatus().undoCount).toBe(1);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        expect(trackManager.size()).toBe(0);
+        expect(files.exists(file)).toBe(false);
+        expect(context.Sit.loadedFiles[file]).toBeUndefined();
+        expect(context.undoManager.undo()).toBe(true);
+        expect(trackManager.get("Track_North").displayName).toBe("North renamed");
+        expect(trackManager.get("Track_South").trackIndex).toBe(1);
+        expect(context.Sit.loadedFiles[file]).toBe(file);
+        expect(files.loadedFilesMetadata[file]).toBe(metadata);
+        expect(context.undoManager.redo()).toBe(true);
+    }
+});
+
+test("a multi-track import and its timeline changes replay together without rerunning the picker", async () => {
+    const file = "recording.kml";
+    const files = new CManager();
+    files.add(file, {}, new ArrayBuffer(8));
+    const sit = {frames: 30, aFrame: 0, bFrame: 29, loadedFiles: {[file]: file}};
+    const date = {dateStart: new Date(1000), setStartDateTime(value) { this.dateStart = value; },
+        startTimeZoneLookup: jest.fn(), changedFrames: jest.fn()};
+    Object.assign(context, {FileManager: files, Sit: sit, GlobalDateTimeNode: date, captureNodeMods,
+        restoreNodeMods, hasOtherTrackSourceReference, isSitchEstablishedByUser: () => true});
+    new TestNode({id: "globalSphereResize"});
+    trackManager.notifyTracksChanged = jest.fn();
+    trackManager.setTrackDisplayName = (track, name) => { track.displayName = name; };
+    trackManager.buildSelectedTracks = jest.fn((_files, _removeDuplicates, _options, _selected, _declined, restoring) => {
+        const indices = restoring ? [restoring.index] : [0, 1];
+        for (const index of indices) {
+            const shortName = "flight" + index, trackID = "Track_" + shortName;
+            trackManager.add(trackID, {trackID, trackFileName: file, trackIndex: index,
+                menuText: shortName, displayName: shortName});
+        }
+        if (!restoring) {
+            Object.assign(sit, {frames: 60, aFrame: 3, bFrame: 56});
+            date.dateStart = new Date(5000);
+        }
+    });
+    await trackManager.addTracks([file], false, 0, {recordUndo: true, showDialog: false});
+    expect(context.undoManager.getStatus().undoCount).toBe(1);
+    expect(context.undoManager.undo()).toBe(true);
+    expect(trackManager.size()).toBe(0);
+    expect(files.exists(file)).toBe(false);
+    expect(sit).toMatchObject({frames: 30, aFrame: 0, bFrame: 29});
+    expect(date.dateStart.getTime()).toBe(1000);
+    expect(context.undoManager.redo()).toBe(true);
+    expect(trackManager.size()).toBe(2);
+    expect(sit).toMatchObject({frames: 60, aFrame: 3, bFrame: 56});
+    expect(date.dateStart.getTime()).toBe(5000);
 });

@@ -1529,15 +1529,13 @@ export class CNodeBuildings3DTiles extends CNode {
     // "Restore Geometry" — reset everything: drop the saved dab list and restore
     // all tiles to their original geometry (the auto pass re-runs if still on).
     clearAllEdits() {
-        if (this.manualBrush) this.manualBrush.hidePreview();
-        this.treeFlattenParams.dabs.length = 0;
-        this._dabsWorld = [];
-        this._lastDab = null;
-        for (const pv of Object.values(this._perView)) {
-            if (pv.treeFlattener) pv.treeFlattener.restoreAll();
-        }
-        setRenderOne(true);
-        this.announceSurfaceEdited();
+        const before = this.snapshotDabs();
+        this.restoreDabsState([]);
+        if (before.length) UndoManager.add({
+            description: "Restore terrain geometry",
+            undo: () => this.restoreDabsState(before),
+            redo: () => this.restoreDabsState([]),
+        });
     }
 
     // --- Undo/redo for manual brush strokes ---------------------------------

@@ -587,10 +587,10 @@ export class CNodeSynthClouds extends CNode3DGroup {
                     
                     UndoManager.add({
                         undo: () => {
-                            this.restoreState(stateBefore);
+                            NodeMan.get(this.id)?.restoreState(stateBefore);
                         },
                         redo: () => {
-                            this.restoreState(stateAfterDrag);
+                            NodeMan.get(this.id)?.restoreState(stateAfterDrag);
                         },
                         description: actionDescription
                     });
@@ -1001,20 +1001,8 @@ export class CNodeSynthClouds extends CNode3DGroup {
      */
     async deleteClouds() {
         if (await showConfirm(`Delete cloud layer "${this.name}"?`, {title: "Delete Cloud Layer"})) {
-            if (UndoManager) {
-                const cloudsState = this.serialize();
-                const cloudsID = this.cloudsID;
-
-                UndoManager.add({
-                    undo: () => {
-                        Synth3DManager.addClouds(cloudsState);
-                    },
-                    redo: () => {
-                        Synth3DManager.removeClouds(cloudsID);
-                    },
-                    description: `Delete cloud layer "${this.name}"`
-                });
-            }
+            if (NodeMan.get(this.id, false) !== this) return;
+            Synth3DManager.recordPresence(this, false);
 
             Synth3DManager.removeClouds(this.cloudsID);
         }

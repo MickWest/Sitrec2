@@ -1,4 +1,6 @@
 /** @jest-environment jsdom */
+import {beginControllerEdit, finishControllerEdit} from "../src/ControllerUndo";
+import {undoManager} from "../src/UndoManager";
 import fs from "node:fs";
 import path from "node:path";
 import {parse} from "@babel/parser";
@@ -451,12 +453,25 @@ test("choosing Visible releases the thermal pipeline; an open settings folder ke
         const loaded=async()=>{await view._thermalLoading;return view._thermalAdapter;};
         folder.open();
         const first=await loaded(); expect(first).toBeTruthy();
+        const control = gui.controllersRecursive().find(c => c.property === "groundTemperatureSpanK");
+        const before = control.getValue();
+        undoManager.clear();
+        beginControllerEdit(control);
+        control.setValue(before + 1);
+        control.setValue(before + 2);
+        expect(undoManager.canUndo()).toBe(false);
+        control._callOnFinishChange();
         const dispose=jest.spyOn(first,"dispose");
         // Visible with the folder open: the old pipeline is disposed and a new adapter (no GPU memory yet) keeps the controls.
         mode.setValue("visible");
         expect(dispose).toHaveBeenCalledTimes(1); expect(view._thermalDisposed).toBe(false);
         const second=await loaded(); expect(second).toBeTruthy(); expect(second).not.toBe(first);
         expect(second.pipeline.resources).toBeNull();
+        const replacement = gui.controllersRecursive().find(c => c.property === "groundTemperatureSpanK");
+        expect(undoManager.undo()).toBe(true);
+        expect(replacement.getValue()).toBe(before);
+        expect(undoManager.redo()).toBe(true);
+        expect(replacement.getValue()).toBe(before + 2);
         expect(gui.controllersRecursive().some(c=>c.property==="focalLengthM")).toBe(true);
         // Visible with the folder closed: nothing is kept.
         folder.close(); mode.setValue("physicalThermal"); mode.setValue("visible");
@@ -480,7 +495,8 @@ test("shared schema controllers support setMenuValue/getMenuValue and keep coupl
     const gui=new GUI({autoPlace:false});let settings=native();
     const controls=createThermalControls(gui,()=>settings,(key,value)=>{settings=normalizeSettings({...settings,[key]:value,
         fieldMode:key==="focalLengthM"?"focalLength":settings.fieldMode});},{translate:key=>key});
-    const API=methods("src/CSitrecAPI.js","CSitrecAPI",["_setMenuValue","_getMenuValue","_valueForControl","_controlValueType"]);
+    const API=methods("src/CSitrecAPI.js","CSitrecAPI",["_setMenuValue","_getMenuValue","_valueForControl","_controlValueType"],
+        {beginControllerEdit, finishControllerEdit});
     const api=Object.assign(new API(),{invalidateMenuDocCache(){},_resolveControl(menu,key){
         const controller=gui.controllersRecursive().find(c=>c.property===key);return {success:!!controller,controller};}});
     try {

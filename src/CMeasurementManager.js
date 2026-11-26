@@ -18,6 +18,7 @@
 // each reload, after NodeMan.disposeAll() has already disposed the nodes.
 
 import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, TrackManager} from "./Globals";
+import {undoManager} from "./UndoManager";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeMeasurement, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {CNode3DObject, shortObjectName} from "./nodes/CNode3DObject";
@@ -177,6 +178,21 @@ class CMeasurementManager {
         setRenderOne(true);
     }
 
+    recordEdit(id, description, before, after, index) {
+        undoManager.recordState(description, before, after, config => {
+            if (!config) return this.removeMeasurement(id);
+            if (this.list[id]) this.list[id].setConfig(normalizeMeasurementConfig(config));
+            else {
+                const entries = Object.entries(this.list);
+                const node = this.createMeasurement(id, config);
+                entries.splice(index, 0, [id, node]);
+                this.list = Object.fromEntries(entries);
+            }
+            this.rebuildMenu();
+            setRenderOne(true);
+        });
+    }
+
     // The new measurement is made at once, so every edit in the dialog shows live. Cancel
     // deletes it again.
     async addMeasurement() {
@@ -200,6 +216,7 @@ class CMeasurementManager {
         if (Globals.loadGeneration !== generation || this.list[node.id] !== node) return;
         if (result?.action === "apply") {
             node.setConfig(normalizeMeasurementConfig(result.config));
+            this.recordEdit(node.id, "Add measurement", null, {...node.config}, Object.keys(this.list).indexOf(node.id));
             this.rebuildMenu();
         } else {
             this.removeMeasurement(node.id);
@@ -232,9 +249,12 @@ class CMeasurementManager {
         // The measurement may have gone while the dialog was open (a new sitch was loaded).
         if (this.list[id] !== node) return;
         if (result?.action === "delete") {
+            const index = Object.keys(this.list).indexOf(id);
             this.removeMeasurement(id);
+            this.recordEdit(id, "Delete measurement", original, null, index);
         } else if (result?.action === "apply") {
             node.setConfig(normalizeMeasurementConfig(result.config));
+            this.recordEdit(id, "Edit measurement", original, {...node.config});
             this.rebuildMenu();
         } else {
             node.setConfig(original);
@@ -266,7 +286,11 @@ class CMeasurementManager {
                 // With its dialog open, the change goes through the dialog (which previews it),
                 // so OK keeps it and Cancel undoes it like any other edit there.
                 if (this.drafts.has(current)) setMeasurementDialogShow(checked);
-                else current.show(checked);
+                else {
+                    const before = {...current.config};
+                    current.show(checked);
+                    this.recordEdit(id, "Show measurement", before, {...current.config});
+                }
             });
             checkbox.checked = node.visible !== false;
             this.menuButtons.push({id, button, checkbox});

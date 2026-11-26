@@ -1,4 +1,5 @@
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "./Globals";
+import {undoManager} from "./UndoManager";
 import {par} from "./par";
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {EventManager} from "./CEventManager";
@@ -140,6 +141,7 @@ class HorizonExtractor {
     }
 
     disable() {
+        this.finishDrag();
         this.analysisResolutionSession?.end();
         this.analysisResolutionSession = null;
         this.enabled = false;
@@ -251,7 +253,10 @@ class HorizonExtractor {
             if (this.enabled) {
                 // Deleting a keyframe is the cross centre's right-click menu (see ensureOverlay),
                 // not a modifier on a click: shift-click adds a point in other Sitrec tools.
-                if (this.tryHitTest()) return;
+                if (e.button === 0 && this.tryHitTest()) {
+                    this.beforeDrag = this.captureEdit();
+                    return;
+                }
             }
             if (origDown) origDown(e);
         };
@@ -265,9 +270,8 @@ class HorizonExtractor {
         };
 
         mouse.handlers.up = (e) => {
-            if (this.enabled && this.dragMode) {
-                this.dragMode = null;
-                this.dragHandleIdx = -1;
+            if (this.dragMode) {
+                this.finishDrag();
                 return;
             }
             if (origUp) origUp(e);
@@ -361,21 +365,47 @@ class HorizonExtractor {
     commitKeyframe() {
         const f = Math.floor(par.frame);
         this.keyframes.set(f, {x: this.cx, y: this.cy, angle: this.angle});
-        this.saveToStorage();
         // First interaction dismisses the onboarding hint.
         if (this.showHint) this.showHint = false;
     }
 
-    clearKeyframes() {
-        this.keyframes.clear();
+    captureEdit() {
+        // commitKeyframe replaces entries, so their point objects are immutable.
+        return {entries: [...this.keyframes], cx: this.cx, cy: this.cy, angle: this.angle, showHint: this.showHint};
+    }
+
+    recordEdit(description, before) {
         this.saveToStorage();
+        undoManager.recordState(description, before, this.captureEdit(), ({entries, ...cross}) => {
+            this.keyframes = new Map(entries);
+            Object.assign(this, cross);
+            this.applyInterpolation(Math.floor(par.frame));
+            this.saveToStorage();
+        });
         setRenderOne(true);
     }
 
+    finishDrag() {
+        if (!this.beforeDrag) return;
+        const before = this.beforeDrag;
+        this.beforeDrag = null;
+        this.dragMode = null;
+        this.dragHandleIdx = -1;
+        this.recordEdit("Edit horizon keyframes", before);
+    }
+
+    clearKeyframes() {
+        if (!this.keyframes.size) return;
+        const before = this.captureEdit();
+        this.keyframes.clear();
+        this.recordEdit("Clear horizon keyframes", before);
+    }
+
     deleteKeyframeAt(frame) {
+        if (!this.keyframes.has(frame)) return;
+        const before = this.captureEdit();
         this.keyframes.delete(frame);
-        this.saveToStorage();
-        setRenderOne(true);
+        this.recordEdit("Delete horizon keyframe", before);
     }
 
     // Linear interpolation between bracketing keyframes. Outside the
@@ -660,14 +690,13 @@ function toggleEnable() {
     }
 }
 
-// It cannot be undone, so it asks first, as Sitrec's other clears of work a person did do.
 async function clearAll() {
     const he = horizonExtractor;
     if (!he || he.keyframes.size === 0) return;
     const n = he.keyframes.size;
     const ok = await showConfirm(
         `Delete all ${n} horizon keyframe${n === 1 ? "" : "s"}, including the copy kept in this browser `
-        + "for this video? You cannot undo it.",
+        + "for this video?",
         {title: "Clear All Keyframes", yesLabel: "Delete", noLabel: "Keep"});
     if (ok && horizonExtractor === he) he.clearKeyframes();
 }
@@ -707,7 +736,7 @@ export function setupHorizonExtractorMenu() {
 
     horizonFolder.add(actions, "clearAll").name("Clear All Keyframes")
         .tooltip("Delete every horizon keyframe, including the copy kept in this browser's storage for this video. "
-            + "It asks first: you cannot undo it.");
+            + "Undo restores the keyframes.");
 
     horizonFolder.add(actions, "showHintAgain").name("Show Hint")
         .tooltip("Re-display the on-screen interaction hint");

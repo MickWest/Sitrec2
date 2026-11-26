@@ -1998,7 +1998,7 @@ export const setupMethods = {
             .moveToFirst()
             .tooltip(t("custom.showHide.addTrackFromCameraLOS.tooltip"))
 
-        guiMenus.contents.add(this, "removeAllTracks")
+        guiMenus.contents.add({removeAllTracks: () => this.removeAllTracks(true)}, "removeAllTracks")
             .name(t("custom.showHide.removeAllTracks.label"))
             .moveToFirst()
             .tooltip(t("custom.showHide.removeAllTracks.tooltip"))
