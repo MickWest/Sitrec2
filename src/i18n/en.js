@@ -2832,6 +2832,14 @@ const en = {
         windKnots: { label: "Wind (knots)", tooltip: "Wind speed, in knots. Used only when Wind Mode is Custom." },
         deleteClouds: { label: "Delete Clouds", tooltip: "Delete this cloud layer, after you confirm. You can undo the delete." },
     },
+    powerNetwork: {
+        tower: "Tower {{n}}", pole: "Pole {{n}}",
+        connections: "Wire connections", from: "From", to: "To", addFrom: "Add From", addTo: "Add To",
+        disconnected: "None", editConnection: "Change wire connection", editSupport: "Edit mapped {{name}}",
+        portTip: "The wire attaches to this object's {{port}} points on the insulators.",
+        label: "Power network · {{filename}}",
+        tooltip: "{{towers}} mapped towers, {{poles}} poles, {{ways}} line routes. Support heights use mapped values where available. Conductor layout and sag are approximate.",
+    },
     cloudField: {
         folder: { label: "Cloud Field: {{name}}", tooltip: "A cloud field loaded from a cloud field file (.json). Its clouds are soft glowing spheres that drift together with one wind." },
         visible: { label: "Visible", tooltip: "Show or hide this cloud field." },

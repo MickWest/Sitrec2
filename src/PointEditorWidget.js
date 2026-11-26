@@ -14,6 +14,7 @@ import {
     PlaneGeometry,
     Quaternion,
     Raycaster,
+    TorusGeometry,
     Vector2,
     Vector3
 } from "three";
@@ -145,10 +146,13 @@ export class PointEditorWidget extends EventDispatcher {
         this.unregisterInteraction = registerEditorInteraction(this, {
             id: `point-widget:${this.group.uuid}`,
             enabled: () => !!this.object && this.group.visible,
+            acceptButton: e => e.button === 2 && this.isRotationToggle(e),
             pick: e => {
                 if (!this.setupRaycasterForEvent(e)) return null;
                 const hit = this.pickHandle();
-                return hit ? {distance: hit.distance, priority: 70, handle: hit.object} : null;
+                const toggle = this.isRotationToggle(e);
+                if (!hit || (toggle && hit.bodyGrip)) return null;
+                return {distance: hit.distance, priority: 70, handle: hit.object, suppressContextMenu: toggle};
             },
             rollback: e => this.rollbackDrag(e),
         });
@@ -238,7 +242,33 @@ export class PointEditorWidget extends EventDispatcher {
         return grid;
     }
 
+    isRotationToggle(event) {
+        return event.ctrlKey && !event.shiftKey && !event.metaKey && this.canRotate?.();
+    }
+
+    createRotationHandle() {
+        const group = this.handles.rotation = new Group();
+        const color = new MeshBasicMaterial({color: 0xffad32, transparent: true, depthWrite: false});
+        const arc = Math.PI * 1.70;
+        const ring = new Mesh(new TorusGeometry(.91, .065, 8, 48, arc), color);
+        const tip = new Mesh(new ConeGeometry(.16, .36, 12), color);
+        tip.position.set(.91*Math.cos(arc), .91*Math.sin(arc), 0);
+        tip.rotation.z = arc;
+        // The entire disc remains grabbable, including when seen edge-on.
+        const grip = new Mesh(new CylinderGeometry(1.08,1.08,.25,32).rotateX(Math.PI/2), color);
+        grip.visible = false;
+        group.add(ring, tip, grip);
+        group.traverse(child => {
+            child.layers.mask = LAYER.MASK_HELPERS | LAYER.MASK_LOOK;
+            child.userData.type = 'rotateY';
+            child.userData.handleRole = 'rotate';
+        });
+        this.group.add(group);
+        return group;
+    }
+
     movementMode(view) {
+        if (this.rotationMode && this.canRotate?.()) return 'rotateY';
         if (view?.id !== 'mainView' && view?.id !== 'lookView') return 'surface';
         if (this.isDragging) {
             return ['horizontal', 'vertical'].includes(this.activeDragMode) ? 'surface' : this.activeDragMode;
@@ -386,8 +416,15 @@ export class PointEditorWidget extends EventDispatcher {
         const mode = this.movementMode(view);
         const usePlane = mode === 'lookCameraPlane' || mode === 'screenPlane';
         const usePush = mode === 'push';
-        this.handles.disc.visible = !usePlane && !usePush;
-        this.handles.arrowUp.visible = this.handles.arrowDown.visible = !this.groundMoveOnly && !usePush && !usePlane;
+        const rotating = mode === 'rotateY';
+        if (rotating || this.handles.rotation) {
+            const ring = this.handles.rotation ?? this.createRotationHandle();
+            ring.visible = rotating;
+            ring.quaternion.setFromUnitVectors(new Vector3(0,0,1), localUp);
+            ring.children[0].material.opacity = this.handles.disc.material.opacity;
+        }
+        this.handles.disc.visible = !usePlane && !usePush && !rotating;
+        this.handles.arrowUp.visible = this.handles.arrowDown.visible = !this.groundMoveOnly && !usePush && !usePlane && !rotating;
         if (usePush) {
             const arrow = this.handles.push ?? this.createPushArrow();
             arrow.visible = true;
@@ -448,6 +485,7 @@ export class PointEditorWidget extends EventDispatcher {
         const arrowMeters = view.pixelsToMeters(this.object.position, ARROW_PIXEL_SIZE);
         
         this.handles.disc.scale.set(discMeters, discMeters, 1);
+        this.handles.rotation?.scale.setScalar(discMeters);
         this.handles.planeGrid?.scale.set(discMeters, discMeters, 1);
         this.handles.push?.scale.set(arrowMeters * 2, arrowMeters, arrowMeters * 2);
         
@@ -499,6 +537,10 @@ export class PointEditorWidget extends EventDispatcher {
     }
 
     pickHandle() {
+        if (this.handles.rotation?.visible) {
+            const ring = this.handles.rotation;
+            return this.raycaster.intersectObject(ring,true)[0] ?? this.pickObjectAsHandle(ring);
+        }
         if (this.handles.push?.visible) {
             return this.raycaster.intersectObject(this.handles.push, true)[0]
                 ?? this.pickObjectAsHandle(this.handles.push);
@@ -514,7 +556,7 @@ export class PointEditorWidget extends EventDispatcher {
 
     pickObjectAsHandle(handle) {
         const hit = this.pickObjectSurface?.(this.raycaster, this.activeView);
-        return hit ? {...hit, object: handle} : null;
+        return hit ? {...hit, object: handle, bodyGrip: true} : null;
     }
     
     onPointerDown(event) {
@@ -532,7 +574,8 @@ export class PointEditorWidget extends EventDispatcher {
         // (N-1 points), and the state comparison logged a spurious "Move track control
         // point" undo on top of the delete. Undoing it wrote N positions into an N-1
         // array and shifted every point past the deletion.
-        if (event.button !== 0) {
+        const toggle = this.isRotationToggle(event);
+        if (event.button !== 0 && !(toggle && event.button === 2)) {
             return;
         }
 
@@ -545,6 +588,13 @@ export class PointEditorWidget extends EventDispatcher {
         if (!dragType && intersected.parent) {
             dragType = intersected.parent.userData.type;
         }
+        if (toggle && !hit.bodyGrip) {
+            this.rotationMode = !this.rotationMode;
+            // A press entering rotation can turn immediately. A press returning
+            // to move only switches the handles, so it cannot shift the object.
+            dragType = this.rotationMode ? 'rotateY' : 'toggle';
+            this.updateHandleScales(this.activeView);
+        }
         
         console.log('onPointerDown: intersected object:', intersected.name, 'dragType:', dragType);
         
@@ -555,7 +605,10 @@ export class PointEditorWidget extends EventDispatcher {
         this.dragStartAltitude = ECEFToLLAVD_radii(this.dragStartWorld).z;
         this.planeScreenDrag = false;
 
-        if (dragType === 'push') {
+        if (dragType === 'rotateY' || dragType === 'toggle') {
+            this.activeDragMode = dragType;
+            this.rotationStartX = event.clientX;
+        } else if (dragType === 'push') {
             this.activeDragMode = 'push';
             const camera = ViewMan.get('lookView').camera;
             this.pushOrigin.copy(camera.getWorldPosition(new Vector3()));
@@ -610,7 +663,7 @@ export class PointEditorWidget extends EventDispatcher {
 
         // Disable all camera controls on the press, before the first move event.
         this.isPointerDown = true;
-        this.pointerDownButton = event.button;
+        this.pointerDownButton = toggle ? 0 : event.button;
         this.draggedHandle = dragType;
         this.isDragging = true;
         this.updatePushLine(this.activeView);
@@ -653,6 +706,11 @@ export class PointEditorWidget extends EventDispatcher {
             return;
         }
         
+        if (this.activeDragMode === 'toggle') return;
+        if (this.activeDragMode === 'rotateY') {
+            this.dispatchEvent({type: 'rotateY', pixels: event.clientX - this.rotationStartX});
+            return;
+        }
         if (!this.setupRaycasterForEvent(event)) {
             return;
         }
@@ -782,6 +840,10 @@ export class PointEditorWidget extends EventDispatcher {
     
     dispose() {
         this.unregisterInteraction?.();
+        if (this.handles.rotation) {
+            for (const child of this.handles.rotation.children) child.geometry.dispose();
+            this.handles.rotation.children[0].material.dispose();
+        }
 
         if (this.pushLine) {
             this.pushLine.geometry.dispose();

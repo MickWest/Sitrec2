@@ -158,6 +158,7 @@ export const mirrorMethods = {
      * @returns {GUI|null} the menu, or null if the node has no GUI or creation was blocked
      */
     showNodeEditMenu(node, clientX, clientY) {
+        node?.refreshPowerLinks?.();
         const guiToMirror = this.nodeEditFolder(node);
         if (!node || !guiToMirror) {
             console.log(`Node ${node?.id} not found or has no GUI folder`);

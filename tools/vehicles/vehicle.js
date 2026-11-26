@@ -1,25 +1,31 @@
 import {buildAircraft, disposeAircraft} from "./aircraft.js";
 import {buildRoadVehicle} from "./roadVehicle.js";
-import {isRoad, isMultirotor, isBalloon, isKite, isBird, normalizeParameters} from "./vehicleSchema.js";
+import {isRoad, isMultirotor, isBalloon, isKite, isBird, isGroundObject, normalizeParameters} from "./vehicleSchema.js";
 import {buildMultirotor} from "./multirotor.js";
 import {buildBalloon} from "./balloon.js";
 import {buildKite} from "./kite.js";
 import {buildBird} from "./bird.js";
+import {buildGroundObject} from "./groundObject.js";
+import {withSRGBInputs} from "./designColors.js";
 import {addVehicleLights} from "./vehicleLights.js";
 import {addVehicleLivery} from "./vehicleLivery.js";
 import {visibleVehicleBounds, tagThermalMesh} from "./thermalTags.js";
 import {Group, Vector3} from "three";
 export function buildVehicle(input) {
-    const p = normalizeParameters(input), plain = isKite(p) || isBird(p);     // no lettering on a kite or a bird
+    return withSRGBInputs(() => buildModel(input));
+}
+
+function buildModel(input) {
+    const p = normalizeParameters(input), ground = isGroundObject(p), plain = ground || isKite(p) || isBird(p);
     const styled = p.brandLivery === "sitrec" && !plain ? {...p,bodyColor:"#f1f5f7",wingColor:"#e3eaed",cargoColor:"#f1f5f7",trimColor:p.brandColor,accentColor:p.brandColor,engineColor:p.brandColor,livery:"tail",sideStripe:false,...(isBalloon(p)?{balloonPattern:"solid"}:{})} : p;
-    const model = isKite(p)?buildKite(p):isBird(p)?buildBird(p):isMultirotor(p)?buildMultirotor(styled):isBalloon(p)?buildBalloon(styled):isRoad(p) ? buildRoadVehicle(styled) : buildAircraft(styled);
+    const model = ground ? buildGroundObject(p) : isKite(p)?buildKite(p):isBird(p)?buildBird(p):isMultirotor(p)?buildMultirotor(styled):isBalloon(p)?buildBalloon(styled):isRoad(p) ? buildRoadVehicle(styled) : buildAircraft(styled);
     model.root.userData.parameters = p;
     model.root.userData.generator = "Sitrec Vehicle Designer";
     model.root.userData.units = "metres";
     model.root.userData.up = "+Y";
     model.root.userData.forward = "+Z";
     if (!plain) addVehicleLivery(model,p);
-    addVehicleLights(model, p);
+    if (!ground) addVehicleLights(model, p);
     model.root.traverse(object => {if (object.isMesh) tagThermalMesh(object, p);});
     const scale = p.overallScale;
     if (scale !== 1) {

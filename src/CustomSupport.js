@@ -527,6 +527,7 @@ export class CCustomManager {
             if (menu._mirrorSource === node.gui) menu.destroy();
         }
         this.clearEditingObject(node);
+        node.powerNetworkOwner?.removeSupport(node.id);
 
         const trackOb = TrackManager.trackForObject(id);
         if (trackOb?.objectID === id) TrackManager.detachObject(trackOb);

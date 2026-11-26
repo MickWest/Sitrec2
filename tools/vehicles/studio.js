@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+import {withSRGBInputs} from "./designColors.js";
 
 const directions = {perspective:[-1.6,.7,1],front:[0,0,1],rear:[0,0,-1],side:[-1,0,0],top:[0,1,.0001],underside:[0,-1,.4]};
 
@@ -41,9 +42,13 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
     mount.append(renderer.domElement); renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute("aria-label","3D object. Drag to orbit, scroll to zoom, right-drag to pan.");
     const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(fov,1,.01,3000);
-    const ambient = new THREE.HemisphereLight("#ffffff","#718da6",1.6);
-    const key = new THREE.DirectionalLight("#fff8ed",2.3); key.position.set(20,35,25);
-    const fill = new THREE.DirectionalLight("#cde8ff",.85); fill.position.set(-25,10,-15);
+    const [ambient, key, fill] = withSRGBInputs(() => [
+        new THREE.HemisphereLight("#ffffff","#718da6",1.6),
+        new THREE.DirectionalLight("#fff8ed",2.3),
+        new THREE.DirectionalLight("#cde8ff",.85),
+    ]);
+    key.position.set(20,35,25);
+    fill.position.set(-25,10,-15);
     scene.add(ambient,key,fill);
     const controls = new OrbitControls(camera,renderer.domElement);
     controls.enableDamping = damping; controls.dampingFactor = .1; controls.autoRotateSpeed = .65;

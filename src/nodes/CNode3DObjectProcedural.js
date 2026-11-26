@@ -8,6 +8,7 @@ import {refreshVehicleBakeUsage} from "../procedural/VehicleBakeAssets";
 import {collectVehicleSpinners, poseVehicleSpinners} from "../procedural/VehicleAnimation";
 import {applyVehicleLightOverrides, captureVehicleLightOverrides, vehicleLightState} from "../procedural/VehicleLightState";
 import {KITE_LED_PATTERN_FIELDS, KITE_LED_TAIL_PATTERN_FIELDS} from "../../tools/vehicles/kiteParameters.js";
+import {refreshPowerLinks, syncPowerLinkFolder} from "../PowerObjectLinkControls";
 import {par} from "../par";
 
 export const proceduralObjectMethods = {
@@ -25,7 +26,7 @@ export const proceduralObjectMethods = {
         };
         this.vehicleControls = {};
         const tips = {
-            browse: "Open the Custom Object Designer to choose a car, truck, aircraft, drone, balloon, sky lantern, kite or bird.\n"
+            browse: "Open the Custom Object Designer to choose a vehicle, balloon, kite, bird or ground object such as a transmission tower, tree or boulder.\n"
                 + "The design you apply becomes this object's model.",
             edit: "Open the Custom Object Designer on this object's current design, to change it.",
             freeze: "Make a GLB model file from this design, and use it in place of the design.\n"
@@ -61,13 +62,19 @@ export const proceduralObjectMethods = {
         status.isCommon = true; this.vehicleControls.status = status;
     },
 
+    refreshPowerLinks() {
+        refreshPowerLinks(this);
+    },
+
     updateVehicleControls() {
+        syncPowerLinkFolder(this);
         refreshVehicleBakeUsage(FileManager?.list,NodeMan?.list);
         if (!this.vehicleControls) return;
         const model = this.modelOrGeometry === "model", source = model && this.proceduralModel;
         this.vehicleControls.browse.show();
         if (source) this.modelMenu?.hide();
-        for (const key of ["edit", "animation", "status"]) this.vehicleControls[key][source ? "show" : "hide"]();
+        for (const key of ["edit", "status"]) this.vehicleControls[key][source ? "show" : "hide"]();
+        this.vehicleControls.animation[source && source.recipe.parameters.vehicleType !== "ground" ? "show" : "hide"]();
         this.vehicleControls.file[source ? "show" : "hide"]();
         this.vehicleControls.freeze[source?.mode === "procedural" ? "show" : "hide"]();
         // A frozen bird has its wing motion in its GLB file, so these two controls are for a procedural bird only.

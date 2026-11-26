@@ -362,7 +362,10 @@ export class InteractionRouter {
             if (reason === "rollback" && s.owner.rollback) s.owner.rollback(event);
             else if (reason !== "released") (s.owner.cancel ?? s.owner.end)?.(event, reason);
             else s.owner.end?.(event, {click: s.maxTravel <= CLICK_SLOP_PX, maxTravel: s.maxTravel});
-            if (s.button === 2) {
+            if (s.owner.suppressContextMenu) {
+                // macOS can send a contextmenu after a Control-primary gesture ends.
+                this.lastContextGesture = {target: s.start.target, controlClick: true};
+            } else if (s.button === 2) {
                 this.lastContextGesture = {target: s.start.target, x: s.start.clientX, y: s.start.clientY};
                 if (reason === "released" && s.maxTravel <= CLICK_SLOP_PX) {
                     this.openContextMenu(e, s.contextOwner, s.navigation ? s.owner : s.fallback);
@@ -410,7 +413,7 @@ export class InteractionRouter {
     contextMenu(e) {
         const native = nativeTarget(e);
         if (native && !this.candidates(e, "contextMenu").some(c => c.allowNative)) return;
-        if (this.session || (e.button === 2 && this.lastContextGesture?.target === e.target)) {
+        if (this.session || ((e.button === 2 || this.lastContextGesture?.controlClick) && this.lastContextGesture?.target === e.target)) {
             this.consume(e);
             return;
         }

@@ -28,6 +28,14 @@ do not change the object's opacity.
 To try this with a new object, right-click the ground in a Custom sitch and choose
 **Add 3D Object**. See [Adding Objects and Tracks](SceneObjects.md) for other kinds of object.
 
+## Rotate an object
+
+With the object's edit window open, or while holding **Opt/Alt**, **Control-click**
+the move widget. The green disk and red arrows change to an amber rotation ring.
+Drag right to increase **Rotate Y** or left to decrease it. You can start dragging
+on the same Control-click. **Esc** cancels the drag. Control-click the ring to
+return to moving. Each completed rotation can be undone in one step.
+
 ## Choose a mode
 
 Move the pointer to the **left edge** of Main or Look view to reveal its vertical toolbar.

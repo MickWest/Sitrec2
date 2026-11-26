@@ -43,6 +43,7 @@ function balloon() {
     node.recalculate();
     return node;
 }
+let moveNodes;
 function startMove(node, frame = 0) {
     const widget = ObjectMoveWidget;
     widget.node = objectFor(node);
@@ -57,12 +58,13 @@ function startMove(node, frame = 0) {
 }
 beforeEach(() => {
     setSit({frames: 120, fps: 30, simSpeed: 1, lat: 34, lon: -118});
-    setNodeMan({get: id => id === "targetWind" ? {from: 270, knots: 10} : null});
+    moveNodes = new Map([["targetWind", {from: 270, knots: 10}]]);
+    setNodeMan({get: id => moveNodes.get(id)});
     jest.clearAllMocks();
 });
 afterEach(() => {
     ObjectMoveWidget.dragging = false; ObjectMoveWidget.dragPrepared = false;
-    ObjectMoveWidget.target = ObjectMoveWidget.node = null;
+    ObjectMoveWidget.widget = ObjectMoveWidget.target = ObjectMoveWidget.node = null;
     ObjectMoveWidget.otherKeysHeld.clear();
     ObjectMoveWidget.altHeld = ObjectMoveWidget.altMode = false;
 });
@@ -108,9 +110,32 @@ test("a key held before Option and repeated keydowns also block object picking",
     expect(widget.altHeld).toBe(true);
 });
 
-test.each(['shiftKey','ctrlKey','metaKey'])("Option plus %s does not pick objects", modifier => {
+test.each(['shiftKey','metaKey'])("Option plus %s does not pick objects", modifier => {
     ObjectMoveWidget.updateAltHeld({altKey:true,[modifier]:true});
     expect(ObjectMoveWidget.altHeld).toBe(false);
+});
+
+test('Option-Control keeps the object active, and a rotation edits only Rotate Y with one undo', () => {
+    const widget = startMove(balloon());
+    widget.updateHeldKey({key: 'Control', code: 'ControlLeft', altKey: true, ctrlKey: true}, true);
+    expect(widget.altHeld).toBe(true);
+    const node = widget.node, position = widget.target.position.getLLA();
+    moveNodes.set(node.id, node);
+    node.common = {rotateY: 175};
+    widget.rotationStart = 175;
+    widget.rotateByPixels(20);
+    expect(node.common.rotateY).toBe(-175);
+    widget.rotateByPixels(30);
+    widget.endDrag();
+    expect(widget.target.position.getLLA()).toEqual(position);
+    expect(undoManager.add).toHaveBeenCalledTimes(1);
+    const undo = undoManager.add.mock.calls[0][0];
+    undo.undo(); expect(node.common.rotateY).toBe(175);
+    undo.redo(); expect(node.common.rotateY).toBe(-170);
+    widget.rotationStart = -170; widget.dragging = true;
+    widget.rotateByPixels(-40); widget.rollbackDrag();
+    expect(node.common.rotateY).toBe(-170);
+    expect(undoManager.add).toHaveBeenCalledTimes(1);
 });
 
 test("Option cannot select an object through the globe, but can select it from the other side", () => {

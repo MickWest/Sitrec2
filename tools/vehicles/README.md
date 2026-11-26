@@ -1,7 +1,7 @@
 # Custom Object Designer
 
 The Custom Object Designer builds 3D models of aircraft, helicopters, drones,
-cars, trucks, balloons, sky lanterns, kites and birds from presets and sliders.
+cars, trucks, balloons, sky lanterns, kites, birds and ground objects from presets and sliders.
 Put a model on a Sitrec object, or export it as a GLB (binary glTF) 3D model
 file. The models are procedural: code generates them from a set of parameters.
 They are visual models, and they do not simulate flight or lift. The one
@@ -11,6 +11,17 @@ uses (see [Kites](#kites)). A bird beats its wings at the rate in its design
 
 This tool was named Vehicle Designer. Its address, `tools/vehicles/`, its design
 files and its saved designs are not changed.
+
+In **Ground objects → Utilities**, the **Regional design** control changes the pole
+or pylon silhouette. The utility poles include North American timber crossarms,
+a British timber pole with a steel crossarm and a French concrete pole with a
+vaulted head. Lattice towers include North American stacked crossarms, a broad
+horizontal US single-circuit tower and a British three-tier double-circuit tower.
+Each has a gallery preset with starting dimensions. Regional designs are visual
+approximations. The British designs use operator examples from [UK Power Networks](https://media.umbraco.io/uk-power-networks/240nl2qn/ecs-01-1006-overhead-line-manual-erect-conductors-and-pole-top-equipment.pdf)
+and [National Grid](https://www.nationalgrid.com/document/154026/download).
+Examples of the vaulted head and horizontal tower are available from [Sicame](https://www.sicamefrance.com/pdffr/8996?lang=fr)
+and [AEP](https://www.aep.com/newsroom/resources/docs/AEP_Interstate_Project-Technologies.pdf).
 
 ## Standalone editor
 
@@ -88,11 +99,18 @@ The editor has these file and preview controls:
 
 Each object in a sitch has a folder in the **Objects** menu (see
 [Objects and 3D Models](https://github.com/MickWest/Sitrec2/blob/main/docs/CustomModels.md)).
-Open the folder and select **Browse custom objects…**. The visual picker has all 347
+Open the folder and select **Browse custom objects…**. The visual picker has all
 presets, with search, type/region filters, Favorites, Recently used, and
 **My models**. Select a tile to orbit its preview, then **Use this object**. The
 object in the sitch changes to the chosen model. The preview of a kite moves its
 tails as in a steady 12-knot wind, and the preview of a bird beats its wings.
+
+For a ground object, right-click its intended location, choose **Add 3D Object**,
+then **Browse custom objects… → Ground objects**. The transmission pylon has
+adjustable height, foot spacing, crossarm span, crossarm levels and lattice sections.
+Other presets include a wooden telegraph pole, an industrial chimney, a cooling
+tower, oak, pine and palm trees, and a boulder. The tree and boulder shape seeds
+give repeatable variations. The origin of each ground model is at its base.
 
 **Customize…** opens the full live designer. **Apply to object** accepts the
 draft, **Back** returns to the picker and keeps the draft, and **Cancel** leaves

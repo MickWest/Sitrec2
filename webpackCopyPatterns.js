@@ -122,7 +122,7 @@ patterns.push({
 for (const file of ["three.module.js", "three.core.js"]) {
     patterns.push({from: path.join(path.dirname(require.resolve("three")), file), to: `./tools/vehicles/vendor/${file}`});
 }
-for (const [folder, file] of [["controls", "OrbitControls.js"], ["exporters", "GLTFExporter.js"]]) {
+for (const [folder, file] of [["controls", "OrbitControls.js"], ["exporters", "GLTFExporter.js"], ["utils", "BufferGeometryUtils.js"]]) {
     patterns.push({from: require.resolve(`three/examples/jsm/${folder}/${file}`), to: `./tools/vehicles/vendor/${file}`});
 }
 patterns.push({from: path.join(path.dirname(require.resolve("three")), "../LICENSE"), to: "./tools/vehicles/vendor/THREE-LICENSE.txt"});

@@ -11,6 +11,7 @@ let overlayDiv = null;
 let filenameDiv = null;
 let currentParts = {map: "", elevation: "", water: "", tiles: "", cityLights: ""};
 let currentFilename = "";
+const powerLayers = new Set();
 
 function htmlToText(html) {
     // Convert an HTML snippet to plain text using the DOM, avoiding regex-based stripping
@@ -95,8 +96,7 @@ function renderFilename() {
 function render() {
     const el = createOverlay();
     if (!el) return;
-    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles, currentParts.cityLights]
-        .filter(Boolean);
+    const parts = Object.values(currentParts).filter(Boolean);
     if (parts.length === 0) {
         el.style.display = "none";
         return;
@@ -163,11 +163,19 @@ export function setCityLightsAttribution(sourceDef) {
     render();
 }
 
+export function setPowerNetworkAttribution(id, visible) {
+    if (visible) powerLayers.add(id);
+    else powerLayers.delete(id);
+    currentParts.power = powerLayers.size
+        ? '<a href="https://www.openstreetmap.org/copyright">Power network © OpenStreetMap contributors</a>' : "";
+    render();
+}
+
 /**
  * Return the current attribution as plain text (for canvas/video rendering).
  */
 export function getAttributionText() {
-    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles, currentParts.cityLights]
+    const parts = Object.values(currentParts)
         .filter(Boolean)
         .map(html => htmlToText(html));
     return parts.join(" | ");
@@ -212,6 +220,7 @@ export function disposeAttributionOverlay() {
     }
     overlayDiv = null;
     filenameDiv = null;
+    powerLayers.clear();
     currentParts = {map: "", elevation: "", water: "", tiles: "", cityLights: ""};
     currentFilename = "";
 }

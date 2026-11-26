@@ -91,6 +91,8 @@ import {addOptionToGUIMenu} from "./lil-gui-extras";
 import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
 import {importFOVJSON, isFOVJSON} from "./FOVInterchange";
 import {isCloudFieldJSON} from "./cloudField/CloudFieldFormat";
+import {parsePowerNetwork} from "./PowerNetworkFormat";
+import {CNodePowerNetwork} from "./nodes/CNodePowerNetwork";
 import {importCloudField} from "./cloudField/CloudFieldImport";
 import {isPhotoBackdropJSON} from "./photoBackdrop/PhotoBackdropFormat";
 import {importPhotoBackdrop} from "./photoBackdrop/PhotoBackdropImport";
@@ -591,6 +593,16 @@ export const parseMethods = {
             // the Drive Look View setting, which a new import would replace.
             if (!Globals.deserializing) importCameraStateCSV(filename, rows);
             parsedFile = rows;
+        }
+
+        if (fileManagerEntry.dataType === "powerNetwork") {
+            // The source stays in loadedFiles. The stable ID restores the layer's visibility.
+            const id = "PowerNetwork_" + encodeURIComponent(filename);
+            const existing = NodeMan.get(id, false);
+            if (existing && Globals.deserializing) return true;
+            if (existing) NodeMan.disposeRemove(existing);
+            new CNodePowerNetwork({id, filename, network: parsedFile});
+            return true;
         }
 
         if (fileManagerEntry.dataType === "cloudField") {
@@ -1640,6 +1652,11 @@ export const parseMethods = {
                 case "xml": {
                     const xmlText = decoder.decode(buffer);
                     const xmlParsed = parseXml(xmlText);
+                    parsed = parsePowerNetwork(xmlParsed);
+                    if (parsed) {
+                        dataType = "powerNetwork";
+                        break;
+                    }
                     parsed = this.detectTrackFile(filename, xmlParsed, xmlText);
                     if (parsed) {
                         dataType = "trackfile";
@@ -1704,6 +1721,11 @@ export const parseMethods = {
                 case "geojson":
                 case "json": {
                     const jsonParsed = JSON.parse(decoder.decode(buffer));
+                    parsed = parsePowerNetwork(jsonParsed);
+                    if (parsed) {
+                        dataType = "powerNetwork";
+                        break;
+                    }
                     if (jsonParsed && jsonParsed.kind === "klv-pes-pts") {
                         // PES PTS sidecar emitted by older saves (since renamed
                         // to .pts.txt). Loader fetches the URL directly via

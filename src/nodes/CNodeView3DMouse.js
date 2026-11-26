@@ -28,6 +28,7 @@ import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
 import {mouseInViewOnly, mouseInRenderedView, ndcToView, setRaycasterFromView, viewToClient, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
 import {CNode3DObject} from "./CNode3DObject";
+import {powerLayers} from "../PowerObjectLinks";
 import {FeatureManager} from "../CFeatureManager";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
@@ -1230,6 +1231,8 @@ export const mouseMethods = {
             const prevRaycasterMask = this.raycaster.layers.mask;
             this.raycaster.layers.mask = this.camera.layers.mask;
             this.raycaster.setFromCamera(mouseRay, this.camera);
+            // Other panes may have rendered a different detail level since this one.
+            for (const layer of powerLayers(NodeMan)) if (layer.visible) layer.display.setView(this.camera,this.heightPx);
             const allIntersects = this.raycaster.intersectObjects(this.scene.children, true);
             this.raycaster.layers.mask = prevRaycasterMask;
 
@@ -1300,7 +1303,10 @@ export const mouseMethods = {
 
 
                     const object = intersect.object;
-                    const objectID = this.findObjectID(object);
+                    const supportId = object.userData.supportIds?.[intersect.instanceId];
+                    const objectID = supportId
+                        ? NodeMan.get(this.findObjectID(object), false)?.editSupport?.(supportId)?.id
+                        : this.findObjectID(object);
                     
                     if (objectID) {
                         console.log(`Found object: ${objectID}`);

@@ -37,7 +37,7 @@ import {BufferGeometry, Float32BufferAttribute, Object3D, Vector3} from "three";
 import {PointEditorWidget} from "./PointEditorWidget";
 import {CNode3DObject} from "./nodes/CNode3DObject";
 import {GlobalScene} from "./LocalFrame";
-import {CustomManager, mainLoopCount, NodeMan, setRenderOne} from "./Globals";
+import {CustomManager, mainLoopCount, markShadowCastersDirty, NodeMan, setRenderOne} from "./Globals";
 import {par} from "./par";
 import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, projectWorldToView, viewToClient} from "./ViewUtils";
@@ -64,6 +64,12 @@ const FADE_MS = 150;
 
 // The widget's handle materials are authored at this opacity; the fade scales it.
 const WIDGET_OPACITY = 0.6;
+
+function setObjectRotationY(node, angle) {
+    node.common.rotateY = angle; // The menu listens to this value; preRender applies it in each view.
+    if (node.hasVisibleShadowCaster?.()) markShadowCastersDirty("object rotation");
+    setRenderOne(true);
+}
 
 /**
  * What, if anything, a drag on this object should write to.
@@ -158,7 +164,7 @@ class CObjectMoveWidget {
 
     updateHeldKey(event, down) {
         const key = event.code || event.key;
-        if (event.key !== "Alt" && key !== "AltLeft" && key !== "AltRight") {
+        if (!["Alt", "AltLeft", "AltRight", "Control", "ControlLeft", "ControlRight"].includes(key)) {
             if (down) this.otherKeysHeld.add(key);
             else this.otherKeysHeld.delete(key);
         }
@@ -166,9 +172,9 @@ class CObjectMoveWidget {
     }
 
     updateAltHeld(event) {
-        this.setAltHeld(!!event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey
+        this.setAltHeld(!!event.altKey && !event.shiftKey && !event.metaKey
             // Cycling movement modes is part of the Alt move gesture.
-            && (this.otherKeysHeld.size === 0 || (this.otherKeysHeld.size === 1 && this.otherKeysHeld.has('KeyM'))));
+            && (this.otherKeysHeld.size === 0 || (!event.ctrlKey && this.otherKeysHeld.size === 1 && this.otherKeysHeld.has('KeyM'))));
     }
 
     setAltHeld(held) {
@@ -187,6 +193,7 @@ class CObjectMoveWidget {
     resetForSitch() {
         setObjectMoveMode('surface');
         this.dragPrepared = false; // leaving a sitch must not record an unfinished drag
+        this.rotationStart = undefined;
         this.setNode(null);
         this.widget?.detach();
         this.widget?.getHelper().removeFromParent();
@@ -519,6 +526,8 @@ class CObjectMoveWidget {
             this.widget = new PointEditorWidget(view?.camera, view?.renderer?.domElement);
             this.widget.drawOnTop = true;
             this.widget.pickObjectSurface = (raycaster, view) => this.pickObjectSurface(raycaster, view);
+            this.widget.canRotate = () => Number.isFinite(this.node?.common?.rotateY);
+            this.widget.addEventListener("rotateY", event => this.rotateByPixels(event.pixels));
 
             // Draw the handles after the object, including transparent materials.
             const helper = this.widget.getHelper();
@@ -658,6 +667,7 @@ class CObjectMoveWidget {
             this.dragging = true;
             this.dragPrepared = false;
             this.dragAnchor.copy(this.proxy.position);
+            this.rotationStart = this.widget.activeDragMode === "rotateY" ? this.node.common.rotateY : undefined;
         } else {
             this.endDrag();
         }
@@ -671,6 +681,14 @@ class CObjectMoveWidget {
         // press to orbit once. Leaving a drag while Alt is still held keeps it on.
         this.suppressCamera(this.dragging || this.altMode);
         this.updateEditFocus();
+    }
+
+    rotateByPixels(pixels) {
+        if (!this.dragging || this.rotationStart === undefined) return;
+        const delta = Math.round(pixels / 2);
+        const raw = this.rotationStart + delta;
+        const angle = raw >= -180 && raw <= 180 ? raw : ((raw + 180) % 360 + 360) % 360 - 180;
+        if (angle !== this.node.common.rotateY) setObjectRotationY(this.node, angle);
     }
 
     onWidgetMoved() {
@@ -800,6 +818,10 @@ class CObjectMoveWidget {
     }
 
     rollbackDrag() {
+        if (this.rotationStart !== undefined) {
+            setObjectRotationY(this.node, this.rotationStart);
+            this.rotationStart = undefined;
+        }
         if (this.dragPrepared) {
             if (this.target.kind === "fixed") this.target.position.setLLA(...this.dragStartLLA);
             else {
@@ -822,7 +844,13 @@ class CObjectMoveWidget {
         if (!this.dragging) return;
         this.dragging = false;
 
-        if (this.dragPrepared && UndoManager) {
+        if (this.rotationStart !== undefined) {
+            const before = this.rotationStart, after = this.node.common.rotateY, id = this.node.id;
+            this.rotationStart = undefined;
+            if (after !== before) UndoManager.add({description: "Rotate " + (this.node.displayName ?? id),
+                undo: () => setObjectRotationY(NodeMan.get(id), before),
+                redo: () => setObjectRotationY(NodeMan.get(id), after)});
+        } else if (this.dragPrepared && UndoManager) {
             this.recordUndo();
         }
         this.dragPrepared = false;

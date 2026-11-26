@@ -238,6 +238,31 @@ function planeWidgetViews() {
     return {main, look, widget, position, pointerAt};
 }
 
+test.each([0, 2])('Control-click (button %i) toggles the rotation ring and tracks horizontal pixels', button => {
+    const {main, widget, position, pointerAt} = planeWidgetViews();
+    widget.canRotate = () => true;
+    const rotate = jest.fn(), pointer = pointerAt(position), toggle = {...pointer, button, ctrlKey: true};
+    widget.addEventListener('rotateY', rotate);
+    try {
+        widget.onPointerDown(toggle);
+        expect(widget.activeDragMode).toBe('rotateY');
+        expect(widget.handles.rotation.visible).toBe(true);
+        expect(widget.handles.planeGrid.visible).toBe(false);
+        widget.onPointerMove({...pointer, clientX: pointer.clientX + 27, clientY: pointer.clientY + 81});
+        expect(rotate).toHaveBeenLastCalledWith(expect.objectContaining({pixels: 27}));
+        expect(widget.object.position).toEqual(position);
+        widget.onPointerUp(toggle);
+        widget.onPointerDown(pointer);
+        expect(widget.activeDragMode).toBe('rotateY');
+        widget.onPointerUp(pointer);
+        widget.onPointerDown(toggle);
+        widget.onPointerUp(toggle);
+        widget.updateHandleScales(main);
+        expect(widget.handles.rotation.visible).toBe(false);
+        expect(widget.handles.planeGrid.visible).toBe(true);
+    } finally { widget.dispose(); setObjectMoveMode('surface'); }
+});
+
 test('Main view moves along the Look camera plane and freezes its geometry throughout the drag', () => {
     const {main, look, widget, position, pointerAt} = planeWidgetViews();
     try {

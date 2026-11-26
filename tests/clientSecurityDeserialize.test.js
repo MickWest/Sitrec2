@@ -20,6 +20,8 @@ function harness() {
         console: {log: jest.fn(), warn: jest.fn(), error: jest.fn()},
         Globals, Sit: {}, par: {}, GlobalDateTimeNode: {timeSetSerial: 0},
         FileManager: {list: {}},
+        manualPowerLayerID: require('../src/PowerObjectLinks').manualPowerLayerID,
+        NodeFactory: {create: jest.fn()},
         NodeMan: {exists: () => false, get: () => undefined, list: {}, recalculateAllRootFirst: jest.fn()},
         TrackManager: {applyDisplayNames() {}},
         TimelineMarkers: {deserialize() {}},
@@ -163,6 +165,15 @@ describe('initial look-camera placement after loading', () => {
         const {canPlaceInitialCamera} = require('../src/InitialCameraPosition');
         expect(canPlaceInitialCamera(position, 'fixedCamera')).toBe(allowed);
     });
+});
+
+test('restore creates the layer for hand-linked poles before applying its saved connections', async () => {
+    const {manager,context} = harness();
+    const id = context.manualPowerLayerID;
+    manager.deserialize({mods: {[id]: {wireEdits: {}}}});
+    await settle();
+    expect(context.NodeFactory.create).toHaveBeenCalledWith('PowerNetwork', {id});
+    expect(context.NodeFactory.create.mock.invocationCallOrder[0]).toBeLessThan(manager.deserializeMods.mock.invocationCallOrder[0]);
 });
 
 describe('a failure late in a sitch restore', () => {

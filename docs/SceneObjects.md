@@ -28,6 +28,46 @@ that Sitrec draws at a position. Tracks are in the **Contents** menu, and object
 **Objects** menu. An object is at a fixed position, or it is on a track and moves along it. One
 track can have several objects on it, or none.
 
+### Importing power lines and supports
+
+Export the mapped power network from Overpass Turbo as KML, GeoJSON or raw Overpass JSON.
+Drag the file into Sitrec. Under **Objects**, the **Power network** checkbox for that file
+shows or hides the whole layer. Saving the sitch keeps the import and its visibility.
+
+Sitrec places a lattice pylon at each OpenStreetMap `power=tower` point and a wooden
+utility pole at each `power=pole` point. Wires follow `power=line` and `power=minor_line`
+ways. Crossarms follow the route direction and supports sit on the terrain. Mapped heights
+take precedence over the preset heights. A tagged North American 765 kV single circuit
+uses the horizontal pylon design.
+
+Right-click a mapped pole or tower to edit it as a regular object. Move, rotate or resize it
+with the usual controls. The wires follow the insulators. Only supports you open get
+individual object editors. All other supports share the batched renderer.
+
+Open **Wire connections** in a pole or tower's object menu. **From** and **To** show
+the neighboring supports in the direction of the imported route. A junction can have
+several of either. Change a neighbor, choose **None** to disconnect it, or use **Add From**
+or **Add To** to connect another pole or tower. The outgoing wire on one support attaches
+to the incoming point on the next. Sitrec places both points at the insulators automatically.
+These controls also work between two hand-placed poles. Save the sitch to keep the edits.
+
+To connect wires to an editable pole already in the
+sitch, set the mapped point's `sitrec:object` tag to the custom object's node ID.
+The imported model appears when the file is opened without that object. The
+crossarm design, sag and any untagged dimensions are visual approximations. At a distance
+Sitrec draws a simpler structure and a single stroke for each route.
+
+The following Overpass Turbo query collects the four tags in the current map area.
+
+```
+[out:json][timeout:25];
+(node["power"~"^(tower|pole)$"] ({{bbox}});
+ way["power"~"^(line|minor_line)$"] ({{bbox}}););
+out body;
+>;
+out skel qt;
+```
+
 ### The kinds of track
 
 | Track | Where it comes from | What sets its positions |

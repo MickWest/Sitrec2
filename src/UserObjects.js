@@ -14,7 +14,7 @@
  * @returns {boolean}
  */
 export function isUserMadeObjectId(id) {
-    return /^syntheticObject_/.test(String(id));
+    return /^(syntheticObject_|powerSupport:)/.test(String(id));
 }
 
 // The two objects that the custom sitch defines. They were titled with their node ids until

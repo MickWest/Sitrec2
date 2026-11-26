@@ -37,7 +37,7 @@ export function registerEditorInteraction(model, options) {
         enabled: options.enabled ?? (() => model.editMode && model.visible !== false),
         valid: () => isViewDisplayed(view),
         hitTest: e => {
-            if (e.button !== 0) return null;
+            if (e.button !== 0 && !options.acceptButton?.(e)) return null;
             const candidateView = getInteractiveViewAt(e.clientX, e.clientY);
             if (!candidateView) return null;
             const hit = paddedHandlePick(e, at => options.pick(at, candidateView));

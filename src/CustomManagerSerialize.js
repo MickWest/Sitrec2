@@ -25,6 +25,7 @@ import {
     Units,
     withTestUser
 } from "./Globals";
+import {manualPowerLayerID} from "./PowerObjectLinks";
 import {applyViewingMenuLayout} from "./ViewingMenuLayout";
 import {checkAndOfferTLERefresh} from "./TLERefresh";
 import {showTemplateIntro, templateIntroText} from "./SitchTemplateInstructions";
@@ -1451,6 +1452,9 @@ export const serializeMethods = {
             // Rebuild fixed 3D objects BEFORE applying mods, under their saved ids, so
             // the mod carrying each one's geometry, size, color and material re-attaches.
             this.deserializeFixedObjects(sitchData.fixedObjects)
+            if (sitchData.mods?.[manualPowerLayerID] && !NodeMan.exists(manualPowerLayerID)) {
+                NodeFactory.create("PowerNetwork",{id:manualPowerLayerID});
+            }
 
             // Every track exists by now (imported, synthetic, balloon), so the names the user
             // gave them can go back on. Objects restore their own names from their mods.
