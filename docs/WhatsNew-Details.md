@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.208.2 (2026-11-25)
+
+A patch release with no commits after tag 2.208.1. All of its content is uncommitted changes in the release pair, which ship in the release commit. It fixes the finding of the User Data Egress Check on 2.208.1 (rule 5). No change comes from a forum thread. Apart from these changelog entries, the release changes only `src/RendererGPUInfo.js` and `tests/RendererGPUInfo.test.js`. No language file changes, no npm or PHP dependency changes, and no file in `scripts/` or `sitrecServer/` and no Dockerfile changes.
+
+### Bug Fixes
+- **The GPU line in the debug log no longer includes a view ID from sitch data** (uncommitted release-pair changes; `src/RendererGPUInfo.js` new `LOGGED_VIEW_NAMES`, new exported `gpuLogViewLabel`, changed `logRendererGPU`; `tests/RendererGPUInfo.test.js`).
+  - **Cause.** 2.208.1 added the line `[WebGL] GPU on view "<view id>" (created|restored): …`. `CNodeView3D.setupRenderPipeline` and its `_onContextRestored` handler call `logRendererGPU` with `this.id`. A view ID does not always come from the code. At the top level of a sitch definition, `SetupFromKeyAndData` (`src/SituationSetup.js`) makes the key of an object with a `kind` the node ID, so a sitch can name a `View3D` node, for example `lookView2` in `data/flir1/SitFlir1.js`. Help → *Export Debug Log* saves the console messages of the session (log, warning and error; the last 10,000; a development build does not record them). So an exported log showed the name that a sitch gave to a 3D view. The egress check on 2.208.1 reported this at `src/RendererGPUInfo.js:40`, and related it to the refused pattern *Control values or panel titles in the debug log* in `scripts/egress-accepted-patterns.md`. So the 2.208.1 *Debug log* note, that the line contains no location or sitch data, was not fully true.
+  - **Fix.** `gpuLogViewLabel(viewId)` returns the ID only when it is in `LOGGED_VIEW_NAMES`. That set holds `mainView` and `lookView`, the IDs that the `mainView` and `lookView` cases of `SetupFromKeyAndData` give by default. For any other ID it returns `other 3D view`. The line is now `[WebGL] GPU on view "<label>" (created|restored): …`, where `<label>` is `mainView`, `lookView` or `other 3D view`. The renderer, vendor and power-preference parts of the line do not change, and the callers do not change. A code comment gives the reason.
+    - Code-defined 3D views with other IDs now also show as `other 3D view`, for example `podBackView`, `podsEyeView` and `podsEyeViewDero` (`src/JetStuff.js`), `footballView` (`src/Football.js`) and the admin-only `mtsLightPathView` (`src/CustomManagerSetup.js`). So more than one view can have the same label in an exported log.
+  - **Test.** New test *a view ID from sitch data is not written to the debug log* in `tests/RendererGPUInfo.test.js`. It calls `logRendererGPU` with `lookView` and then with `My private sitch view name`. It checks three things: the first line contains `view "lookView" (created)`, the second contains `view "other 3D view" (created)`, and the second does not contain the supplied ID. It checks the `console.log` text and does not run the debug log capture.
+  - **Not changed.** Three older `console.warn` lines in `src/nodes/CNodeView3D.js` still write `this.id`. They are already in 2.208.0, and this release does not change them:
+    - `[WebGL] Context LOST on view "<id>"` and `[WebGL] Context restored on view "<id>"`, in the `_onContextLost` and `_onContextRestored` handlers (since 2b685e63, 2026-05-06);
+    - `[Render] <id>: requested … MSAA samples; using …`, in `createRenderTargets`, when the multisample anti-aliasing (MSAA) render target gets a different sample count than requested (since 3df56b7a, 2026-09-08).
+    So when a WebGL context is lost or restored, or the sample count changes, an exported debug log can still contain a view ID from sitch data.
+
 ## Version 2.208.1 (2026-11-25)
 
 A patch release. Its content is two commits after tag 2.208.0, and there are no uncommitted changes in the release pair. `06da7eed` makes rendering faster and reports the GPU:

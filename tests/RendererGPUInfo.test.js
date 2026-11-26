@@ -67,3 +67,11 @@ test("restoration reads the current GPU again instead of reporting cached hardwa
     expect(log.mock.calls[1][0]).toContain('view "mainView" (restored)');
     expect(log.mock.calls[1][0]).toContain('renderer (unmasked)="Replacement GPU"');
 });
+
+test("a view ID from sitch data is not written to the debug log", () => {
+    logRendererGPU(renderer, "lookView");
+    logRendererGPU(renderer, "My private sitch view name");
+    expect(log.mock.calls[0][0]).toContain('view "lookView" (created)');
+    expect(log.mock.calls[1][0]).toContain('view "other 3D view" (created)');
+    expect(log.mock.calls[1][0]).not.toContain("My private sitch view name");
+});

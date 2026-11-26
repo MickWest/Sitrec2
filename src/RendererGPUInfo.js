@@ -11,6 +11,13 @@ function readStringParameter(gl, parameter) {
     }
 }
 
+// A view ID can come from sitch data, and the console goes into the exported debug
+// log, so log only the names that the code itself defines.
+const LOGGED_VIEW_NAMES = new Set(["mainView", "lookView"]);
+export function gpuLogViewLabel(viewId) {
+    return LOGGED_VIEW_NAMES.has(viewId) ? viewId : "other 3D view";
+}
+
 // Read the view's existing context only at creation/restoration. Privacy settings
 // may hide the hardware identity or reject queries; diagnostics must not stop rendering.
 export function logRendererGPU(renderer, viewId, event = "created") {
@@ -37,7 +44,7 @@ export function logRendererGPU(renderer, viewId, event = "created") {
         // A lost or unavailable context must not make GPU diagnostics fatal.
     }
     try {
-        console.log(`[WebGL] GPU on view "${viewId}" (${event}): `
+        console.log(`[WebGL] GPU on view "${gpuLogViewLabel(viewId)}" (${event}): `
             + `renderer (${identity})="${rendererName ?? "unavailable"}"; `
             + `vendor="${vendorName ?? "unavailable"}"; `
             + `requested power preference="${WEBGL_POWER_PREFERENCE}" (hint)`);

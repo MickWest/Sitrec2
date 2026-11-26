@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.208.2 (2026-11-25)
+
+### Bug Fixes
+- Fixed Help → Export Debug Log saving the name that a sitch gives to a 3D view, in the line that records which graphics processor (GPU) each 3D view uses. That line now names only the main view and the look view, and calls every other 3D view "other 3D view".
+
 ## Version 2.208.1 (2026-11-25)
 
 ### Improvements
