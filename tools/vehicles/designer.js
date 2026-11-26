@@ -8,7 +8,8 @@ import {animateVehicleLights} from "./vehicleLights.js";
 import {createVehicleRecipe, readVehicleRecipe} from "./recipe.js";
 import {generateVehicle} from "./generator.js";
 import {poseVehicleSpinners} from "./motion.js";
-import {createVehicleStudio} from "./studio.js";
+import {createVehicleStudio, transmissionViewDirection} from "./studio.js";
+import {tubularTower} from "./groundParameters.js";
 import {createVehicleFilter, populateVehicleFilters} from "./catalog.js";
 import {vehicleFileStem} from "./recipeFormat.js";
 import {downloadVehicleBlob, downloadVehicleRecipe, readVehicleRecipeFile} from "./files.js";
@@ -117,8 +118,11 @@ function updateCockpitControls() {
     if(isBird(params))return updateBirdControls();
     if (isGroundObject(params)) {
         const fixedHead = params.poleStyle === "british" || params.poleStyle === "vaulted";
-        const inactive = {armLevels: fixedHead || params.towerStyle === "horizontal", pins: fixedHead,
-            concreteColor: params.poleStyle !== "vaulted", woodColor: params.poleStyle === "vaulted"};
+        const tower = params.groundKind === "pylon", style = params.towerStyle, tubular = tubularTower(style);
+        const inactive = {armLevels: fixedHead || (tower && !["us","british"].includes(style)), pins: fixedHead,
+            bays: tubular, shaftDiameter: !tubular, baseWidth: tubular && !["woodH","wintrack"].includes(style),
+            steelColor: style === "woodH", concreteColor: params.poleStyle !== "vaulted",
+            woodColor: tower ? style !== "woodH" : params.poleStyle === "vaulted"};
         for (const [key,disabled] of Object.entries(inactive)) for (const input of fieldControls.get(key) ?? []) {
             input.disabled = disabled; input.closest(".field").classList.toggle("inactive", disabled);
         }
@@ -330,7 +334,8 @@ function rebuild() {
 function fit() {
     if (!model) return;
     const view = currentView === "perspective" && (params.ledEnabled || params.ledTailEnabled) ? "underside" : currentView;
-    studio.fit(model.sweepBounds ?? model.bounds,{view,paddingX:1.25,paddingY:1.55});
+    const direction = view === "perspective" && params.groundKind === "pylon" ? transmissionViewDirection : undefined;
+    studio.fit(model.sweepBounds ?? model.bounds,{view,direction,paddingX:1.25,paddingY:1.55});
     renderDirty = true;
 }
 

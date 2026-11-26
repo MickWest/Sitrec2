@@ -3,13 +3,15 @@ import {
     LineSegments, Matrix4, MeshStandardMaterial, Sphere, Vector3,
 } from "three";
 import {mergeGeometries} from "three/addons/utils/BufferGeometryUtils.js";
-import {buildGroundObject, powerWireAttachment} from "../tools/vehicles/groundObject";
+import {buildGroundObject, powerWireAttachment, powerWireCapacity} from "../tools/vehicles/groundObject";
 import {GROUND_PRESETS, groundShapeGroup} from "../tools/vehicles/groundParameters";
 import {withSRGBInputs} from "../tools/vehicles/designColors";
 import {wirePorts} from "./PowerObjectLinks";
 import {localENU} from "./cloudField/CloudFieldFormat";
 
-const profiles = {pylon:"ground-pylon", pole:"ground-telegraph-pole", horizontal:"ground-horizontal-pylon",
+const towerProfiles = GROUND_PRESETS.filter(p => p.parameters.groundKind === "pylon" && p.parameters.towerStyle);
+const profiles = {...Object.fromEntries(towerProfiles.map(p => [p.parameters.towerStyle,p.id])),
+    pylon:"ground-pylon", pole:"ground-telegraph-pole",
     britishTower:"ground-british-pylon", britishPole:"ground-british-pole", vaulted:"ground-french-pole"};
 const defaults = Object.fromEntries(Object.entries(profiles).map(([key,id]) => {
     const {parameters} = GROUND_PRESETS.find(p => p.id === id);
@@ -93,8 +95,11 @@ export function createPowerNetworkGeometry(network, groundAt) {
             const a = points[way.path[i-1]], b = points[way.path[i]];
             const dir = b.base.clone().sub(a.base);
             const kindA = profile(a,b.kind ?? defaultKind), kindB = profile(b,a.kind ?? defaultKind);
-            const capacity = key => ["horizontal","britishPole","vaulted"].includes(key) ? 3 : key === "pole" ? 12 : 6;
-            const count = Math.min(way.cables ?? (way.minor ? 3 : 6),capacity(kindA),capacity(kindB));
+            // Reserve the mapped number of phases so changing a support's design
+            // can restore unused wires in place. A tower has at most six clamps,
+            // and a crossarm pole has at most three rows of ten pins.
+            const limit = [kindA,kindB].some(k => defaults[k].groundKind === "pylon") ? 6 : 30;
+            const count = Math.min(way.cables ?? (way.minor ? 3 : 6),limit);
             orient(a, dir); orient(b, dir);
             const cell = cellAt(a);
             cell.spans.push({a,b,kindA,kindB,count,fromPort:wirePorts.from,toPort:wirePorts.to});
@@ -184,10 +189,18 @@ export function createPowerNetworkGeometry(network, groundAt) {
             const sag = Math.min(baseA.distanceTo(baseB)*.025, Math.min(heightA,heightB)*.28);
             const hidden = (a.external && !a.link) || (b.external && !b.link);
             const flip = (a.link?.side ?? a.side).dot(b.link?.side ?? b.side) < 0 ? -1 : 1;
+            const paramsA = a.link?.parameters ?? defaults[kindA], paramsB = b.link?.parameters ?? defaults[kindB];
+            const active = Math.min(count,powerWireCapacity(paramsA),powerWireCapacity(paramsB));
+            // A staggered line-post arm has no clamp on its opposite side.
+            const flipB = paramsB.towerStyle === "linePost" ? 1 : flip;
+            const flipA = flipB !== flip && paramsA.towerStyle !== "linePost" ? flip : 1;
             for (let c=0; c<count; c++) {
-                placeCable(start,a,kindA,fromPort,c,count,1,origin);
-                placeCable(end,b,kindB,toPort,c,count,flip,origin);
-                if (hidden) {start.set(0,0,0); end.copy(start);}
+                const skip = hidden || c >= active;
+                if (skip) {start.set(0,0,0); end.copy(start);}
+                else {
+                    placeCable(start,a,kindA,fromPort,c,active,flipA,origin);
+                    placeCable(end,b,kindB,toPort,c,active,flipB,origin);
+                }
                 if (c === 0) {
                     route.setXYZ(r++, start.x,start.y,start.z); route.setXYZ(r++, end.x,end.y,end.z);
                     box.expandByPoint(start); box.expandByPoint(end);
@@ -195,7 +208,7 @@ export function createPowerNetworkGeometry(network, groundAt) {
                 previous.copy(start);
                 for (let j=1; j<=sagSteps; j++) {
                     const t = j/sagSteps;
-                    next.lerpVectors(start,end,t).addScaledVector(a.up,hidden ? 0 : -4*sag*t*(1-t));
+                    next.lerpVectors(start,end,t).addScaledVector(a.up,skip ? 0 : -4*sag*t*(1-t));
                     verts.setXYZ(v++,previous.x,previous.y,previous.z); verts.setXYZ(v++,next.x,next.y,next.z);
                     previous.copy(next);
                 }

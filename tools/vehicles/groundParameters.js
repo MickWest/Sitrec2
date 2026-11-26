@@ -4,14 +4,33 @@ const seed = number("seed", "Shape seed", 1, 99999, 1, 47);
 const height = (min, max, value) => number("height", "Height · m", min, max, .1, value);
 const style = (key, value, options) => ({key, label: "Regional design", type: "select", value, options});
 
+// These are visual starting dimensions in metres. The style key is also the
+// sitrec:design value accepted on a mapped transmission support.
+const transmissionPresets = [
+    ["woodH", "wood-h-frame", "US timber H-frame", "US", {height:23, baseWidth:7, armSpan:14, shaftDiameter:.63}],
+    ["linePost", "line-post", "US braced line-post monopole", "US", {height:26, armSpan:7, shaftDiameter:1}],
+    ["davit", "davit-pole", "US double-circuit davit monopole", "US", {height:42, armSpan:13, shaftDiameter:1.7}],
+    ["threePole", "three-pole-angle", "US three-pole angle structure", "US", {height:24, armSpan:18, shaftDiameter:.8}],
+    ["guyedV", "guyed-v", "US guyed-V lattice tower", "US", {height:42, baseWidth:5, armSpan:36}],
+    ["danube", "danube-pylon", "German Danube tower (Donaumast)", "Europe", {height:48, baseWidth:9, armSpan:32}],
+    ["barrel", "barrel-pylon", "German barrel tower (Tonnenmast)", "Europe", {height:52, baseWidth:9, armSpan:23}],
+    ["flat", "flat-pylon", "German single-level tower (Einebenenmast)", "Europe", {height:34, baseWidth:8, armSpan:46}],
+    ["tPylon", "t-pylon", "British T-pylon", "Europe", {height:35, armSpan:29, shaftDiameter:2.2, steelColor:"#cbd1d0"}],
+    ["wintrack", "wintrack", "Dutch Wintrack twin poles", "Europe", {height:58, baseWidth:20, armSpan:13,
+        shaftDiameter:1.8, steelColor:"#d9ddda"}],
+];
+export const tubularTower = style => ["woodH","linePost","davit","threePole","tPylon","wintrack"].includes(style);
+
 const forms = {
-    pylon: {name: "Lattice transmission tower", fields: [
+    pylon: {name: "Transmission pole or tower", fields: [
         style("towerStyle", "us", {us: "North American · stacked crossarms", horizontal: "US · horizontal single circuit",
-            british: "British · three-tier lattice"}),
+            british: "British · three-tier lattice", ...Object.fromEntries(transmissionPresets.map(([key,,name]) => [key,name]))}),
         height(10, 90, 36), number("baseWidth", "Foot spacing · m", 2, 22, .1, 7),
         number("armSpan", "Crossarm span · m", 5, 65, .1, 17),
+        number("shaftDiameter", "Pole base diameter · m", .3, 4, .05, 1.2),
         number("armLevels", "Crossarm levels", 1, 3, 1, 3),
         number("bays", "Braced sections", 4, 14, 1, 8), color("steelColor", "Steel", "#788287"),
+        color("woodColor", "Timber", "#866544"),
     ]},
     pole: {name: "Telegraph pole", fields: [
         style("poleStyle", "crossarm", {crossarm: "North American · timber crossarms",
@@ -62,6 +81,8 @@ export const GROUND_PRESETS = [
         {towerStyle:"horizontal", height:48, baseWidth:12, armSpan:40}),
     preset("british-pylon", "British double-circuit lattice pylon", "pylon", "Utilities",
         {towerStyle:"british", height:45, baseWidth:9, armSpan:21}, "Europe"),
+    ...transmissionPresets.map(([towerStyle,id,name,region,dimensions]) =>
+        preset(id,name,"pylon","Utilities",{towerStyle,...dimensions},region)),
     preset("british-pole", "British timber distribution pole", "pole", "Utilities",
         {poleStyle:"british", height:11, armSpan:2.9, armLevels:1}, "Europe"),
     preset("french-pole", "French concrete distribution pole", "pole", "Utilities",

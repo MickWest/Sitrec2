@@ -4,6 +4,16 @@ const many = value => value == null ? [] : Array.isArray(value) ? value : [value
 const supports = {tower: "pylon", pole: "pole"};
 const isWay = tag => tag === "line" || tag === "minor_line";
 
+function supportDesign(tags) {
+    if (tags["sitrec:design"]) return tags["sitrec:design"];
+    if (tags.power !== "tower") return;
+    if (tags.design === "donau") return "danube";
+    if (tags.design === "barrel") return "barrel";
+    if (tags.design === "bipole") return "wintrack";
+    if (tags.design === "h-frame" && tags.material === "wood") return "woodH";
+    if (tags.design === "one-level" && (+tags.circuits === 2 || +tags.cables === 6)) return "flat";
+}
+
 function heightMetres(value) {
     const match = /^(\d+(?:\.\d+)?)\s*(m|ft|feet|')?$/i.exec(String(value ?? "").trim());
     if (!match) return undefined;
@@ -48,7 +58,8 @@ export function parsePowerNetwork(data) {
             const i = indexAt(coordinates);
             if (i !== undefined) {
                 Object.assign(points[i], {kind: supports[tags.power], height: heightMetres(tags.height)});
-                if (tags["sitrec:design"]) points[i].design = tags["sitrec:design"];
+                const design = supportDesign(tags);
+                if (design) points[i].design = design;
                 if (typeof tags["sitrec:object"] === "string") points[i].objectId = tags["sitrec:object"];
             }
         } else if (type === "LineString" && isWay(tags.power) && Array.isArray(coordinates)) {

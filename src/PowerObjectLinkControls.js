@@ -78,8 +78,9 @@ export function refreshPowerLinks(object) {
                 }
                 const target = NodeMan.get(manualPowerLayerID,false) ?? NodeFactory.create("PowerNetwork",{id:manualPowerLayerID});
                 const key = 'link-' + crypto.randomUUID();
-                changeLink(target,key,{id:key,added:true,from,to,fromAnchor:endpointAnchor(from,layers),
-                    toAnchor:endpointAnchor(to,layers),minor:true,cables:3});
+                const fromAnchor = endpointAnchor(from,layers), toAnchor = endpointAnchor(to,layers);
+                const minor = fromAnchor.kind === "pole" || toAnchor.kind === "pole";
+                changeLink(target,key,{id:key,added:true,from,to,fromAnchor,toAnchor,minor,cables:minor ? 3 : 6});
             }
         });
     };

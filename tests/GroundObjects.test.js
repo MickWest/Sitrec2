@@ -1,10 +1,59 @@
-import {ColorManagement} from "three";
+import {ColorManagement, Line3, Vector3} from "three";
 import {PRESETS, parameterFile, readParameterFile} from "../tools/vehicles/vehicleParameters.js";
 import {createVehicleRecipe, readVehicleRecipe} from "../tools/vehicles/recipe.js";
 import {generateVehicle} from "../tools/vehicles/generator.js";
 import {disposeVehicle} from "../tools/vehicles/vehicle.js";
+import {buildTransmissionTower, towerCapacity, towerClamp} from "../tools/vehicles/transmissionTower.js";
 
 const ground = PRESETS.filter(p => p.vehicleType === "ground");
+const towers = ground.filter(p => p.parameters.groundKind === "pylon");
+
+test("the revised tower generator opens British pylons saved before the crossarm fix", () => {
+    const p = towers.find(p => p.id === "ground-british-pylon");
+    const current = createVehicleRecipe(p.parameters,p.name,p.id);
+    expect(current.generatorRevision).toBe(2);
+    const old = {...current,generatorRevision:1,parameters:{...current.parameters}};
+    delete old.parameters.shaftDiameter;
+    delete old.parameters.woodColor;
+    expect(readVehicleRecipe(old).parameters).toEqual(current.parameters);
+});
+
+function towerMembers(p, simple) {
+    const members = [];
+    buildTransmissionTower(p, {simple, box() {}, beam(name,color,a,b) {members.push({name,a,b});}});
+    return members;
+}
+
+test.each(towers.map(p => [p.id,p.parameters]))("%s has a physical insulator at every wire port in both detail levels", (_,p) => {
+    const count = towerCapacity(p);
+    for (const simple of [false,true]) {
+        const strings = towerMembers(p,simple).filter(m => m.name === "Insulator strings");
+        const unique = new Set();
+        for (let i=0; i<count; i++) {
+            const [x,level] = towerClamp(p,i), clamp = new Vector3(x,level*p.height,0);
+            unique.add(clamp.toArray().join(","));
+            expect(strings.some(({a,b}) => a.distanceTo(clamp)<1e-6 || b.distanceTo(clamp)<1e-6)).toBe(true);
+        }
+        expect(unique.size).toBe(count);
+    }
+});
+
+test.each(["ground-british-pylon","ground-pylon"])("%s crossarm chords meet the modelled mast legs", id => {
+    const preset = towers.find(p => p.id === id);
+    for (const [simple,bays] of [[true,8],[false,4],[false,9],[false,14]]) {
+        const p = {...preset.parameters,bays};
+        const steel = towerMembers(p,simple).filter(m => m.name === "Galvanized steel");
+        // Mast corner legs run up within one quadrant, or from it to the apex.
+        const legs = steel.filter(({a,b}) => b.y>a.y && Math.abs(a.x)===Math.abs(a.z) &&
+            Math.abs(b.x)===Math.abs(b.z) && a.x*b.x>=0 && a.z*b.z>=0).map(({a,b}) => new Line3(a,b));
+        const chords = steel.filter(({a,b}) => a.z!==0 && Math.abs(a.x)===Math.abs(a.z) && b.z===0 && Math.abs(b.x)>0);
+        expect(chords).toHaveLength(p.armLevels*8);
+        const at = new Vector3();
+        for (const {a} of chords) {
+            expect(legs.some(leg => leg.closestPointToPoint(a,true,at).distanceTo(a)<1e-6)).toBe(true);
+        }
+    }
+});
 
 test.each([false, true])("oak materials use linear RGB with host color management %s", enabled => {
     const oak = ground.find(p => p.id === "ground-oak");

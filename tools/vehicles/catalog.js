@@ -12,7 +12,13 @@ export function populateVehicleFilters(typeSelect, regionSelect) {
 export function createVehicleFilter({query="",kind="",region=""} = {}) {
     const normalize = value => value.toLowerCase().replace(/[^a-z0-9]/g,"");
     const words = query.trim().split(/\s+/).map(normalize).filter(Boolean);
-    return preset => (!kind || preset.vehicleType === kind) &&
-        (!region || (region === "civil" ? !preset.military : preset.region === region)) &&
-        words.every(word => normalize(`${preset.name} ${preset.category ?? ""} ${preset.region ?? ""}`).includes(word));
+    return preset => {
+        if (kind && preset.vehicleType !== kind) return false;
+        if (region && (region === "civil" ? preset.military : preset.region !== region)) return false;
+        if (!words.length) return true;
+        const transmission = (preset.parameters ?? preset.recipe?.parameters)?.groundKind === "pylon";
+        const terms = transmission ? "transmission power poles towers pylons" : "";
+        const text = normalize(`${preset.name} ${preset.category ?? ""} ${preset.region ?? ""} ${terms}`);
+        return words.every(word => text.includes(word));
+    };
 }

@@ -23,6 +23,30 @@ and [National Grid](https://www.nationalgrid.com/document/154026/download).
 Examples of the vaulted head and horizontal tower are available from [Sicame](https://www.sicamefrance.com/pdffr/8996?lang=fr)
 and [AEP](https://www.aep.com/newsroom/resources/docs/AEP_Interstate_Project-Technologies.pdf).
 
+Ten more transmission presets cover these visually distinct arrangements. Each phase
+has an incoming and outgoing clamp. A double-circuit model has six phase positions.
+
+| Region | Preset | What to look for |
+| --- | --- | --- |
+| US | Timber H-frame | Two wood poles, crossed braces and three hanging strings under one timber beam |
+| US | Braced line-post monopole | Three short, braced insulators on alternating sides of a single pole |
+| US | Double-circuit davit monopole | Three pairs of swept steel arms on a tapered shaft |
+| US | Three-pole angle structure | Three separate shafts, each carrying one phase on a short arm |
+| US | Guyed-V lattice tower | Two open lattice legs rise from a central foot to a broad head with four guy wires |
+| Germany | Danube (Donaumast) | Two phases on a short upper tier and four on a wider lower tier |
+| Germany | Barrel (Tonnenmast) | Three pairs of arms, widest at the middle tier |
+| Germany | Single-level (Einebenenmast) | All six phases share one broad crossarm |
+| Britain | T-pylon | Two diamond insulator assemblies hang from a single crossarm |
+| Netherlands | Wintrack | Two tapered poles with three pairs of inward-facing insulators |
+
+US examples appear in the [Bonneville Power Administration transmission history](https://www.bpa.gov/-/media/Aep/environmental-initiatives/cultural-resources/transmission-projects/bpa-transmission-lines-historic-context-report.pdf),
+[Bureau of Reclamation transmission line manual](https://www.usbr.gov/tsc/techreferences/mands/mands-pdfs/TrnsLine.pdf),
+[Idaho Power structure comparison](https://www.energy.gov/sites/prod/files/2013/07/f2/Transmission_Henke_0.pdf)
+and [AEP's West Virginia guyed-V project](https://www.aep.com/news/stories/view/1726/).
+European examples come from [Amprion's mast drawings](https://ultranet.amprion.net/Downloads/Antragsunterlagen-Abschnitt-C/%C2%A7-8-Nabeg-Unterlagen/Vorh2_BFP8_AbsC_Hauptdokument.pdf),
+[National Grid's T-pylon](https://www.nationalgrid.com/media-centre/press-releases/all-t-pylons-fully-wired-major-milestone-hinkley-connection-project)
+and [TenneT's Wintrack brochure](https://netztransparenz.tennet.eu/fileadmin/user_upload/Company/Publications/Corporate_Brochures/The_Wintrack_pylon_2012.pdf).
+
 ## Standalone editor
 
 Open **Sitrec → Extra Tools → Custom Object Designer**, or `tools/vehicles/index.html`

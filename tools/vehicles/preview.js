@@ -1,7 +1,7 @@
 import {generateVehicle} from "./generator.js";
 import {disposeVehicle} from "./vehicle.js";
 import {animateVehicleLights} from "./vehicleLights.js";
-import {createVehicleStudio} from "./studio.js";
+import {createVehicleStudio, transmissionViewDirection} from "./studio.js";
 import {poseVehicleSpinners} from "./motion.js";
 import {visibleVehicleBounds} from "./thermalTags.js";
 
@@ -32,7 +32,7 @@ export function createVehiclePreview(mount) {
             if (model) disposeVehicle(model.root);
             model = next;
             const led = model.recipe.parameters.ledEnabled || model.recipe.parameters.ledTailEnabled;
-            direction = led ? [0,-1,0.4] : [-1.6,.75,1];
+            direction = model.recipe.parameters.groundKind === "pylon" ? transmissionViewDirection : led ? [0,-1,0.4] : [-1.6,.75,1];
             studio.setNight(!!led);
             studio.setModel(model); animateVehicleLights(model,0,false); scene.add(model.root); resize();
             cancelAnimationFrame(frameId); frameId = requestAnimationFrame(animate);

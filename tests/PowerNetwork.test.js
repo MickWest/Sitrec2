@@ -3,6 +3,7 @@ import {Matrix4, PerspectiveCamera, Vector3} from "three";
 import {parseXml} from "../src/parseXml";
 import {parsePowerNetwork} from "../src/PowerNetworkFormat";
 import {createPowerNetworkGeometry} from "../src/PowerNetworkGeometry";
+import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 
 const a = [-81,38], bend = [-81.001,38.001], b = [-81.002,38.002];
 const line = {power:"line", cables:"3"}, tower = {power:"tower", height:"100 ft"}, pole = {power:"pole"};
@@ -32,6 +33,46 @@ test("incomplete Overpass ways split at missing nodes", () => {
     const geometry = [a,b,null,bend,a].map(p => p && {lon:p[0],lat:p[1]});
     const network = parsePowerNetwork({elements:[{type:"way",tags:line,geometry}]});
     expect(network.ways.map(w => w.path)).toEqual([[0,1],[2,0]]);
+});
+
+test("mapped designs select shared tower instances and retain explicit Sitrec design overrides", () => {
+    const features = [
+        feature(tower,"Point",a), feature({...tower,design:"donau"},"Point",a),
+        feature({...tower,design:"donau"},"Point",[-80.9999,38]),
+        feature({...tower,design:"donau","sitrec:design":"tPylon"},"Point",[-80.9998,38]),
+    ];
+    const network = parsePowerNetwork({type:"FeatureCollection",features});
+    const display = createPowerNetworkGeometry(network,() => new Vector3());
+    try {
+        expect(display.points.map(p => p.presetId)).toEqual(["ground-danube-pylon","ground-danube-pylon","ground-t-pylon"]);
+        for (const detail of display.group.children[0].children) {
+            expect(detail.children.map(m => m.count)).toEqual([2,1]);
+        }
+    } finally {display.dispose();}
+});
+
+test("rotating a staggered monopole keeps three wires on its clamps and switching to a T-pylon restores six", () => {
+    const network = {points:[{lat:38,lon:-81,kind:"pylon",objectId:"A"},
+        {lat:38.001,lon:-81,kind:"pylon",objectId:"B"}],ways:[{path:[0,1],cables:6}]};
+    const display = createPowerNetworkGeometry(network,() => new Vector3());
+    const params = id => PRESETS.find(p => p.id===id).parameters;
+    const first = {parameters:params("ground-danube-pylon"),matrix:new Matrix4()};
+    const second = {parameters:params("ground-line-post"),matrix:new Matrix4().makeRotationY(Math.PI).setPosition(0,0,100)};
+    try {
+        const sync = () => display.syncLinkedSupports(id => id === "A" ? first : second);
+        const lines = display.group.children[0].children[0].children.find(m => m.isLineSegments).geometry.attributes.position;
+        const end = i => new Vector3().fromBufferAttribute(lines,i*12+11);
+        sync();
+        for (const [i,level] of [.85,.72,.59].entries()) {
+            expect(end(i).x).toBeCloseTo((i===1 ? -.5 : .5)*second.parameters.armSpan);
+            expect(end(i).y).toBeCloseTo(second.parameters.height*level);
+        }
+        expect(lines.array.slice(3*12*3).every(value => value===0)).toBe(true);
+        second.parameters = params("ground-t-pylon");
+        sync();
+        expect(new Set(Array.from({length:6},(_,i) => end(i).toArray().join(","))).size).toBe(6);
+        for (let i=0; i<6; i++) expect(end(i).z).toBeCloseTo(100);
+    } finally {display.dispose();}
 });
 
 test("a linked editable pole takes the place of its mapped instance and anchors the wires", () => {

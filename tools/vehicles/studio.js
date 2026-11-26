@@ -3,6 +3,7 @@ import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 import {withSRGBInputs} from "./designColors.js";
 
 const directions = {perspective:[-1.6,.7,1],front:[0,0,1],rear:[0,0,-1],side:[-1,0,0],top:[0,1,.0001],underside:[0,-1,.4]};
+export const transmissionViewDirection = [-.38,.2,1];
 
 export function fitVehicleCamera(camera, controls, bounds, {view="perspective",direction=directions[view],paddingX=1.12,paddingY=1.18} = {}) {
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
