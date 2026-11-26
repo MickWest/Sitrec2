@@ -97,6 +97,8 @@ In plain terms:
 
 Height above ground level (AGL) is different. It is measured from the terrain under the point, so it changes with the ground.
 
+The ground is the elevation map under the point. When **3D Buildings** is on, the ground is the surface of the 3D tiles there, which over a building is its roof. Each view shows 3D tiles at its own level of detail. For the Camera or Target position that is in use, with **Above Ground Level** on, Sitrec loads the most detailed tile under the position and uses its surface, so the height of the position does not change when a view zooms in or out. Another position stands on the most detailed tile that a view shows.
+
 ## How to tell you have a datum error
 
 A datum is the surface that a height is measured from. Sitrec does not detect datum errors. Nothing crashes and no warning appears — the track is in slightly the wrong place. Every angle and range derived from it inherits the error, and so does any speed where the error changes along the track. The table below lists the pattern each error makes.

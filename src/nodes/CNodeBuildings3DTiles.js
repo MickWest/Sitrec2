@@ -28,6 +28,7 @@ import {getLocalUpVector} from "../SphericalMath";
 import {getPointBelow} from "../threeExt";
 import {EventManager} from "../CEventManager";
 import {intersectDisplayed} from "../raycastGround";
+import {GroundAnchorRegion, pickGroundHit, TILE_DETAIL_KEY, tileDetailOf} from "../TileGround";
 import {undoManager as UndoManager} from "../UndoManager";
 import {
     excludeFromTerrestrialRefraction,
@@ -715,7 +716,9 @@ class PerViewTiles {
 
         // Set layer mask on all tile meshes as they load
         const useDoubleSideShadow = (source === "cesium-osm");
-        this.renderer.addEventListener('load-model', ({scene}) => {
+        this.renderer.addEventListener('load-model', ({scene, tile}) => {
+            // groundBelow() takes the hit on the most detailed tile (TileGround.js).
+            if (tile) scene.userData[TILE_DETAIL_KEY] = tile.geometricError;
             scene.traverse(child => {
                 if (child.isMesh || child.isLine || child.isPoints) {
                     child.layers.mask = layerMask;
@@ -1007,6 +1010,8 @@ export class CNodeBuildings3DTiles extends CNode {
 
         this._perView = {}; // keyed by view id
         this._initialized = false;
+        // Ground points that must have full tile detail (setGroundAnchor): id -> world point.
+        this._groundAnchors = new Map();
 
         this.updateWhilePaused = true;
 
@@ -1415,17 +1420,88 @@ export class CNodeBuildings3DTiles extends CNode {
         if (hits.length === 0) return null;
 
         // Reference: the smooth elevation-map ground at this column (buildings-free).
+        // It is a sanity gate only: a hit farther than GROUND_TOLERANCE from it is
+        // coarse-streaming-tile garbage or a tall roof, and with no hit inside the
+        // band the caller uses the elevation map.
+        //
+        // Inside the band the hit on the MOST DETAILED tile wins. Each view has its own
+        // renderer and its own level of detail, so this column holds one surface for
+        // each view. "Nearest to the elevation map" chose between them by accident
+        // (measured: a fine tile 0.430 m above the map lost to a coarse tile 0.419 m
+        // below it), and the zoom of one view then moved an above-ground camera that
+        // another view showed.
         const refH = getPointBelow(worldPos).dot(up);
-        let best = hits[0].point, bestErr = Math.abs(hits[0].point.dot(up) - refH);
-        for (let i = 1; i < hits.length; i++) {
-            const err = Math.abs(hits[i].point.dot(up) - refH);
-            if (err < bestErr) { bestErr = err; best = hits[i].point; }
+        const best = pickGroundHit(hits.length,
+            hitIndex => hits[hitIndex].point.dot(up),
+            hitIndex => tileDetailOf(hits[hitIndex].object),
+            refH, GROUND_TOLERANCE);
+        if (best < 0) return null;
+        return hits[best].point.clone();
+    }
+
+    // Ask for full tile detail in the column of ground under one point, in every
+    // view's renderer, whatever the views show. Each anchor costs a column of about
+    // 20 tiles in each renderer, so the caller decides who needs one: today only a
+    // Camera or Target position that is in use (CNodePositionLLA._syncGroundAnchor).
+    // It calls this with its own id on each frame; the call costs nothing when the
+    // point did not move. Without it the most detailed tile under a camera that
+    // looks at the horizon loads only while some view looks down at that place, so
+    // the height of the camera would depend on where the views looked before.
+    //
+    // `point` is a ground point in world coordinates (the elevation-map ground is
+    // near enough: the column reaches GROUND_TOLERANCE above and below it).
+    setGroundAnchor(id, point) {
+        const anchor = this._groundAnchors.get(id);
+        if (anchor) {
+            if (anchor.point.distanceToSquared(point) < 0.01) return;
+            anchor.point.copy(point);
+            anchor.moved = true;
+        } else {
+            this._groundAnchors.set(id, {point: point.clone(), moved: true});
         }
-        // Sanity gate: reject coarse-streaming-tile garbage and tall roofs. A real
-        // ground tile sits within a few metres of the elevation map; anything past
-        // this band means no usable ground tile is loaded → caller uses the elev map.
-        if (bestErr > GROUND_TOLERANCE) return null;
-        return best.clone();
+        this._groundAnchorsDirty = true;
+    }
+
+    clearGroundAnchor(id) {
+        if (this._groundAnchors.delete(id)) this._groundAnchorsDirty = true;
+    }
+
+    // Bring each renderer's load regions in line with the anchors. A renderer made
+    // after the anchors (a view that opens later) has no regions yet, so it is
+    // brought in line on its first frame.
+    _syncGroundAnchors() {
+        for (const pv of Object.values(this._perView)) {
+            if (!this._groundAnchorsDirty && pv.groundAnchorRegions) continue;
+            if (!pv.groundAnchorRegions) {
+                pv.groundAnchorRegions = new Map();
+                pv.groundAnchorPlugin = new LoadRegionPlugin();
+                pv.groundAnchorPlugin.name = "GROUND_ANCHOR_LOAD_REGION";
+                pv.renderer.registerPlugin(pv.groundAnchorPlugin);
+            }
+            pv.renderer.group.updateWorldMatrix(true, false);
+            const toLocal = pv.renderer.group.matrixWorld.clone().invert();
+            for (const [id, region] of pv.groundAnchorRegions) {
+                if (this._groundAnchors.has(id)) continue;
+                pv.groundAnchorPlugin.removeRegion(region);
+                pv.groundAnchorRegions.delete(id);
+            }
+            for (const [id, anchor] of this._groundAnchors) {
+                const region = pv.groundAnchorRegions.get(id);
+                if (region && !anchor.moved) continue;
+                const point = anchor.point.clone().applyMatrix4(toLocal);
+                const up = getLocalUpVector(anchor.point).clone().transformDirection(toLocal);
+                if (region) {
+                    region.setColumn(point, up);
+                } else {
+                    const added = new GroundAnchorRegion(point, up, GROUND_TOLERANCE);
+                    pv.groundAnchorRegions.set(id, added);
+                    pv.groundAnchorPlugin.addRegion(added);
+                }
+            }
+            pv._needsLibUpdate = true;
+        }
+        for (const anchor of this._groundAnchors.values()) anchor.moved = false;
+        this._groundAnchorsDirty = false;
     }
 
     // The tile surface moved because it was EDITED, not because tiles streamed.
@@ -1613,6 +1689,8 @@ export class CNodeBuildings3DTiles extends CNode {
         super.update(f);
 
         if (!this._initialized) return;
+
+        this._syncGroundAnchors();
 
         let active = false;
         // Automatic analysis is suspended while Manual Edit is on — the brush is

@@ -15,6 +15,7 @@ import {altShortcutHeld, isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
 import {isAltShortcut} from "../AltShortcuts";
 import {adjustHeightAboveGround, elevationAtLL, getTilesPointBelow} from "../threeExt";
 import {getLocalUpVector} from "../SphericalMath";
+import {isLiveSource} from "../TileGround";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
 import {disableFreeLookForCameraPosition} from "../FreeLookGuard";
@@ -457,7 +458,36 @@ export class CNodePositionLLA extends CNodeTrack {
         }
     }
 
+    // With 3D tiles on, an AGL position stands on the tile surface. Ask the tiles for
+    // full detail in the column under this position, so that the surface is the most
+    // detailed one, loads first, and does not change with the zoom of a view.
+    //
+    // Who asks: a position with a placement key (the Camera and Target positions),
+    // and only while something that is shown reads it. Each request costs a column of
+    // tiles in each view's renderer. A sitch can hold many placed objects, and the
+    // Manual camera position is still there when the camera follows a loaded track;
+    // neither must load tiles for a height that nobody sees. Another AGL position
+    // stands on the most detailed tile that a view shows.
+    //
+    // The 3D tiles node is made again when the tile source changes, so this runs on
+    // each frame; the call costs nothing when the point did not move.
+    _syncGroundAnchor() {
+        if (!NodeMan.exists("buildings3DTiles")) return;
+        const tiles = NodeMan.get("buildings3DTiles");
+        if (this.agl && this.key && this._groundAnchorPoint && isLiveSource(this)) {
+            tiles.setGroundAnchor(this.id, this._groundAnchorPoint);
+        } else {
+            tiles.clearGroundAnchor(this.id);
+        }
+    }
+
+    dispose() {
+        if (NodeMan.exists("buildings3DTiles")) NodeMan.get("buildings3DTiles").clearGroundAnchor(this.id);
+        super.dispose();
+    }
+
     update() {
+        this._syncGroundAnchor();
         this._refineAGLToTiles();
         if (this.key) {
             // C and X are Alt shortcuts (AltShortcuts.js). Read the physical key: on a Mac,
@@ -631,6 +661,7 @@ export class CNodePositionLLA extends CNodeTrack {
     recalculate() {
         this.array = [];
         this.elevationCache = null; // flush cache for fresh terrain queries
+        this._groundAnchorPoint = null;
 
         if (this._LLA !== undefined) {
             // guiAlt only exists when the node was given a `gui` to build controls in.
@@ -645,6 +676,9 @@ export class CNodePositionLLA extends CNodeTrack {
                 // Use cached terrain query for ground level
                 const queryPos = LLAToECEF(this._LLA[0], this._LLA[1], 100000);
                 this.ecef = this._aglGroundPoint(terrainNode, queryPos, aglHeight, 0);
+                // The ground point that the 3D tiles must show at full detail (see
+                // _syncGroundAnchor). Not with wind: the point then moves on each frame.
+                if (!this.in.wind) this._groundAnchorPoint = this.getPointBelowCached(terrainNode, queryPos, 0, 0);
             } else if (this.agl) {
                 // No terrain node, use sphere-based ground level
                 this.updateGroundLevel();
