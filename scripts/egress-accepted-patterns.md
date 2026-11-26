@@ -302,6 +302,31 @@ entry here: an id, what the code does, where the data goes, the release, and its
   caller adds to the camera payload (`sendView` and live sync pass caller options through), and
   sending to a loopback port before the listener is shown to be the user's own SitMap.
 
+### `ground-anchor-tiles` — accepted 2.209.0 (contract widened)
+- **Code:** `src/TileGround.js` (`GroundAnchorRegion`, `isLiveSource`),
+  `src/nodes/CNodePositionLLA.js` (`_syncGroundAnchor`) and
+  `src/nodes/CNodeBuildings3DTiles.js` (`setGroundAnchor`, `_syncGroundAnchors`). While the 3D
+  buildings layer is shown, a Camera or Target position (a position with a placement key) that
+  is above ground level, has no wind input, and is in use gets a load region in each view's 3D
+  tiles renderer: one vertical column through the ground point under the position, 40 m above
+  and below it. The renderer loads the finest tiles in that column, also when no view shows
+  that place, so that the height of the position does not change with the zoom of a view. This
+  also happens when a saved sitch with such a position opens.
+- **In use:** a test of the node graph only (`isLiveSource`). A position is in use when a chain
+  of outputs goes from it to an end node (a node with no outputs: a view, a controller or a
+  display), and no switch on that chain has another input selected. A position with no outputs
+  is its own end node, so it is in use. The test does not check that the end node is visible,
+  so a position whose view is hidden is in use too.
+- **Data:** the requests for the 3D tiles in that column, to the host of the shown tile source:
+  `tile.googleapis.com` (Google photorealistic), or the Cesium Ion tile host under
+  `*.cesium.com` (Cesium OSM buildings). Together they show the position of the camera or the
+  target to the size of the finest tile. No other field.
+- **Limits:** only while the 3D buildings layer is shown, and only one column for each Camera or
+  Target position that is above ground level and in use by the test above. A column for another
+  position (a placed object, a track point, a position that the test excludes, such as the
+  Manual camera position while the camera follows a loaded track), a wider region, a request
+  while the layer is hidden, another tile host, or any other data in the requests is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

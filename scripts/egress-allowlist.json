@@ -160,7 +160,7 @@
     {
       "host": "tile.googleapis.com",
       "purpose": "photorealistic 3D tiles, and street-level imagery fetched by the server at a chosen position",
-      "trigger": "3D tiles automatically while that layer is shown, including the finest tiles along each track that is locked to the ground, and within the 3D detail radius of Sea Level inundation when Use 3D geometry is on (accepted pattern inundation-3d-detail-tiles), offscreen parts included; street-level imagery when the user asks for it",
+      "trigger": "3D tiles automatically while that layer is shown, including the finest tiles along each track that is locked to the ground, within the 3D detail radius of Sea Level inundation when Use 3D geometry is on (accepted pattern inundation-3d-detail-tiles), and in the column under each above-ground Camera or Target position that is in use (accepted pattern ground-anchor-tiles), offscreen parts included; street-level imagery when the user asks for it",
       "mayReceive": ["coarse-area", "precise-position"]
     },
     {
@@ -172,8 +172,8 @@
     {
       "host": "*.cesium.com",
       "purpose": "3D buildings (Cesium Ion): tile content from the host named by the endpoint lookup, reached through the 3d-tiles-renderer library",
-      "trigger": "automatic while the 3D buildings layer is shown",
-      "mayReceive": ["coarse-area"]
+      "trigger": "automatic while the 3D buildings layer is shown, including the finest tiles in the column under each above-ground Camera or Target position that is in use (accepted pattern ground-anchor-tiles), offscreen parts included",
+      "mayReceive": ["coarse-area", "precise-position"]
     },
     {
       "host": "a.basemaps.cartocdn.com",
@@ -444,6 +444,18 @@
       "mayReceive": ["none"]
     },
     {
+      "host": "registry.khronos.org",
+      "purpose": "reference link on the standalone benchmark tool page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "html.spec.whatwg.org",
+      "purpose": "reference link on the standalone benchmark tool page",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
       "host": "platform.openai.com",
       "purpose": "link to the provider's key page",
       "trigger": "the user opens it",
@@ -583,8 +595,8 @@
     },
     {
       "host": "www.w3.org",
-      "purpose": "XML namespace identifier written into exported files; not a request",
-      "trigger": "never requested",
+      "purpose": "XML namespace identifier written into exported files (not a request), and a reference link on the standalone benchmark tool page",
+      "trigger": "the namespace identifier is never requested; the reference link only when the user opens it",
       "mayReceive": ["none"]
     },
     {
