@@ -206,6 +206,8 @@ clouds by default.
   cloud can stay lit after the Sun has set on the ground, and a cloud in the Earth's shadow is dark.
 - **Light through the cloud.** A thin cloud lets light through, so its base is light gray. A thick
   cloud has a darker base.
+- **Ground spotlights.** Right-click the ground and choose **Add Spotlight** to sweep patches of light
+  over the cloud base. **Overcast Stratus** gives the beams a continuous surface. [Spotlights](Spotlights.md)
 - **Night.** As the Sun goes from 6° to 12° below the horizon, the light on the clouds changes from
   sunlight to moonlight. With a bright Moon, the clouds are gray with moonlit tops. With no Moon,
   they are dark shapes against the stars. A cloud hides the stars behind it.

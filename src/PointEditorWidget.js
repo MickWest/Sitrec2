@@ -387,7 +387,7 @@ export class PointEditorWidget extends EventDispatcher {
         const usePlane = mode === 'lookCameraPlane' || mode === 'screenPlane';
         const usePush = mode === 'push';
         this.handles.disc.visible = !usePlane && !usePush;
-        this.handles.arrowUp.visible = this.handles.arrowDown.visible = !usePush && !usePlane;
+        this.handles.arrowUp.visible = this.handles.arrowDown.visible = !this.groundMoveOnly && !usePush && !usePlane;
         if (usePush) {
             const arrow = this.handles.push ?? this.createPushArrow();
             arrow.visible = true;

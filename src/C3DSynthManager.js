@@ -6,7 +6,9 @@ import {CNodeSynthBuilding} from "./nodes/CNodeSynthBuilding";
 import {CNodeSynthClouds} from "./nodes/CNodeSynthClouds";
 import {CNodeGroundOverlay} from "./nodes/CNodeGroundOverlay";
 import {CNodeGroundGrid} from "./nodes/CNodeGroundGrid";
-import {Globals, NodeMan, setRenderOne, Units} from "./Globals";
+import {CNodeSpotlight} from "./nodes/CNodeSpotlight";
+import {SpotlightField} from "./clouds/SpotlightField";
+import {Globals, markSitchDirty, NodeMan, setRenderOne, UndoManager, Units} from "./Globals";
 import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, setRaycasterFromView} from "./ViewUtils";
 import {V3} from "./threeUtils";
@@ -24,6 +26,7 @@ export class C3DSynthManager extends CManager {
         this.nextOverlayID = 1;
         this.cloudsList = {};
         this.overlaysList = {};
+        this.spotlights = new SpotlightField();
         
 //        console.log("C3DSynthManager initialized");
     }
@@ -194,6 +197,45 @@ export class C3DSynthManager extends CManager {
         return closestBuilding;
     }
     
+    addSpotlight(data) {
+        const projector = new CNodeSpotlight(data);
+        setRenderOne(true);
+        return projector;
+    }
+
+    removeSpotlight(id) {
+        const projector = this.spotlights.projectors.get(id);
+        if (projector) NodeMan.disposeRemove(projector);
+        setRenderOne(true);
+    }
+
+    createSpotlightAtPoint(point) {
+        this.exitAllEditModes();
+        const {x: lat, y: lon, z: altitude} = ECEFToLLAVD_radii(point);
+        let number = 1;
+        while (NodeMan.exists(`spotlight_${number}`)) number++;
+        const projector = this.addSpotlight({id: `spotlight_${number}`, name: `Spotlight ${number}`, lat, lon, altitude});
+        const state = projector.serialize();
+        UndoManager?.add({
+            description: `Create ${projector.name}`,
+            undo: () => this.removeSpotlight(state.id),
+            redo: () => this.addSpotlight(state),
+        });
+        markSitchDirty();
+        return projector;
+    }
+
+    deleteSpotlight(projector) {
+        const state = projector.serialize();
+        this.removeSpotlight(state.id);
+        UndoManager?.add({
+            description: `Delete ${state.name}`,
+            undo: () => this.addSpotlight(state),
+            redo: () => this.removeSpotlight(state.id),
+        });
+        markSitchDirty();
+    }
+
     /**
      * Add a new cloud layer
      */
@@ -446,6 +488,7 @@ export class C3DSynthManager extends CManager {
         
         return {
             buildings: buildingsArray,
+            spotlights: Array.from(this.spotlights.projectors.values(), projector => projector.serialize()),
             nextBuildingID: this.nextBuildingID,
             clouds: cloudsArray,
             nextCloudsID: this.nextCloudsID,
@@ -471,6 +514,8 @@ export class C3DSynthManager extends CManager {
             console.log(`Loaded ${this.size()} buildings`);
         }
         
+        for (const projector of data.spotlights ?? []) this.addSpotlight(projector);
+
         if (data.clouds) {
             data.clouds.forEach(cloudsData => {
                 const clouds = CNodeSynthClouds.deserialize(cloudsData);
@@ -510,6 +555,7 @@ export class C3DSynthManager extends CManager {
      */
     clear() {
         this.removeAllBuildings();
+        for (const id of this.spotlights.projectors.keys()) this.removeSpotlight(id);
 
         const cloudsIds = Object.keys(this.cloudsList);
         cloudsIds.forEach(id => {

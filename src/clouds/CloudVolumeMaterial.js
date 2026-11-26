@@ -28,6 +28,8 @@ import {
     Vector3,
     Vector4,
 } from "three";
+import {Synth3DManager} from "../Globals";
+import {spotlightUniforms} from "./SpotlightField";
 import {atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms} from "../atmosphere/MaterialAtmosphere";
 import {terrestrialRefractionUniforms} from "../atmosphere/terrestrialRefraction";
@@ -90,6 +92,7 @@ function vec4Array() {
 function createUniforms() {
     const uniforms = {
         ...atmosphereProjectionUniforms(),
+        ...spotlightUniforms(),
         cloudViewToWorld: {value: new Matrix3()},
         cloudUp: {value: new Vector3(0, 0, 1)},
         cloudR: {value: WGS84_A},
@@ -236,6 +239,7 @@ export function setMarchPixelSize(uniforms, camera, marchHeight, lens) {
  *    airlightScale, lens: fisheye lens or null}
  */
 export function updateCloudUniforms(uniforms, camera, state) {
+    Synth3DManager?.spotlights.setUniforms(uniforms, camera.matrixWorld);
     const elements = camera.matrixWorld.elements;
     const cameraX = elements[12], cameraY = elements[13], cameraZ = elements[14];
     // Rotation only; normalize the axes in case the camera carries a scale.

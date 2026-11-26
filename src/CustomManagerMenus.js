@@ -473,23 +473,18 @@ export const menuMethods = {
      * @param {number} mouseY - Screen Y coordinate
      * @param {Vector3} groundPoint - The 3D point where the ground was clicked (in ECEF coordinates)
      * @param {string} [sourceViewID] - ID of the view that triggered the menu (e.g. "mainView", "lookView")
+     * @param {object} [options]
+     * @param {boolean} [options.throughObjects] - Open Ground alongside an active editor on Shift-right-click.
      */
-    showGroundContextMenu(mouseX, mouseY, groundPoint, sourceViewID) {
-        // Check if we're in track editing mode
-        if (Globals.editingTrack) {
-            this.showTrackEditingMenu(mouseX, mouseY, groundPoint);
-            return;
-        }
-
-        // If we're in building/clouds/overlay editing mode with menu open, do nothing
-        if (Globals.editingBuilding && this.buildingEditMenu) {
-            return;
-        }
-        if (Globals.editingClouds && this.cloudsEditMenu) {
-            return;
-        }
-        if (Globals.editingOverlay && this.overlayEditMenu) {
-            return;
+    showGroundContextMenu(mouseX, mouseY, groundPoint, sourceViewID, {throughObjects = false} = {}) {
+        if (!throughObjects) {
+            if (Globals.editingTrack) {
+                this.showTrackEditingMenu(mouseX, mouseY, groundPoint);
+                return;
+            }
+            if ((Globals.editingBuilding && this.buildingEditMenu)
+                || (Globals.editingClouds && this.cloudsEditMenu)
+                || (Globals.editingOverlay && this.overlayEditMenu)) return;
         }
 
         // Convert ground point to LLA
@@ -512,7 +507,7 @@ export const menuMethods = {
 
         // Create the context menu using lil-gui standalone menu
         // Pass true for dismissOnOutsideClick so it behaves like a context menu
-        const menu = Globals.menuBar.createStandaloneMenu("Ground", mouseX, mouseY, true);
+        const menu = Globals.menuBar.createStandaloneMenu("Ground", mouseX, mouseY, true, throughObjects);
 
         // If menu creation was blocked (persistent menu is open), return early
         if (!menu) {
@@ -795,6 +790,11 @@ export const menuMethods = {
 
                 console.log(`Created feature ${featureNode.id} at ${lat}, ${lon}, ${alt}m`);
             },
+            addSpotlight: () => {
+                closeMenu();
+                const projector = Synth3DManager.createSpotlightAtPoint(groundPoint);
+                this.showNodeEditMenu(projector, mouseX, mouseY);
+            },
             addBuilding: () => {
                 closeMenu();
 
@@ -1060,6 +1060,8 @@ export const menuMethods = {
             .tooltip(t("custom.contextMenu.tooltips.addBalloon"));
         menu.add(menuData, "addKite").name(t("custom.contextMenu.addKite"))
             .tooltip(t("custom.contextMenu.tooltips.addKite"));
+        menu.add(menuData, "addSpotlight").name(t("custom.contextMenu.addSpotlight"))
+            .tooltip(t("custom.contextMenu.tooltips.addSpotlight"));
         menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"))
             .tooltip(t("custom.contextMenu.tooltips.addBuilding"));
         menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"))

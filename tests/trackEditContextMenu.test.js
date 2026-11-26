@@ -6,11 +6,11 @@ import {Vector3} from "three";
 window.matchMedia ??= () => ({matches: false, addEventListener() {}, removeEventListener() {}});
 jest.mock("../src/Globals", () => {
     const state = {isMobile: true};
-    const custom = {showTrackEditingMenu: jest.fn(), showTrackMenu: jest.fn(), showNodeEditMenu: jest.fn()};
+    const custom = {showTrackEditingMenu: jest.fn(), showTrackMenu: jest.fn(), showNodeEditMenu: jest.fn(), showGroundContextMenu: jest.fn()};
     const tracks = {objectForTrack: jest.fn(() => null)};
     const inert = new Proxy({}, {get: (_, key) => key === "then" ? undefined : inert});
     return new Proxy({}, {get: (_, key) => key === "Globals" ? state
-        : key === "CustomManager" ? custom
+        : key === "CustomManager" ? custom : key === "Sit" ? {isCustom: true}
         : key === "TrackManager" ? tracks
         : key === "NodeMan" ? {iterate() {}, get: () => null, exists: () => false}
         : () => inert});
@@ -174,6 +174,19 @@ describe("right-click routing in a 3D view", () => {
     afterEach(() => inView.mockRestore());
 
     const rightClick = () => view.onContextMenuInner({preventDefault() {}, stopPropagation() {}}, 50, 60);
+
+    test("Shift picks terrain through a track in edit mode, falling through over the sky", () => {
+        editedTrack();
+        Object.assign(view, {id: "lookView", visible: true, leftPx: 0, topPx: 0, widthPx: 100, heightPx: 100});
+        view.camera.updateMatrixWorld = jest.fn();
+        const ground = new Vector3(1, 2, 3);
+        raycastLocalGround.mockReturnValueOnce({point: ground}).mockReturnValueOnce(null);
+        expect(view.tryGroundContextMenu(50, 60)).toBe(true);
+        expect(raycastLocalGround).toHaveBeenLastCalledWith(view.raycaster);
+        expect(CustomManager.showGroundContextMenu).toHaveBeenCalledWith(50, 60, ground, "lookView", {throughObjects: true});
+        expect(view.tryGroundContextMenu(50, 60)).toBe(false);
+        expect(CustomManager.showGroundContextMenu).toHaveBeenCalledTimes(1);
+    });
 
     test("in edit mode, a track under the pointer opens the edit menu, not the track panel", () => {
         editedTrack();

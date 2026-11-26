@@ -364,7 +364,9 @@ export class InteractionRouter {
             else s.owner.end?.(event, {click: s.maxTravel <= CLICK_SLOP_PX, maxTravel: s.maxTravel});
             if (s.button === 2) {
                 this.lastContextGesture = {target: s.start.target, x: s.start.clientX, y: s.start.clientY};
-                if (reason === "released" && s.maxTravel <= CLICK_SLOP_PX) s.contextOwner.contextMenu?.(e);
+                if (reason === "released" && s.maxTravel <= CLICK_SLOP_PX) {
+                    this.openContextMenu(e, s.contextOwner, s.navigation ? s.owner : s.fallback);
+                }
             }
         } finally {
             s.release();
@@ -399,14 +401,24 @@ export class InteractionRouter {
         if (owner?.wheel) { owner.wheel(e); this.consume(e); }
     }
 
+    openContextMenu(e, owner, navigation) {
+        // Give the view's Shift shortcut first choice, even over an editor handle.
+        if (e.button === 2 && e.shiftKey && navigation?.shiftContextMenu?.(e)) return;
+        owner.contextMenu?.(e);
+    }
+
     contextMenu(e) {
-        if (nativeTarget(e) && !this.candidates(e, "contextMenu").some(c => c.allowNative)) return;
+        const native = nativeTarget(e);
+        if (native && !this.candidates(e, "contextMenu").some(c => c.allowNative)) return;
         if (this.session || (e.button === 2 && this.lastContextGesture?.target === e.target)) {
             this.consume(e);
             return;
         }
-        const owner = this.candidates(e, "contextMenu")[0];
-        if (owner) { owner.contextMenu(e); this.consume(e); }
+        const candidates = this.candidates(e, "contextMenu").filter(c => !native || c.allowNative);
+        if (candidates.length) {
+            this.openContextMenu(e, candidates[0], candidates.find(c => c.navigation));
+            this.consume(e);
+        }
     }
 
     dispose() {

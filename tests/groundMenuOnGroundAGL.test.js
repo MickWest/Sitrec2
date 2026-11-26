@@ -70,6 +70,15 @@ test("camera on ground with AGL on goes 2 m above the ground", () => {
     expect(menu.destroy).toHaveBeenCalled();
 });
 
+test("an explicit ground pick can open alongside a track editor", () => {
+    Globals.editingTrack = {editMode: true};
+    try {
+        menuMethods.showGroundContextMenu.call({}, 100, 200, LLAToECEF(LAT, LON, GROUND_HAE), "mainView", {throughObjects: true});
+        expect(Globals.menuBar.createStandaloneMenu).toHaveBeenCalledWith("Ground", 100, 200, true, true);
+        expect(Globals.editingTrack.editMode).toBe(true);
+    } finally { Globals.editingTrack = null; }
+});
+
 test("camera on ground with AGL off goes to the ground's MSL height plus 2 m", () => {
     camera.agl = false;
     rightClickGround();

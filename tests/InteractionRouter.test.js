@@ -97,6 +97,22 @@ test("a right drag away and back does not open a menu", () => {
     expect(nav.contextMenu).not.toHaveBeenCalled();
 });
 
+test.each([
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+])("Shift %s with a ground hit %s resolves before the overlay menu", (shiftKey, groundHit, opensGround) => {
+    const camera = adapter("camera", 0, {navigation: true, shiftContextMenu: jest.fn(() => groundHit)});
+    const handle = adapter("overlay handle", 75, {hitTest: () => null, contextMenu: jest.fn()});
+    router.register(camera);
+    router.register(handle);
+    router.down(event("pointerdown", 100, {button: 2, buttons: 2, shiftKey}));
+    router.up(event("pointerup", 100, {button: 2, shiftKey}));
+    router.contextMenu(event("contextmenu", 100, {button: 2, shiftKey}));
+    expect(camera.shiftContextMenu).toHaveBeenCalledTimes(shiftKey ? 1 : 0);
+    expect(handle.contextMenu).toHaveBeenCalledTimes(opensGround ? 0 : 1);
+});
+
 test("wheel reaches one surface and is blocked during authoring", () => {
     const first = adapter("a", 0, {wheel: jest.fn()});
     const second = adapter("b", 0, {wheel: jest.fn()});

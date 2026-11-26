@@ -109,6 +109,9 @@ Right-click the ground (terrain, or the globe) in the main view or the look view
 titled **Ground**. It is only available in a Custom sitch. **File → New Sitch (Empty)** starts a fresh
 one, and so does the **New Sitch** button in the sitch browser.
 
+Hold **Shift** and right-click to reach the ground behind a pin, track, building or other object.
+This also works while an editor is open. If the pointer is over the sky, the usual right-click behavior applies.
+
 The top of the menu shows the location of the point you clicked:
 
 - latitude and longitude, to six decimal places
@@ -132,6 +135,7 @@ You can select and copy this text.
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
 | **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, with the same name |
 | **Add Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, with the same name |
+| **Add Spotlight** | Places a projector on the ground. Its beams light up clouds overhead as the timeline plays. See [Spotlights](#spotlights) | **Objects**, as *Spotlight 1*, *Spotlight 2*, … |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
@@ -638,13 +642,11 @@ See [Buildings](#buildings).
 ground menu then offers **Edit Clouds**, **Edit Overlay** or **Edit Grid** for the item under the
 pointer.
 
-**While a track is in edit mode**, every right-click goes to that track's edit menus, and nothing
-else opens a menu until you leave edit mode. See
+**While a track is in edit mode**, a plain right-click opens that track's edit menus. See
 [Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks).
 
 **While a track's menu or any edit window is open** (for a building, a cloud layer, an overlay, a
-grid, a 3D object or a pin), right-clicking the ground does not open the ground menu. Close it
-first.
+grid, a 3D object or a pin), use **Shift-right-click** to open **Ground** alongside the editor.
 
 ---
 
@@ -667,6 +669,23 @@ Buildings, clouds, ground overlays and ground grids share one way of working:
 Handles keep the same size on screen at any zoom. Heights and sizes are shown in your current small
 units (meters or feet), and the label ends with the unit, for example **Radius (ft)**. Where a
 control has a fixed unit, its row gives that unit.
+
+### Spotlights
+
+Right-click the ground and choose **Add Spotlight**. The projector starts with four moving beams.
+Choose **Overcast Stratus** under **Lighting → Clouds → Preset** for a low cloud base, then
+play the timeline to see the patches in Look view. Hold **Opt/Alt** and drag the projector to
+move it along the ground.
+
+Open the projector under **Objects** to change its pattern, adjust the brightness of all beams
+with one lumens slider or turn on faint beam cones. The [Spotlights guide](Spotlights.md) includes an illustrated
+setup, a control reference and directions for matching the patches to footage.
+
+#### Patterns from real projectors and shows
+
+Choose a SkyTracker cloverleaf or oval, program a 36-ray Spaceflower with its three-digit dial,
+or import a cue from a QLC+ workspace. [Presets and beam counts](Spotlights.md#choose-a-preset) ·
+[Spaceflower AUTO](Spotlights.md#program-a-spaceflower) · [QLC+ import](Spotlights.md#import-a-qlc-movement-effect)
 
 ### Buildings
 
@@ -922,9 +941,8 @@ An overlay made with **Image URL** keeps that address. See
   the **Objects** menu to make all objects larger while you find it. Set it back to 1 for real size.
 - **Satellite image with clouds.** Drag the image in as a ground overlay, turn on
   **Extract Clouds**, pick the cloud color, then set **Altitude (ft)** to the cloud height.
-- **Right-click does not open the ground menu?** The menu is only in a Custom sitch. Close any open
-  edit window or track menu. If a track is in edit mode, right-click opens its edit menu instead, and the label at
-  the top of each 3D view names the track. Press **Escape** to leave track edit mode.
+- **Right-click does not open the ground menu?** In a Custom sitch, hold **Shift** and right-click
+  where the pointer is over terrain. This works while a track is in edit mode.
 
 ## See also
 

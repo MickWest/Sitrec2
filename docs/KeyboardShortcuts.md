@@ -106,6 +106,7 @@ smaller view over the main view, or over the look view when the main view is hid
 
 | Key | Action |
 |---|---|
+| `Shift` + right-click | Open the **Ground** menu at the terrain under the pointer in Main or Look view, even behind a pin, track or object |
 | `Alt` (`Opt` on a Mac, hold) | Reveal the move widget near an editable object, then drag the object or widget. Also show the Move mode icon at its usual left-toolbar position in both Main and Look views |
 | `Alt`+`M` (`Opt`+`M` on a Mac) | Cycle object movement modes: **Surface**, **Camera plane**, **In / out**, **Screen plane** |
 | `Alt`+`C` (hold) | Move the **camera** to the point under the mouse, at its current altitude. If the camera **Position** is a track, it changes to **Manual** |
