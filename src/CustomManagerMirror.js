@@ -90,6 +90,7 @@ import {
 } from "./GimbalCustomSetup";
 import {Color} from "three";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
+import {idForConsole} from "./UserObjects";
 import {applyModernControls} from "./ModernControls";
 import {
     hookMirrorControllerDestroy,
@@ -664,7 +665,7 @@ export const mirrorMethods = {
             this.updateMirror(standaloneMenu);
         };
 
-        console.log(`Created dynamic mirror for node '${nodeId}' GUI`);
+        console.log(`Created dynamic mirror for node '${idForConsole(nodeId)}' GUI`);
         return standaloneMenu;
     },
 

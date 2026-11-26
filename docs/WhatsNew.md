@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.210.1 (2026-11-26)
+
+### Bug Fixes
+- Fixed Help → Export Debug Log saving the latitude and the longitude of a pylon or a pole of a power network, in the line that records a right-click on an object. That line now says only that the object is a power line support. Only 2.210.0 had this fault.
+
 ## Version 2.210.0 (2026-11-26)
 
 ### New Features

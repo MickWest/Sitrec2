@@ -47,6 +47,7 @@ import {bestSat, elementSetErrorKm, isBeforeLaunch, satRecToDate} from "../TLEUt
 import {standardMagnitude} from "../SatelliteBrightness";
 import {raycastLocalGround} from "../raycastGround";
 import {isPointOccludedByGlobe} from "../GlobeOcclusion";
+import {idForConsole} from "../UserObjects";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
 // Importing from ../JetStuff creates a circular dependency
@@ -1309,7 +1310,7 @@ export const mouseMethods = {
                         : this.findObjectID(object);
                     
                     if (objectID) {
-                        console.log(`Found object: ${objectID}`);
+                        console.log(`Found object: ${idForConsole(objectID)}`);
                         foundObject = true;
 
                         // get coordinates of the intersection point

@@ -1,6 +1,16 @@
 // Which 3D objects the user made, and which nodes such an object owns (src/UserObjects.js).
 
-import {BUILT_IN_OBJECT_IDS, isUserMadeObjectId, ownedSubNodeIds, savedObjectName} from "../src/UserObjects";
+import {BUILT_IN_OBJECT_IDS, idForConsole, isUserMadeObjectId, ownedSubNodeIds, savedObjectName} from "../src/UserObjects";
+
+test("a console line gets only the kind of a mapped power support id, which holds a position", () => {
+    // powerSupport:<network id>:<lat>,<lon> — the file name and the position must not be printed.
+    const printed = idForConsole("powerSupport:PowerNetwork_my%20lines.geojson:38.5816,-121.4944");
+    expect(printed).toBe("powerSupport");
+    expect(printed).not.toMatch(/38\.5816|121\.4944|my%20lines/);
+    // every other id is printed as it is
+    expect(idForConsole("syntheticObject_1791557242602")).toBe("syntheticObject_1791557242602");
+    expect(idForConsole("cameraObject")).toBe("cameraObject");
+});
 
 test("objects made in Sitrec are deletable; objects a sitch defines, and a balloon's sphere, are not", () => {
     expect(isUserMadeObjectId("syntheticObject_1791557242602")).toBe(true);

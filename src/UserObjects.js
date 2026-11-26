@@ -17,6 +17,19 @@ export function isUserMadeObjectId(id) {
     return /^(syntheticObject_|powerSupport:)/.test(String(id));
 }
 
+/**
+ * The form of a node id that a console line can print. The id of a mapped power support is
+ * `powerSupport:<network id>:<lat>,<lon>`: it holds the name of the dropped file and the
+ * position of the support. The console can be exported as a debug log, so a console line
+ * prints only the kind of such an id.
+ *
+ * @param {string} id - a node id
+ * @returns {string}
+ */
+export function idForConsole(id) {
+    return String(id).startsWith("powerSupport:") ? "powerSupport" : String(id);
+}
+
 // The two objects that the custom sitch defines. They were titled with their node ids until
 // they got names ("Camera Object", "Traverse Object", given in CCustomManager.setup).
 export const BUILT_IN_OBJECT_IDS = ["cameraObject", "traverseObject"];

@@ -9,6 +9,27 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.210.1 (2026-11-26)
+
+A patch release with no commits after tag 2.210.0. All of its content is uncommitted changes in the release pair, which ship in the release commit. It fixes the finding of the User Data Egress Check on 2.210.0 (rule 5). No change comes from a forum thread. Apart from these changelog entries, the working tree changes only `src/UserObjects.js`, `src/nodes/CNodeView3DMouse.js`, `src/CustomManagerMirror.js` and `tests/userObjects.test.js`. No language file changes, no npm or PHP dependency changes, and no file in `scripts/` or `sitrecServer/` and no Dockerfile changes.
+
+### Bug Fixes
+- **The console line for a right-click on a mapped power support no longer holds the file name and the position of the support** (uncommitted release-pair changes; `src/UserObjects.js` new exported `idForConsole`; `src/nodes/CNodeView3DMouse.js` `onContextMenuInner`; `src/CustomManagerMirror.js` `mirrorNodeGUI`; `tests/userObjects.test.js`).
+  - **Cause.** 2.210.0 added the power network (`cfe894b5`). The constructor of `CNodePowerNetwork` gives each mapped tower or pole that has no `sitrec:object` tag the ID `powerSupport:<network id>:<lat>,<lon>`. The network ID is `PowerNetwork_` and the `encodeURIComponent` form of the file name (`handleParsedFile` in `src/CFileManagerParse.js`). The latitude and the longitude are those of the mapped point, with no rounding. So the ID holds the name of the dropped file and the position of the support.
+    - In a 3D view, `onContextMenuInner` writes `Found object: <id>` for each object that a right-click finds. This line is older than 2.210.0. For a hit on the batch model of a network, the ID comes from `editSupport`. For a hit on a support that is already a regular object, it comes from `findObjectID`. Both give the `powerSupport:` ID.
+    - In a production build `src/DebugLog.js` keeps the console lines (log, warning and error; the last 10,000; a development build does not record them), and Help → *Export Debug Log* saves them. So an exported log of 2.210.0 showed the file name and the position of each mapped support that the user right-clicked.
+    - The egress check on 2.210.0 reported this at `src/nodes/CNodeView3DMouse.js:1307`, the statement that gets the ID. The accepted pattern `debug-log-file-names` in `scripts/egress-accepted-patterns.md` accepts file names in the console. A position is more than it accepts.
+    - No release before 2.210.0 has the fault, because the `powerSupport:` ID is new in 2.210.0.
+  - **Fix.** `idForConsole(id)` returns `powerSupport` for an ID that starts with `powerSupport:`. For each other ID it returns the ID as a string. `onContextMenuInner` now writes `Found object: ` and the result of `idForConsole`, so the line for a mapped support is `Found object: powerSupport`. The line for each other object is the same as before, for example `Found object: syntheticObject_<time>`.
+    - Only the text of the console line changes. The ID of the object, the pick and the edit window do not change.
+    - Each mapped support gets the same line, so an exported log does not show which support the user right-clicked.
+    - `src/UserObjects.js` has no imports, so the two new imports of it add no import cycle. A code comment on `idForConsole` gives the reason for the function.
+  - **`mirrorNodeGUI`.** The line `Created dynamic mirror for node '<id>' GUI` now also gets its ID from `idForConsole`. This line is not on the path of a right-click. `showNodeEditMenu` opens the edit window of an object, and it does not call `mirrorNodeGUI`. The only caller of `mirrorNodeGUI` in `src/` is `createDynamicMirror`, and no code in `src/` calls `createDynamicMirror`. `docs/dev/dynamic-gui-mirroring.md` gives the two as convenience methods for the browser console. So this change is a precaution for a later caller. It changes nothing that the user interface of 2.210.0 writes.
+  - **Test.** New test *a console line gets only the kind of a mapped power support id, which holds a position* in `tests/userObjects.test.js`. It calls `idForConsole` with `powerSupport:PowerNetwork_my%20lines.geojson:38.5816,-121.4944`. It checks that the result is `powerSupport`, and that the result contains none of `38.5816`, `121.4944` and `my%20lines`. It also checks that `syntheticObject_1791557242602` and `cameraObject` come back unchanged. It tests the function only. It does not run the right-click handler or the debug log capture.
+  - **Not changed.** Only these two lines use `idForConsole`. Each other console line that writes a node ID writes it as before, for example `Node <id> not found or has no GUI folder` in `showNodeEditMenu`. This changelog audit did not search the other console lines for a path to a `powerSupport:` ID.
+    - The name of a power network file is still in the console. `handleParsedFile` writes `handleParsedFile: Handling parsed file <file name>` for each file, before it makes the network. `debug-log-file-names` accepts that line.
+    - A mapped point with a `sitrec:object` tag has the value of the tag as its ID. `idForConsole` looks only at the start of an ID, so it returns such an ID unchanged unless it starts with `powerSupport:`.
+
 ## Version 2.210.0 (2026-11-26)
 
 A minor release. Its content is five commits after tag 2.209.0, plus two uncommitted changes that ship in the release commit.
