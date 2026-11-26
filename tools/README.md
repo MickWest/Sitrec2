@@ -14,6 +14,7 @@ use **Sitrec → Extra Tools** or the [Tools page](https://www.metabunk.org/sitr
 | Diffraction PSF Studio | Makes the diffraction point spread function (PSF) of a camera aperture, and exports it for Sitrec's camera glare | [psf/README.md](psf/README.md) |
 | Custom Object Designer | Builds cars, trucks, aircraft, drones, balloons, sky lanterns, kites and birds, and exports GLB models | [vehicles/README.md](vehicles/README.md) |
 | XML Wind Profile Analyzer | Finds the position and the vertical wind profile in an XML weather file, and gives the settings that make Sitrec read it | [xml-wind/README.md](xml-wind/README.md) |
+| Performance Benchmark | Inspects GPU and CPU capabilities, tests rendering settings, and exports a diagnostic report with recommendations | [benchmark.html](benchmark.html) |
 
 This page also covers the tile download scripts. The last section tells how to add a public tool.
 

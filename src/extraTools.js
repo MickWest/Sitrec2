@@ -24,4 +24,5 @@ export const EXTRA_TOOLS = [
     {key: "psfStudio", path: "psf/index.html"},
     {key: "aircraftDesigner", path: "vehicles/index.html"},
     {key: "xmlWindAnalyzer", path: "xml-wind/index.html"},
+    {key: "benchmark", path: "benchmark.html"},
 ];

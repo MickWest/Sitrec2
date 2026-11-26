@@ -774,6 +774,10 @@ const en = {
                         label: "XML Wind Profile Analyzer",
                         tooltip: "Find the position and the vertical wind profile in an XML weather file, and get the settings that make Sitrec read it",
                     },
+                    benchmark: {
+                        label: "Performance Benchmark",
+                        tooltip: "Inspect your GPU and CPU, benchmark individual rendering settings, and export a diagnostic report with recommended Sitrec settings",
+                    },
                 },
             },
             selectPlaceholder: "-Select-",
