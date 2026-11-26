@@ -1,4 +1,6 @@
-import {logRendererGPU} from "../src/RendererGPUInfo";
+import fs from "fs";
+import path from "path";
+import {debugLogViewLabel, logRendererGPU} from "../src/RendererGPUInfo";
 
 const debugInfo = {UNMASKED_RENDERER_WEBGL: 1, UNMASKED_VENDOR_WEBGL: 2};
 let gl, renderer, log;
@@ -74,4 +76,20 @@ test("a view ID from sitch data is not written to the debug log", () => {
     expect(log.mock.calls[0][0]).toContain('view "lookView" (created)');
     expect(log.mock.calls[1][0]).toContain('view "other 3D view" (created)');
     expect(log.mock.calls[1][0]).not.toContain("My private sitch view name");
+});
+
+test("the debug log view label names only the code-defined views", () => {
+    expect(debugLogViewLabel("mainView")).toBe("mainView");
+    expect(debugLogViewLabel("lookView")).toBe("lookView");
+    expect(debugLogViewLabel("lookView2")).toBe("other 3D view");
+    expect(debugLogViewLabel(undefined)).toBe("other 3D view");
+});
+
+test("CNodeView3D console lines do not write a raw view ID", () => {
+    const source = fs.readFileSync(path.join(__dirname, "../src/nodes/CNodeView3D.js"), "utf-8");
+    const rawIdLines = source.split("\n")
+        .filter(line => !line.trim().startsWith("//"))
+        .filter(line => /console\.(log|warn|error|info|debug)\(/.test(line))
+        .filter(line => line.includes("${this.id}"));
+    expect(rawIdLines).toEqual([]);
 });

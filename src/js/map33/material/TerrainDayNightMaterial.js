@@ -393,8 +393,10 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 function installTerrainFeatureVariants(material) {
     installGlintVariant(material);
     installShaderFeatureVariants(material, {
-        SITREC_TERRAIN_WATER: () => sharedUniforms.waterReflection.value > 0
-            && sharedUniforms.waterSurfaceOnly.value < 0.5,
+        // Scoped: the reflection applies to one view, and its mirror capture
+        // draws the same tiles with the gate off. The shader tests it again.
+        SITREC_TERRAIN_WATER: {scoped: () => sharedUniforms.waterReflection.value > 0
+            && sharedUniforms.waterSurfaceOnly.value < 0.5},
         SITREC_TILE_EDGES: () => sharedUniforms.showTileEdges.value,
     });
 }

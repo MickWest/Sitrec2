@@ -37,6 +37,7 @@ import {DragDropHandler} from "./DragDropHandler";
 import {EventManager} from "./CEventManager";
 import {updateFrame} from "./updateFrame";
 import {flushCameraInputUpdates} from "./CameraInputUpdates";
+import {advanceShaderFeatureFrame} from "./ShaderFeatureVariants";
 import {isKeyHeld} from "./KeyBoardHandler";
 import {updateLockTrack} from "./updateLockTrack";
 import {assert} from "./assert";
@@ -488,6 +489,9 @@ export function renderMain(elapsed) {
     // refresh only cameras changed by gestures, before any preRender/view work.
     // Video-only mode discards requests because its 3D cameras are not rendered.
     flushCameraInputUpdates(par.frame, nodesUpdated || Globals.justVideoAnalysis);
+
+    // Pass-scoped shader variants count drawn frames to know when to let go.
+    advanceShaderFeatureFrame();
 
     // render each viewport
     if (globalProfiler) globalProfiler.push('#2ca02c', 'Viewports');

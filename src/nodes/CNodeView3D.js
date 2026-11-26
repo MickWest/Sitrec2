@@ -45,7 +45,7 @@ import {getPanoramaFrame, isPanoramicCamera, PanoramicRenderer} from "../Panoram
 import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
-import {logRendererGPU, WEBGL_POWER_PREFERENCE} from "../RendererGPUInfo";
+import {debugLogViewLabel, logRendererGPU, WEBGL_POWER_PREFERENCE} from "../RendererGPUInfo";
 import {
     Camera,
     Color,
@@ -2010,7 +2010,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             e.preventDefault();
             this.contextLost = true;
             disposeThermalView(this);
-            console.warn(`[WebGL] Context LOST on view "${this.id}"`);
+            console.warn(`[WebGL] Context LOST on view "${debugLogViewLabel(this.id)}"`);
             // Drop JS-side render-target handles; their GL backing is gone.
             // The restore handler will recreate them. Until then, renderCanvas
             // short-circuits on this.contextLost so no GL calls are issued.
@@ -2023,7 +2023,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         };
 
         this._onContextRestored = () => {
-            console.warn(`[WebGL] Context restored on view "${this.id}"`);
+            console.warn(`[WebGL] Context restored on view "${debugLogViewLabel(this.id)}"`);
             logRendererGPU(this.renderer, this.id, "restored");
             this.contextLost = false;
 
@@ -3475,7 +3475,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // Each view maintains its own render targets instead of sharing globals
         this.renderTargetAntiAliased = createSceneRenderTarget(this.renderer, renderTargetType, requestedSamples);
         if (this.renderTargetAntiAliased.samples !== requestedSamples) {
-            console.warn(`[Render] ${this.id}: requested ${requestedSamples} MSAA samples; using ${this.renderTargetAntiAliased.samples} for ${this.useLookViewHDR ? "RGBA16F" : "RGBA8"}`);
+            console.warn(`[Render] ${debugLogViewLabel(this.id)}: requested ${requestedSamples} MSAA samples; using ${this.renderTargetAntiAliased.samples} for ${this.useLookViewHDR ? "RGBA16F" : "RGBA8"}`);
         }
 
         this.renderTargetA = new WebGLRenderTarget(256, 256, {

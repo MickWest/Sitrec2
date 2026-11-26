@@ -173,8 +173,10 @@ export function installMaterialAtmosphere(material) {
     };
     installed.add(material);
     const version = material.version;
+    // Only the look view draws haze. A material that the main view also draws
+    // keeps the variant, and atmoEnabled switches it off for that draw.
     installShaderFeatureVariants(material, {
-        SITREC_MATERIAL_ATMOSPHERE: () => materialAtmosphereUniforms.atmoEnabled.value,
+        SITREC_MATERIAL_ATMOSPHERE: {scoped: () => materialAtmosphereUniforms.atmoEnabled.value},
     });
     if (material.version === version) material.needsUpdate = true;
     return true;

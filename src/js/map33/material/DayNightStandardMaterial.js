@@ -84,9 +84,13 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         installGlintVariant(this);
         installTerrestrialRefractionVariants(this);
         installShaderFeatureVariants(this, {
-            SITREC_TILE_WATER: material => material._tileWaterEnabled && (
-                (sharedUniforms.waterReflection.value > 0 && sharedUniforms.waterSurfaceOnly.value < 0.5)
-                || sharedUniforms.waterTileCapture.value > 0.5),
+            // The switch for this material applies immediately. The gates are
+            // scoped to one view and to its mirror capture.
+            SITREC_TILE_WATER: {
+                enabled: material => material._tileWaterEnabled,
+                scoped: () => (sharedUniforms.waterReflection.value > 0 && sharedUniforms.waterSurfaceOnly.value < 0.5)
+                    || sharedUniforms.waterTileCapture.value > 0.5,
+            },
             SITREC_BUILDING_EDGES: () => sharedUniforms.showBuildingEdges.value,
             SITREC_TILE_EDGES: () => sharedUniforms.showTileEdges.value,
         });

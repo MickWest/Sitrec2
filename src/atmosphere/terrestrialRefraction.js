@@ -604,8 +604,11 @@ float sitrecSightLineDensity(float hObs, float hTgt, float d) {
 
 vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
 #ifdef SITREC_RAY_GEOMETRY
-    return applyRayGeometry(viewPos);
-#elif defined(SITREC_TERRESTRIAL_REFRACTION)
+    // A material that two views share can have both variants. The uniform of
+    // the view in progress selects one.
+    if (uRayGeometry > 0.5) return applyRayGeometry(viewPos);
+#endif
+#ifdef SITREC_TERRESTRIAL_REFRACTION
     if (uTerrK == 0.0) return viewPos;
     float upComponent = dot(viewPos, uTerrZenithView);
     vec3 horizontal = viewPos - upComponent * uTerrZenithView;
@@ -675,12 +678,14 @@ export function installTerrestrialRefractionOnShaderMaterial(material) {
 }
 
 // Read the effective draw state: ray geometry and thermal captures scope these
-// uniforms independently of the situation's master checkboxes.
+// uniforms independently of the situation's master checkboxes. Both are scoped
+// to a view (a ray-traced look view beside a standard main view), so a shared
+// material can hold both, and the chunk selects one by uniform.
 export function installTerrestrialRefractionVariants(material) {
     installShaderFeatureVariants(material, {
-        SITREC_RAY_GEOMETRY: () => rayGeometryUniforms.uRayGeometry.value > 0.5,
-        SITREC_TERRESTRIAL_REFRACTION: () => rayGeometryUniforms.uRayGeometry.value <= 0.5
-            && terrestrialRefractionUniforms.uTerrK.value !== 0,
+        SITREC_RAY_GEOMETRY: {scoped: () => rayGeometryUniforms.uRayGeometry.value > 0.5},
+        SITREC_TERRESTRIAL_REFRACTION: {scoped: () => rayGeometryUniforms.uRayGeometry.value <= 0.5
+            && terrestrialRefractionUniforms.uTerrK.value !== 0},
     });
 }
 
