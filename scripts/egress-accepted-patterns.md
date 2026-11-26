@@ -327,6 +327,26 @@ entry here: an id, what the code does, where the data goes, the release, and its
   Manual camera position while the camera follows a loaded track), a wider region, a request
   while the layer is hidden, another tile host, or any other data in the requests is a finding.
 
+### `overlay-image-url` — accepted 2.210.0
+- **Code:** `src/CSitrecAPI.js` (`_updateSynthElement`) and `src/nodes/CNodeGroundOverlay.js`
+  (`loadTexture`). A ground overlay shows a picture from the URL in its `imageURL`. When an
+  `updateSynthElement` call changes that URL, the overlay now loads the picture at once. Undo
+  and redo of that edit put the earlier or the later URL back and load it the same way. The
+  Image URL field of the overlay and `createSynthOverlay` already loaded the picture when they
+  set the URL.
+- **Callers:** a person in the user interface, Sitrec itself, and an agent that drives the page
+  through the SitrecBridge extension. A call from the chatbot or from WebMCP cannot set this
+  URL to another origin: `refuseExternalURLParams` in `src/PromptSafety.js` refuses the call
+  before the function runs. For `createSynthOverlay` and `updateSynthElement`
+  (`CHAT_DENIED_URL_PARAMS`), only a URL of the same origin, or a relative one, passes. For
+  `setMenuValue` (`CHAT_DENIED_URL_VALUES`), no absolute URL passes.
+- **Data:** one image request to the host that the URL names. An external URL is requested as it
+  was given; the application adds nothing to it.
+- **Limits:** the picture of a ground overlay only, and only a URL that one of the callers above
+  gave in the call or the field. A URL that the application builds from user data, a URL taken
+  from the page address or from a link, an external URL accepted from the chatbot or from
+  WebMCP, or the same load for another kind of object is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

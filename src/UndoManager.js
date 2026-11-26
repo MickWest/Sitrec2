@@ -97,7 +97,9 @@ class UndoManager {
         try {
             action[direction]();
         } catch (error) {
-            console.error(`UndoManager: Could not ${direction} "${action.description ?? "unnamed"}"`, error);
+            // Fixed text and the error type only. A description or an error message can
+            // hold a name that the user typed, and the console can be exported as a log.
+            console.error(`UndoManager: Could not ${direction} an edit (${error?.name ?? "Error"})`);
             return false;
         } finally {
             this.isUndoing = this.isRedoing = false;
