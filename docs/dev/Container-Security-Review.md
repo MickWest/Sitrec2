@@ -81,15 +81,20 @@ credentials' own, and must never be pushed to a public or shared registry.
 ## Where it runs
 
 **In the release workflow** — the authoritative gate. `.github/workflows/docker.yml` runs
-the review over the image it just built, as `--profile=published --fail-on=critical`, in the
-**`package`** job. That job is a two-way matrix, so **both published architectures are
-reviewed**, each on a runner of its own architecture with no emulation. `smoke-test` needs
-`package` and `manifest` needs both, so an image carrying a credential never becomes a
-version tag or `latest`.
+the review over each image it built, as `--profile=published --fail-on=critical`, in the
+**`review`** job. That job is a two-way matrix, so **both published architectures are
+reviewed**, each on a runner of its own architecture with no emulation. `review` and
+`smoke-test` both need `package` and run side by side, and `manifest` needs all three, so
+an image carrying a credential never becomes a version tag or `latest`.
 
-The workflow installs a pinned Trivy release (the `version` input of the setup-trivy step),
-not the newest one, because the `package` job holds a registry write token and signing
-rights. Raise that version deliberately, after reading the release.
+The `review` job can read the repository and the registry, and nothing more. The scanners
+are third-party tools, so they do not run in the `package` job, which holds a registry
+write token and signing rights. `review` takes each image by digest from the record that
+`package` uploaded for it, not from a tag.
+
+The workflow installs a pinned Trivy release, not the newest one: the install step names
+the version and the SHA-256 of each tarball, because the verdict of that binary decides
+whether a release is published. Raise that version deliberately, after reading the release.
 
 The report is written to the run summary, so it renders as formatted Markdown on the run
 page in the browser — no download. The report, the bill of materials and the evidence are
@@ -330,7 +335,8 @@ cite.
 
 The release pipeline records the immutable build-index and platform digests as
 per-architecture workflow artifacts. Each record is uploaded as soon as the digest is
-resolved, before the scanners run. Security reviews and smoke tests use those
+resolved; the scanners run later, in a job that can only read it. Security reviews and
+smoke tests use those
 platform digests, and final assembly consumes those same build indexes. Temporary
 tags include the run ID and attempt; retries may reuse a successful architecture's
 record from an earlier attempt of the same run and commit.
@@ -355,7 +361,7 @@ verify` above is the check that matters, and it talks to the registry directly.
 
 ### Contents — a bill of materials per architecture
 
-Each `package` job publishes a CycloneDX 1.6 bill of materials for the image it built, as
+Each `review` job publishes a CycloneDX 1.6 bill of materials for the image it reviewed, as
 part of the `container-security-review-amd64` / `-arm64` artifact. Components carry name,
 version, `purl`, `cpe` and licence, and the document carries its own timestamp, subject
 component and generating tool — the fields a consumer needs to match components against an

@@ -217,21 +217,138 @@ docker() {
                 self.assertNotEqual(failed.returncode, 0)
                 self.assertEqual(failed.stdout, '')
 
-    def test_digest_record_is_uploaded_before_any_scanner_runs(self):
-        # smoke-test and manifest trust this record. Uploaded before the third-party
-        # scanners run, it cannot be replaced by one of them first.
+    SCANNER_STEPS = ['Install trivy', 'Install syft', 'Container security review']
+
+    def test_digest_record_is_uploaded_as_soon_as_it_is_written(self):
+        # smoke-test, review and manifest trust this record.
         names = [s.get('name') for s in RELEASE['jobs']['package']['steps']]
         upload = names.index('Upload tested image digests')
         self.assertEqual(upload, names.index('Resolve the platform manifest digest') + 1)
-        for scanner in ['Install trivy', 'Install syft', 'Container security review']:
+
+    def test_no_scanner_runs_in_the_package_job(self):
+        # package holds a registry write token and signing rights. The third-party
+        # scanners run in review, which has neither, so none of them can publish, sign,
+        # or replace the digest record.
+        package = RELEASE['jobs']['package']['steps']
+        review = [s.get('name') for s in RELEASE['jobs']['review']['steps']]
+        for scanner in self.SCANNER_STEPS:
             with self.subTest(step=scanner):
-                self.assertLess(upload, names.index(scanner))
+                self.assertNotIn(scanner, [s.get('name') for s in package])
+                self.assertIn(scanner, review)
+        text = json.dumps(package).lower()
+        for word in ['trivy', 'syft', 'auditcontainerimage']:
+            with self.subTest(word=word):
+                self.assertNotIn(word, text)
+
+    def test_review_job_cannot_write_or_sign(self):
+        # Exactly these two. A job that names its permissions gets no other one, so
+        # there is no registry write, no id-token and no attestations right.
+        self.assertEqual(RELEASE['jobs']['review']['permissions'],
+                         {'contents': 'read', 'packages': 'read'})
+
+    def test_publication_waits_for_the_review_of_every_image(self):
+        jobs = RELEASE['jobs']
+        for job in ['package', 'smoke-test', 'review']:
+            with self.subTest(job=job):
+                self.assertIn(job, jobs['manifest']['needs'])
+        # One review for each image that package builds.
+        self.assertEqual(jobs['review']['needs'], 'package')
+        self.assertEqual(jobs['review']['strategy'], jobs['package']['strategy'])
+        # The exit status of the review step is the gate. Nothing may let a failure pass.
+        gate = step(RELEASE, 'review', 'Container security review')
+        self.assertIn('--fail-on=critical', gate['run'])
+        for item in [gate, jobs['review']]:
+            self.assertNotIn('continue-on-error', item)
+            self.assertNotIn('if', item)
+
+    def test_review_reads_the_image_from_the_build_record(self):
+        # A step output of package does not reach another job. The review takes the
+        # platform image from the record artifact, by digest, never from a build tag.
+        review = RELEASE['jobs']['review']['steps']
+        self.assertNotIn('steps.platform', json.dumps(review))
+        download = step(RELEASE, 'review', 'Download the tested image digest')
+        self.assertEqual(download['with']['name'], 'image-digest-${{ matrix.suffix }}')
+        read = step(RELEASE, 'review', 'Read the tested image digest')
+        self.assertEqual(read['env']['ARCH'], '${{ matrix.suffix }}')
+        script = read['run'].replace('bash .github/scripts/read-image-record.sh',
+                                     f'bash "{ROOT}/.github/scripts/read-image-record.sh"')
+        self.assertIn(str(ROOT), script)
+        mock = r'''
+docker() { printf 'docker %s\n' "$*" >> "$FIXTURES/calls"; }
+node() { printf 'node %s\n' "$*" >> "$FIXTURES/calls"; }
+'''
+        (self.path / 'image-digests').mkdir()
+        for arch, platform in [('amd64', 2), ('arm64', 12)]:
+            with self.subTest(arch=arch):
+                record = dict(index=digest(1), platform=digest(platform), arch=arch,
+                              commit='a' * 40, run='12345', attempt='1')
+                self.write(f'image-digests/{arch}.json', record)
+                self.write('env', '')
+                result = self.shell(script, env=dict(ARCH=arch))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                reference = 'ghcr.io/example/fixture@' + digest(platform)
+                self.assertEqual((self.path / 'env').read_text(), f'REVIEW_IMAGE={reference}\n')
+
+                self.write('calls', '')
+                gate = step(RELEASE, 'review', 'Container security review')['run']
+                result = self.shell(gate, mock, dict(REVIEW_IMAGE=reference))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = (self.path / 'calls').read_text().splitlines()
+                self.assertEqual(calls[0], f'docker pull {reference}')
+                self.assertIn(f'--image={reference}', calls[1])
+                self.assertNotIn(':build-', '\n'.join(calls))
+
+                # A record of another run, or of the other architecture, gives no image.
+                for key, value in [('run', '999'), ('arch', 'riscv64'), ('platform', 'null')]:
+                    with self.subTest(key=key):
+                        self.write(f'image-digests/{arch}.json', {**record, key: value})
+                        self.write('env', '')
+                        failed = self.shell(script, env=dict(ARCH=arch))
+                        self.assertNotEqual(failed.returncode, 0)
+                        self.assertEqual((self.path / 'env').read_text(), '')
+
+    def test_no_release_writes_a_cache_that_no_release_reads(self):
+        # GitHub saves a cache under the ref of the tag that wrote it, and the run of
+        # another tag cannot restore it. Until 2.209.0 each release exported a build
+        # cache and a Playwright image tarball that no later release loaded.
+        build = step(RELEASE, 'package', 'Build and push (single-arch)')['with']
+        self.assertNotIn('cache-from', build)
+        self.assertNotIn('cache-to', build)
+        # Still asked for, so that a cache added later cannot bring back old packages.
+        self.assertIs(build['pull'], True)
+        self.assertEqual(build['no-cache-filters'], 'runtime')
+        smoke = RELEASE['jobs']['smoke-test']['steps']
+        self.assertEqual([s['uses'] for s in smoke if s.get('uses', '').startswith('actions/cache@')], [])
+        pull = step(RELEASE, 'smoke-test', 'Pull Playwright image (with retry)')['run']
+        self.assertNotIn('docker save', pull)
+        self.assertNotIn('docker load', pull)
+
+    def test_playwright_pull_keeps_its_six_attempts(self):
+        # The registry of the browser image limits the rate of GitHub's runners, so one
+        # failed pull must not fail a release.
+        pull = step(RELEASE, 'smoke-test', 'Pull Playwright image (with retry)')['run']
+        mock = r'''
+sleep() { :; }
+docker() {
+  printf '%s\n' "$*" >> "$FIXTURES/pulls"
+  [ "$(wc -l < "$FIXTURES/pulls")" -ge "$SUCCEED_ON" ]
+}
+'''
+        env = dict(PLAYWRIGHT_IMAGE='registry.example/playwright:v1.0.0-noble')
+        result = self.shell(pull, mock, {**env, 'SUCCEED_ON': '3'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.path / 'pulls').read_text().splitlines(),
+                         ['pull ' + env['PLAYWRIGHT_IMAGE']] * 3)
+        (self.path / 'pulls').unlink()
+        result = self.shell(pull, mock, {**env, 'SUCCEED_ON': '99'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len((self.path / 'pulls').read_text().splitlines()), 6)
 
     def test_scanner_binary_is_pinned(self):
-        # The job holds a registry write token and signing rights, so the Trivy binary
+        # The verdict of the Trivy binary decides whether a release is published, so it
         # is pinned by version AND by the hash of each tarball, and comes only from the
         # GitHub release page (get.trivy.dev stopped resolving on 2026-11-03).
-        installer = step(RELEASE, 'package', 'Install trivy')
+        installer = step(RELEASE, 'review', 'Install trivy')
         self.assertNotIn('uses', installer)
         env = installer['env']
         self.assertEqual(env['ARCH'], '${{ matrix.suffix }}')
@@ -266,7 +383,7 @@ curl() {
             info.size, info.mode = len(payload), 0o755
             tar.addfile(info, io.BytesIO(payload))
         good = hashlib.sha256((self.path / 'fixture.tar.gz').read_bytes()).hexdigest()
-        installer = step(RELEASE, 'package', 'Install trivy')
+        installer = step(RELEASE, 'review', 'Install trivy')
         env = {**{k: str(v) for k, v in installer['env'].items()}, 'ARCH': arch,
                'GITHUB_PATH': str(self.path / 'path')}
         for name, value in hashes.items():
@@ -274,7 +391,7 @@ curl() {
         return self.shell(installer['run'], self.MOCK_CURL, env)
 
     def test_scanner_install_unpacks_only_a_matching_tarball(self):
-        version = str(step(RELEASE, 'package', 'Install trivy')['env']['TRIVY_VERSION'])
+        version = str(step(RELEASE, 'review', 'Install trivy')['env']['TRIVY_VERSION'])
         release = f'https://github.com/aquasecurity/trivy/releases/download/v{version}/'
         for arch, asset in [('amd64', 'Linux-64bit'), ('arm64', 'Linux-ARM64')]:
             with self.subTest(arch=arch):

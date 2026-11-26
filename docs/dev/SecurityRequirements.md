@@ -122,7 +122,8 @@ assigned UID.
 and no `latest`.
 
 **SR-13 — A release cannot be published without its security evidence having been produced.**
-*Implemented:* the review runs in the job that builds each image, before anything is tagged.
+*Implemented:* the review runs on each built image, in a job that the publishing job waits
+for, before anything is tagged.
 *Verified:* a review that produces no evidence reports `NOT VERIFIED` and fails, rather than
 passing on an empty result.
 

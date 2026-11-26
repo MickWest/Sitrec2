@@ -31,6 +31,7 @@ require('./scripts/sharedEnvVersion').checkOrExit({ envPath: sharedEnvFile });
 const { rewriteMdLinks } = require('./scripts/docLinks');
 
 const {addHeadingIds} = require('./scripts/docHeadings');
+const {docPageTitle} = require('./scripts/docTitle');
 const {DocumentationIndexPlugin} = require('./scripts/buildDocumentationIndex');
 
 // A checkout with no tags -- a shallow CI clone, a `git archive` tarball, a fresh
@@ -377,10 +378,10 @@ module.exports = (env = {}) => ({
                                 const stylesheet = path.relative(path.dirname(outputPath), path.join(outputDir, 'github-markdown.css'))
                                     .split(path.sep).join('/');
                                 
-                                // Extract title from first H1 or use filename
-                                const titleMatch = markdownContent.match(/^#\s+(.+)$/m);
-                                const title = titleMatch ? titleMatch[1] : file.name.replace('.md', '');
-                                
+                                // The first H1, or the filename, escaped for HTML: the heading is
+                                // source text and can hold markup (scripts/docTitle.js).
+                                const title = docPageTitle(markdownContent, file.name.replace('.md', ''));
+
                                 const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -420,10 +421,9 @@ ${bodyContent}
                         readmeContent = rewriteMdLinks(readmeContent);
                         const bodyContent = addHeadingIds(md.render(readmeContent));
                         
-                        // Extract title from first H1 or use "README"
-                        const titleMatch = readmeContent.match(/^#\s+(.+)$/m);
-                        const title = titleMatch ? titleMatch[1] : 'README';
-                        
+                        // The first H1, or "README", escaped for HTML (scripts/docTitle.js).
+                        const title = docPageTitle(readmeContent, 'README');
+
                         const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>

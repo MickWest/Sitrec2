@@ -9,13 +9,16 @@ name: Docker Image
 #   1. "build-js" runs once on x86 — webpack produces identical output
 #      regardless of CPU architecture, so no need to build twice.
 #   2. "package" runs natively on both amd64 and arm64 runners, copying the
-#      JS artifacts into the PHP+Apache runtime image, then runs the container
-#      security review over the image it just built — once per architecture,
-#      each on a runner of its own architecture.
-#   3. "smoke-test" pulls the amd64 image, starts the container, and runs
+#      JS artifacts into the PHP+Apache runtime image.
+#   3. Two checks of the built images run side by side:
+#      "smoke-test" pulls the amd64 image, starts the container, and runs
 #      HTTP checks + a Playwright visual regression test to verify it works.
+#      "review" runs the container security review over each image — once per
+#      architecture, each on a runner of its own architecture, in a job that can
+#      read the registry but cannot write to it or sign anything.
 #   4. "manifest" creates the multi-arch manifest list so a single
-#      image tag works on both architectures (only if smoke tests pass).
+#      image tag works on both architectures (only if the smoke test and both
+#      reviews pass).
 
 on:
   push:
@@ -243,14 +246,20 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           # Refresh distribution packages even when the base tag has not changed.
-          # Keep the independent Composer stage cached.
+          #
+          # No build cache is configured, so every stage builds from scratch on each
+          # run, the Composer stage included. A GitHub Actions cache was set here until
+          # 2.209.0, but no release read it: GitHub saves a cache under the ref of the
+          # tag that wrote it, and a run for another tag cannot restore it. Each run
+          # still exported the cache after the image was pushed, which cost up to a
+          # minute and filled the repository's cache store. `no-cache-filters` has no
+          # effect while there is no cache. It stays so that a cache added later cannot
+          # bring back an old package layer.
           pull: true
           no-cache-filters: runtime
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:build-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha,scope=${{ matrix.suffix }}
-          cache-to: type=gha,scope=${{ matrix.suffix }},mode=max
 
       # BuildKit's output is a wrapper index containing the platform image and
       # its unsigned provenance. Resolve the child from THIS build's immutable
@@ -285,10 +294,11 @@ jobs:
       # Download actions default to this workflow run. Overwrite only this arch on
       # a retry, retaining a successful sibling's record from an earlier attempt.
       #
-      # Uploaded as soon as it is written, before any third-party tool runs in this
-      # job (the scanners below), so none of them can replace the record first. A
-      # record from a job that then fails is never read: smoke-test and manifest
-      # need every package job to succeed, and a rerun overwrites it.
+      # Uploaded as soon as it is written. No third-party scanner runs in this job
+      # (they run in the review job, which can only read this record), so none of
+      # them can replace it. A record from a job that then fails is never read:
+      # smoke-test, review and manifest need every package job to succeed, and a
+      # rerun overwrites it.
       - name: Upload tested image digests
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -320,28 +330,92 @@ jobs:
           subject-digest: ${{ steps.platform.outputs.digest }}
           push-to-registry: true
 
-      # ── Container security review ────────────────────────────────────
-      # Runs here, in the per-architecture matrix, rather than once in smoke-test.
-      # smoke-test only ever had the amd64 image, so the arm64 image was published
-      # unreviewed — and while the two are packaged from the same dist/ by the same
-      # Dockerfile (so their credentials are identical), their base layers are
-      # different builds of Debian and their advisory load and setuid inventory can
-      # genuinely differ. Reviewing here also means each image is examined by a
-      # runner of its own architecture, with no emulation.
-      #
-      # The published image is built from config/shared.env.example, so every
-      # credential in it must be the shipped placeholder. Nothing else in the
-      # pipeline checks that: the bundle secret audit judges a directory a web
-      # server will serve, and correctly permits shared.env.php there because PHP
-      # never hands that file out — but in an IMAGE the same file is a layer anyone
-      # with pull access can read with `docker save`, and the "<?php" guard protects
-      # nothing against that.
-      #
-      # --fail-on=critical gates on the two credential checks only. The posture
-      # findings (root by default, the world-writable webroot, the base image's
-      # advisory backlog) are reported for the operator rather than treated as
-      # release blockers. A failure here stops smoke-test and manifest, so no
-      # version or latest tag is ever created.
+  # ── Stage 3: Container security review (native per-arch) ───────
+  # Runs in a per-architecture matrix, rather than once in smoke-test. smoke-test
+  # only ever had the amd64 image, so the arm64 image was published unreviewed —
+  # and while the two are packaged from the same dist/ by the same Dockerfile (so
+  # their credentials are identical), their base layers are different builds of
+  # Debian and their advisory load and setuid inventory can genuinely differ. A
+  # matrix also means each image is examined by a runner of its own architecture,
+  # with no emulation.
+  #
+  # It is a job of its own, beside smoke-test, for two reasons. The two checks run
+  # at the same time, so the review adds no wait to a release. And the scanners are
+  # third-party tools: until 2.209.0 they ran in the package job, which holds a
+  # registry write token and signing rights. Here they can read the repository and
+  # the registry, and nothing more.
+  #
+  # The published image is built from config/shared.env.example, so every
+  # credential in it must be the shipped placeholder. Nothing else in the
+  # pipeline checks that: the bundle secret audit judges a directory a web
+  # server will serve, and correctly permits shared.env.php there because PHP
+  # never hands that file out — but in an IMAGE the same file is a layer anyone
+  # with pull access can read with `docker save`, and the "<?php" guard protects
+  # nothing against that.
+  #
+  # --fail-on=critical gates on the two credential checks only. The posture
+  # findings (root by default, the world-writable webroot, the base image's
+  # advisory backlog) are reported for the operator rather than treated as
+  # release blockers. A failure here stops manifest, which needs this job, so no
+  # version or latest tag is ever created.
+  review:
+    needs: package
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No job here pushes with the checkout token.
+          persist-credentials: false
+
+      - name: Lowercase image name
+        run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the tested image digest
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: image-digest-${{ matrix.suffix }}
+          path: image-digests
+
+      # A step output of the package job does not reach another job. The image comes
+      # from this run's build record, through the same checked reader that smoke-test
+      # and manifest use, and never from a lookup of a temporary tag. The record names
+      # the platform image PLATFORM_AMD64 or PLATFORM_ARM64; the review step needs one
+      # name for it on either architecture.
+      - name: Read the tested image digest
+        env:
+          ARCH: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          RECORD=$(bash .github/scripts/read-image-record.sh "$ARCH" "image-digests/${ARCH}.json")
+          SUFFIX=$(printf '%s' "$ARCH" | tr '[:lower:]' '[:upper:]')
+          IMAGE=$(printf '%s\n' "$RECORD" | sed -n "s/^PLATFORM_${SUFFIX}=//p")
+          if ! [[ "$IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::No platform image for ${ARCH} in the build record"
+            exit 1
+          fi
+          echo "Reviewing ${IMAGE}"
+          echo "REVIEW_IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
@@ -354,11 +428,13 @@ jobs:
         # (NXDOMAIN at the zone's own name servers), and both package jobs failed
         # here. The GitHub release page still had the same files.
         #
-        # This job holds a registry write token and signing rights, so the binary is
-        # pinned twice: the version, and the hash of each tarball. The old installer
-        # checked the binary only against that same release's checksums file. To raise
-        # the version, read the release first, then copy both hashes from its
-        # trivy_<version>_checksums.txt.
+        # The verdict of this binary decides whether a release is published, so it is
+        # pinned twice: the version, and the hash of each tarball. (When the pin was
+        # added, the scanners ran in the package job, beside a registry write token
+        # and signing rights. This job has neither, and the pin stays.) The old
+        # installer checked the binary only against that same release's checksums
+        # file. To raise the version, read the release first, then copy both hashes
+        # from its trivy_<version>_checksums.txt.
         env:
           ARCH: ${{ matrix.suffix }}
           TRIVY_VERSION: 0.76.1
@@ -384,12 +460,10 @@ jobs:
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       - name: Container security review
-        env:
-          PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
         run: |
-          IMAGE="${REGISTRY}/${IMAGE_NAME_LC}@${PLATFORM_DIGEST}"
-          # buildx pushed straight to the registry without loading into the local
-          # daemon, so the image has to be pulled before it can be inspected.
+          IMAGE="${REVIEW_IMAGE}"
+          # The package job pushed the image straight to the registry, so it has to
+          # be pulled before it can be inspected.
           docker pull "${IMAGE}"
           node scripts/auditContainerImage.mjs \
             --image="${IMAGE}" \
@@ -430,7 +504,7 @@ jobs:
             dist-audit/evidence/
           retention-days: 90
 
-  # ── Stage 3: Smoke-test the Docker image ──────────────────────────
+  # ── Stage 3: Smoke-test the Docker image (beside the review) ──────
   smoke-test:
     needs: package
     runs-on: ubuntu-latest
@@ -451,7 +525,7 @@ jobs:
       # moved @playwright/test from 1.58.2 to 1.62.1 it went unnoticed until the
       # 2.151.0 release gate failed on it. Reading the version out of the lockfile
       # makes the two move together by construction. It is still the single source
-      # of truth for the cache key, the pull step and the test run.
+      # of truth for the pull step and the test run.
       - name: Derive the Playwright image from the lockfile
         run: |
           V=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version" 2>/dev/null || true)
@@ -580,7 +654,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      # The container security review moved to the per-architecture `package` job, so
+      # The container security review runs in the per-architecture `review` job, so
       # both published images are reviewed rather than only amd64. See the block there.
 
       - name: Install dependencies
@@ -591,28 +665,18 @@ jobs:
 
       # MCR rate-limits (toomanyrequests) and occasionally WAF-blocks
       # (unauthorized) GitHub runners' shared egress IPs, and the throttle
-      # window can outlast a short retry budget. Cache the image tarball keyed
-      # by version so the common path (unchanged Playwright version) never
-      # touches MCR; only the first run after a version bump pulls.
-      - name: Cache Playwright image
-        id: playwright-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: /tmp/playwright-image.tar
-          key: playwright-image-${{ env.PLAYWRIGHT_IMAGE }}
-
-      - name: Load or pull Playwright image (with retry)
+      # window can outlast a short retry budget. So the pull has six attempts,
+      # with a growing wait and jitter between them.
+      #
+      # There is no cache of the image tarball. One was kept here until 2.209.0,
+      # keyed by the Playwright version, and no release read it, for the same reason
+      # as the build cache of the package job: a cache that one tag's run saves
+      # cannot be restored by the run of another tag. Each run pulled, and then
+      # also ran a `docker save` for a cache that nothing loaded.
+      - name: Pull Playwright image (with retry)
         run: |
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ] && [ -f /tmp/playwright-image.tar ]; then
-            echo "Loading Playwright image from cache"
-            docker load -i /tmp/playwright-image.tar
-            exit 0
-          fi
-          # Cache miss: pull from MCR with exponential-ish backoff + jitter,
-          # then save the tarball so actions/cache persists it for next time.
           for i in $(seq 1 6); do
             if docker pull "$PLAYWRIGHT_IMAGE"; then
-              docker save "$PLAYWRIGHT_IMAGE" -o /tmp/playwright-image.tar
               exit 0
             fi
             backoff=$(( i * 20 + (RANDOM % 15) ))
@@ -652,7 +716,9 @@ jobs:
 
   # ── Stage 4: Create multi-arch manifest ─────────────────────────
   manifest:
-    needs: [package, smoke-test]
+    # review is here so that a critical finding stops publication, as it did when
+    # the review was a step of the package job.
+    needs: [package, smoke-test, review]
     runs-on: ubuntu-latest
     permissions:
       # contents: write creates the GitHub Release at the end of this job, which is
