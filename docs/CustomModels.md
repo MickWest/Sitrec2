@@ -3,6 +3,7 @@
 An object in Sitrec can be a simple geometric shape such as a sphere or a box, a built-in model such as an aircraft, a drone or a ship, a preset vehicle such as a balloon or a tethered aerostat, a 3D model that you import, or a flock of birds. This page explains each one, the model file formats that Sitrec accepts, and how to prepare a model in Blender. To add an object to a sitch, see [Adding Objects and Tracks](SceneObjects.md).
 
 - [Built-in Models](#built-in-models) and [Procedural Custom Objects](#procedural-custom-objects)
+- [Ground objects](#ground-objects), including transmission towers, utility poles, trees and boulders
 - [Dimensions](#dimensions)
 - [Supported Model Formats](#supported-model-formats), including [PLY Files](#ply-files)
 - [Custom Models using Blender](#custom-models-using-blender), including [Aircraft navigation lights](#aircraft-navigation-lights)
@@ -43,17 +44,29 @@ To replace a model's own materials with the settings in the Material folder, che
 
 ### Procedural Custom Objects
 
-**Browse custom objects…** in the object's folder opens the Custom Object Designer: a library of 347 preset objects that Sitrec builds from parameters. They are aircraft, helicopters, road vehicles, drones, balloons, sky lanterns, kites and birds. Choose one to put it on the object. **Edit design…** then changes that object with sliders, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Custom Object Designer** builds an object in its own tab and exports it as a GLB file. The [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md) has the details.
+**Browse custom objects…** in an object's folder opens the Custom Object Designer. Its presets include aircraft, helicopters, road vehicles, drones, balloons, sky lanterns, kites, birds and ground objects. Choose one to put it on the object. **Edit design…** changes its dimensions and appearance, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Custom Object Designer** opens the standalone designer, where you can export a GLB file. [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md)
 
 In the designer, **Scale → Overall scale** multiplies every dimension of the object, from 0.01 to 100. A value of 0.1 makes a 1:10 scale model of the object. The **Model Length** of the Sitrec object still sets its length in the scene when it is not zero.
 
-With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add Kite** uses: see [Kites](SceneObjects.md#kites).
+With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add → Kite** uses: see [Kites](SceneObjects.md#kites).
 
 #### Ground objects
+
+For a whole line of mapped towers, import a power grid from a region or drop an Overpass Turbo KML. Right-click the support you want to change. [Import a power network and edit its poles](SceneObjects.md#importing-power-lines-and-supports)
+
+To place a single object by hand, right-click the ground in a custom sitch and choose **Add → 3D Object**. In its edit window, open **Browse custom objects…**, set **Object type** to **Ground objects**, select a preset and click **Use this object**. To put its base on the terrain, open **Location**, turn on **Above Ground Level** and set **Alt** to zero.
+
+Search for `transmission` to see all 20 transmission structures. The region filter narrows the results to **US** or **Europe**. The first gallery shows ten regional designs. The presets also include the US stacked-crossarm and horizontal single-circuit towers, a generic British lattice tower and seven UK L-series towers.
+
+![Top row, US timber H-frame, braced line-post monopole, double-circuit davit, three-pole angle structure and guyed-V tower. Bottom row, German Danube, barrel and single-level towers, British T-pylon and Dutch Wintrack twin poles.](docimages/transmission-structures.jpg)
 
 Search for **UK suspension** or a series designation such as **L4**. Each UK preset represents a standard-height double-circuit suspension tower (type D), used on straight runs. The seven models below are shown at the same scale. L2 and L3 have three nearly equal-width crossarms. L4(m) is a compact tower with shallow, open arms. The much larger L6 has a wide middle arm. The L3 and L6 presets use the Blaw Knox and Balfour Beatty versions respectively. [British tower series](https://telcontar.net/Power/pylons/series) · [L2 field guide (PDF)](https://www.pylons.org/members/field/L2.pdf)
 
 ![Seven UK suspension towers at the same scale, from left to right: L2 (41.6 m), L3 (36.8 m), L4(m) (26.1 m), L6 (50 m), L7(c) (26.9 m), L8(c) (46.4 m) and L12 (46.5 m).](docimages/uk-suspension-towers.jpg)
+
+Open **Edit design…** to adjust **Height** and **Crossarm span**. On a lattice tower you can change the braced sections. On a monopole you can change the pole base diameter. **Regional design** changes the arrangement of the poles, crossarms and insulators. Click **Apply to object** to see the result in the sitch. To run a wire between this support and another one, open **Wire connections → Add To**. [Change wire connections](SceneObjects.md#change-wire-connections)
+
+The ground presets also include North American and British timber utility poles, a French concrete pole, an industrial chimney and a cooling tower. For vegetation, choose a spreading oak, conifer or palm. **Crown width** changes the spread, and **Shape seed** gives a different tree of the same type. Boulders also have a shape seed, along with **Width**, **Depth** and **Irregularity**.
 
 #### Birds
 

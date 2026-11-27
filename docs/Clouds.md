@@ -15,7 +15,7 @@ check what a cloud layer would hide.
 
 *The **Scattered Cumulus** preset at the default quality, seen from the ground.*
 
-This is a different feature from **Add Clouds** on the ground menu. **Add Clouds** places one round
+This is a different feature from **Add → Clouds** on the ground menu. **Add → Clouds** places one round
 patch of flat cloud images, which you can move and resize with handles. See
 [Adding Objects and Tracks](SceneObjects.md#clouds).
 
@@ -206,7 +206,7 @@ clouds by default.
   cloud can stay lit after the Sun has set on the ground, and a cloud in the Earth's shadow is dark.
 - **Light through the cloud.** A thin cloud lets light through, so its base is light gray. A thick
   cloud has a darker base.
-- **Ground spotlights.** Right-click the ground and choose **Add Spotlight** to sweep patches of light
+- **Ground spotlights.** Right-click the ground and choose **Add → Spotlight** to sweep patches of light
   over the cloud base. **Overcast Stratus** gives the beams a continuous surface. [Spotlights](Spotlights.md)
 - **Night.** As the Sun goes from 6° to 12° below the horizon, the light on the clouds changes from
   sunlight to moonlight. With a bright Moon, the clouds are gray with moonlit tops. With no Moon,
@@ -248,4 +248,4 @@ clouds by default.
 - [The Lighting Menu](Lighting.md)
 - [Atmospheric Aerial Perspective](AtmosphericAerialPerspective.md): the haze that distant clouds fade into
 - [Wind in Sitrec](Wind.md): Local Wind, Target Wind and soundings
-- [Adding Objects and Tracks](SceneObjects.md#clouds): the flat cloud patches of **Add Clouds**
+- [Adding Objects and Tracks](SceneObjects.md#clouds): the flat cloud patches of **Add → Clouds**

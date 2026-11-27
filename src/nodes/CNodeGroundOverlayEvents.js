@@ -1,3 +1,4 @@
+import {footprintBounds, footprintLatLon, resizeFootprintNeighbor} from "../GroundFootprint";
 /**
  * Pointer event + corner/lock-point solver methods for CNodeGroundOverlay.
  *
@@ -378,35 +379,12 @@ export const eventMethods = {
         const centerECEF = fixedCorner.clone().add(newDraggedCorner).multiplyScalar(0.5);
         const localUp = getLocalUpVector(centerECEF);
 
-        // Project displacement to horizontal plane
-        const horizontalDisp = displacement.clone().sub(
-            localUp.clone().multiplyScalar(displacement.dot(localUp))
-        );
-
-        // Move prev neighbor along edge from opposite to prev
-        const edgeToPrev = corners[prev].clone().sub(fixedCorner);
-        const edgeToPrevHoriz = edgeToPrev.clone().sub(
-            localUp.clone().multiplyScalar(edgeToPrev.dot(localUp))
-        );
-        const edgeDirPrev = edgeToPrevHoriz.clone().normalize();
-        const projPrev = horizontalDisp.dot(edgeDirPrev);
-        const newPrevCorner = corners[prev].clone().add(edgeDirPrev.multiplyScalar(projPrev));
-
-        // Move next neighbor along edge from opposite to next
-        const edgeToNext = corners[next].clone().sub(fixedCorner);
-        const edgeToNextHoriz = edgeToNext.clone().sub(
-            localUp.clone().multiplyScalar(edgeToNext.dot(localUp))
-        );
-        const edgeDirNext = edgeToNextHoriz.clone().normalize();
-        const projNext = horizontalDisp.dot(edgeDirNext);
-        const newNextCorner = corners[next].clone().add(edgeDirNext.multiplyScalar(projNext));
-
         // Now we have 4 new corner positions in world space
         const newCorners = [];
         newCorners[cornerIndex] = newDraggedCorner;
         newCorners[opposite] = fixedCorner;
-        newCorners[prev] = newPrevCorner;
-        newCorners[next] = newNextCorner;
+        newCorners[prev] = resizeFootprintNeighbor(corners[prev], fixedCorner, displacement, localUp);
+        newCorners[next] = resizeFootprintNeighbor(corners[next], fixedCorner, displacement, localUp);
 
         // Calculate new center
         const newCenter = newCorners[0].clone()
@@ -425,27 +403,12 @@ export const eventMethods = {
             return newCenter.clone().add(unrotatedOffset);
         });
 
-        // Convert unrotated corners to lat/lon and extract bounds
-        const llas = unrotatedCorners.map(c => ECEFToLLAVD_radii(c));
-
-        // Find the bounds from unrotated corners
-        const lats = llas.map(lla => lla.x);
-        const lons = llas.map(lla => lla.y);
-
-        this.north = Math.max(...lats);
-        this.south = Math.min(...lats);
-        this.east = Math.max(...lons);
-        this.west = Math.min(...lons);
+        Object.assign(this, footprintBounds(footprintLatLon(unrotatedCorners)));
     },
     
     updateBoundsFromCorners() {
         if (!this.corners) return;
-        const lats = this.corners.map(c => c.lat);
-        const lons = this.corners.map(c => c.lon);
-        this.north = Math.max(...lats);
-        this.south = Math.min(...lats);
-        this.east = Math.max(...lons);
-        this.west = Math.min(...lons);
+        Object.assign(this, footprintBounds(this.corners));
     },
 
     /**

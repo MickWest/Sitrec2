@@ -229,7 +229,7 @@ and the camera's tilt and offsets stay level.
 > lock sets the height of all of its control points. Drag the up/down arrows on a control point
 > or on the object that rides the track, and you change the **Lock Height**: the full track moves up or down
 > as one, and no control point is added. A sideways drag keeps the control point at the lock height. The
-> lock does not go below 0. Right-click the ground → **Add Moving Object (In→Out)** to make such a
+> lock does not go below 0. Right-click the ground → **Add → Moving Object (In→Out)** to make such a
 > track: an object on a straight track from the clicked point, with control points at the In and
 > Out frames, **Constant Speed** on, and the altitude locked at ground level.
 
@@ -251,7 +251,7 @@ Turn off **Path → Lock Altitude** in the track's folder to use those modes.
 
 ### Hand-Drawn Tracks
 
-To make a hand-drawn track, right-click the ground and choose **Add Flight Path** or **Add Moving Object**. See [Adding Objects and Tracks](SceneObjects.md).
+To make a hand-drawn track, right-click the ground and choose **Add → Flight Path** or **Add → Moving Object**. See [Adding Objects and Tracks](SceneObjects.md).
 
 A hand-drawn track's folder puts its controls in groups. At the top are **Name**, an **Object**
 row for each object on the track (its button opens the menu of that object), **Edit Track**,
@@ -478,8 +478,8 @@ file back as a track. Seconds at which the track has no position (a constant-alt
 traverse where the line of sight never reaches that altitude) break the line rather
 than being joined across.
 
-A hand-drawn track — one made from the ground right-click menu (**Add Moving Object**,
-**Add Moving Object (In→Out)** or **Add Flight Path**), dropped in as a
+A hand-drawn track — one made from the ground right-click menu (**Add → Moving Object**,
+**Add → Moving Object (In→Out)** or **Add → Flight Path**), dropped in as a
 `.spline.json`, or built into a sitch — exports its control points (Spline JSON) and its
 per-frame track (CSV, MISB CSV and KML). The per-frame formats export the **smoothed** track, so they
 match the line drawn on screen and reflect the track's Smoothing window, altitude offset
@@ -753,7 +753,7 @@ National Imagery Transmission Format files with embedded metadata.
 
 Sitrec's own interchange format for a **hand-drawn** track — the control points of a
 spline, not a per-frame path. Dropping one in creates a hand-drawn track with no object,
-identical to one made with the ground right-click menu's **Add Flight Path**, with the
+identical to one made with the ground right-click menu's **Add → Flight Path**, with the
 control points already placed and editable. To edit it, see
 [Hand-Drawn Tracks](#hand-drawn-tracks).
 

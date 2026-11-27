@@ -1,3 +1,4 @@
+import {resolveFootprintBounds, metersPerDegreeAt} from "../GroundFootprint";
 /**
  * Module: ground grid node.
  *
@@ -17,7 +18,7 @@ import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {CustomManager, guiMenus, setRenderOne, Units} from "../Globals";
 import {ViewMan} from "../CViewManager";
-import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {scaleF2M} from "../utils";
 import {t} from "../i18n";
 
@@ -26,7 +27,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         // The base overlay needs north/south/east/west; allow creation from
         // center + width/height (meters) instead. noGUI suppresses the base
         // image-overlay GUI; the grid builds its own folder below.
-        super({...CNodeGroundGrid.resolveBounds(v), noGUI: true});
+        super({...resolveFootprintBounds(v), noGUI: true});
 
         this.kindName = "grid";
         this.majorStep = v.majorStep ?? 100;   // meters, 0 = no major lines
@@ -61,31 +62,6 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         if (!v.noGUI) {
             this.createGridGUI();
         }
-    }
-
-    /**
-     * If given centerLat/centerLon plus width/height (meters) instead of
-     * bounds, compute north/south/east/west. Static so it can run before super().
-     */
-    static resolveBounds(v) {
-        if (v.north !== undefined || v.centerLat === undefined) return v;
-        const mPerDeg = CNodeGroundGrid.metersPerDegreeAt(v.centerLat, v.centerLon);
-        const halfLat = (v.height ?? 1000) / 2 / mPerDeg.lat;
-        const halfLon = (v.width ?? 1000) / 2 / mPerDeg.lon;
-        return {
-            ...v,
-            north: v.centerLat + halfLat,
-            south: v.centerLat - halfLat,
-            east: v.centerLon + halfLon,
-            west: v.centerLon - halfLon,
-        };
-    }
-
-    static metersPerDegreeAt(lat, lon) {
-        return {
-            lat: LLAToECEF(lat + 0.5, lon, 0).distanceTo(LLAToECEF(lat - 0.5, lon, 0)),
-            lon: LLAToECEF(lat, lon + 0.5, 0).distanceTo(LLAToECEF(lat, lon - 0.5, 0)),
-        };
     }
 
     // The grid is fully procedural — no texture to load, and the base
@@ -255,19 +231,19 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
     getWidthMeters() {
         const centerLat = (this.north + this.south) / 2;
         const centerLon = (this.east + this.west) / 2;
-        return (this.east - this.west) * CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon).lon;
+        return (this.east - this.west) * metersPerDegreeAt(centerLat, centerLon).lon;
     }
 
     getHeightMeters() {
         const centerLat = (this.north + this.south) / 2;
         const centerLon = (this.east + this.west) / 2;
-        return (this.north - this.south) * CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon).lat;
+        return (this.north - this.south) * metersPerDegreeAt(centerLat, centerLon).lat;
     }
 
     setWidthMeters(w) {
         const centerLat = (this.north + this.south) / 2;
         const centerLon = (this.east + this.west) / 2;
-        const halfDeg = w / 2 / CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon).lon;
+        const halfDeg = w / 2 / metersPerDegreeAt(centerLat, centerLon).lon;
         this.west = centerLon - halfDeg;
         this.east = centerLon + halfDeg;
     }
@@ -275,7 +251,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
     setHeightMeters(h) {
         const centerLat = (this.north + this.south) / 2;
         const centerLon = (this.east + this.west) / 2;
-        const halfDeg = h / 2 / CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon).lat;
+        const halfDeg = h / 2 / metersPerDegreeAt(centerLat, centerLon).lat;
         this.south = centerLat - halfDeg;
         this.north = centerLat + halfDeg;
     }
@@ -370,7 +346,7 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         if (!this._mPerDegCache) {
             const centerLat = (this.north + this.south) / 2;
             const centerLon = (this.east + this.west) / 2;
-            this._mPerDegCache = CNodeGroundGrid.metersPerDegreeAt(centerLat, centerLon);
+            this._mPerDegCache = metersPerDegreeAt(centerLat, centerLon);
         }
         return this._mPerDegCache;
     }

@@ -1,11 +1,11 @@
 # Spotlights
 
-A ground-based searchlight can appear in a distant video as a soft white patch moving across the underside of a cloud. Several lamps can produce patches that meet, cross or disappear into gaps. In a custom sitch, **Add Spotlight** places the projector on the ground. You can watch the pattern from the observer’s position in Look view and optionally reveal the faint shafts that connect the patches to their source.
+A ground-based searchlight can appear in a distant video as a soft white patch moving across the underside of a cloud. Several lamps can produce patches that meet, cross or disappear into gaps. In a custom sitch, **Add → Spotlight** places the projector on the ground. You can watch the pattern from the observer’s position in Look view and optionally reveal the faint shafts that connect the patches to their source.
 
 ## Make a four-beam cloverleaf
 
 1. Start with a nighttime scene. In **Lighting → Clouds → Preset**, choose **Overcast Stratus**. This gives continuous cloud cover with a base at 400 m above the WGS84 ellipsoid. If the ground is high, raise **Base Altitude** so the layer is above your projector. Tick **L** on the Clouds folder to draw it in Look view. [Cloud layers and altitude](Clouds.md#layer-settings)
-2. In Main view, right-click the ground where the lamps would stand and choose **Add Spotlight**. The projector editor opens. A new projector starts with four beams chasing each other around a circle.
+2. In Main view, right-click the ground where the lamps would stand and choose **Add → Spotlight**. The projector editor opens. A new projector starts with four beams chasing each other around a circle.
 3. In the projector’s **Preset** menu, choose **SkyTracker STX4 · four-beam cloverleaf**. Point the Look camera at the cloud base above that location and play the timeline. The four spots come together overhead, spread outward and meet again. Pause or scrub to compare a particular frame.
 4. Turn on **Show beam cones** to see where the beams come from. Turn it off to compare just the cloud patches with the video. The cloud patches remain visible with the cones off.
 

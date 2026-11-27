@@ -10,6 +10,7 @@ import {localENU} from "../cloudField/CloudFieldFormat";
 import {createVehicleRecipe} from "../../tools/vehicles/recipe";
 import {par} from "../par";
 import {t} from "../i18n";
+import {nextSequentialName} from "../utils/parseObjectInput";
 
 export class CNodePowerNetwork extends CNode3DGroup {
     constructor(v) {
@@ -31,8 +32,9 @@ export class CNodePowerNetwork extends CNode3DGroup {
         this.sourceLinks = importedWireLinks(this.network);
         this.rebuildNetwork();
         if (!this.manual) {
-            this.control = guiMenus.objects.add(this,"visible").name(t("powerNetwork.label",{filename:v.filename})).listen()
-                .tooltip(t("powerNetwork.tooltip",{towers,poles,ways:this.network.ways.length}))
+            const label = nextSequentialName(guiMenus.objects.controllers.map(c => c._name), t("powerNetwork.label"));
+            this.control = guiMenus.objects.add(this,"visible").name(label).listen()
+                .tooltip(t("powerNetwork.tooltip",{filename:v.filename,towers,poles,ways:this.network.ways.length}))
                 .onChange(value => {this.show(value); markSitchDirty();});
         }
         this.show(this.visible);

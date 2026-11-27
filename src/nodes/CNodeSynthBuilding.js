@@ -1,3 +1,4 @@
+import {footprintLatLon} from "../GroundFootprint";
 import {SceneLineSegments} from "../SceneLines";
 import {addNameControl, uniqueDisplayName} from "../DisplayName";
 import {SceneLineMaterial} from "../SceneLineMaterial";
@@ -679,15 +680,8 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         }
         
         // Convert footprint positions to lat/lon
-        this.cornerLatLons = [];
-        for (let i = 0; i < 4; i++) {
-            const lla = ECEFToLLAVD_radii(footprint[i]);
-            this.cornerLatLons.push({
-                lat: lla.x,
-                lon: lla.y
-            });
-        }
-        
+        this.cornerLatLons = footprintLatLon(footprint);
+
         // Store the height as roofAGL
         this.roofAGL = height;
         this.rooflineHeightAGL = 0; // Start with flat roof

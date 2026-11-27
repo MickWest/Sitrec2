@@ -1,3 +1,4 @@
+import {resizeFootprintNeighbor} from "../GroundFootprint";
 import {registerEditorInteraction} from "../EditorInteraction";
 /**
  * Pointer / event-handling methods for CNodeSynthBuilding.
@@ -835,47 +836,14 @@ export const eventMethods = {
                 if (oppositeIdx !== -1) {
                     const opposite = this.vertices[oppositeIdx];
                     
-                    // Move neighbor1: project A's displacement onto the HORIZONTAL edge connecting opposite to neighbor1
-                    // First, project the 3D edge onto the horizontal plane
-                    const edgeToNeighbor1_3D = neighbor1.position.clone().sub(opposite.position);
-                    const verticalComp1 = edgeToNeighbor1_3D.dot(localUp);
-                    const edgeToNeighbor1_Horizontal = edgeToNeighbor1_3D.clone().sub(localUp.clone().multiplyScalar(verticalComp1));
-                    const edgeDir1 = edgeToNeighbor1_Horizontal.clone().normalize();
-                    
-                    // Now project the horizontal displacement onto the horizontal edge direction
-                    const projectedMovement1 = horizontalDisp.dot(edgeDir1);
-                    const neighbor1NewPos = neighbor1.position.clone().add(edgeDir1.multiplyScalar(projectedMovement1));
-                    
-                    // Snap neighbor1 to the visible ground (no lift — avoids ellipsoid lat/lon drift)
-                    neighbor1.position.copy(getVisiblePointBelow(neighbor1NewPos));
-                    
-                    // Update the linked top vertex for neighbor1
-                    const linkedTop1 = this.vertices[neighbor1.linkedVertex];
-                    const localUp1 = getLocalUpVector(neighbor1.position);
-                    const toTop1 = linkedTop1.position.clone().sub(neighbor1.position);
-                    const currentHeight1 = toTop1.dot(localUp1);
-                    linkedTop1.position.copy(neighbor1.position.clone().add(localUp1.multiplyScalar(currentHeight1)));
-                    
-                    // Move neighbor2: project A's displacement onto the HORIZONTAL edge connecting opposite to neighbor2
-                    // First, project the 3D edge onto the horizontal plane
-                    const edgeToNeighbor2_3D = neighbor2.position.clone().sub(opposite.position);
-                    const verticalComp2 = edgeToNeighbor2_3D.dot(localUp);
-                    const edgeToNeighbor2_Horizontal = edgeToNeighbor2_3D.clone().sub(localUp.clone().multiplyScalar(verticalComp2));
-                    const edgeDir2 = edgeToNeighbor2_Horizontal.clone().normalize();
-                    
-                    // Now project the horizontal displacement onto the horizontal edge direction
-                    const projectedMovement2 = horizontalDisp.dot(edgeDir2);
-                    const neighbor2NewPos = neighbor2.position.clone().add(edgeDir2.multiplyScalar(projectedMovement2));
-                    
-                    // Snap neighbor2 to the visible ground (no lift — avoids ellipsoid lat/lon drift)
-                    neighbor2.position.copy(getVisiblePointBelow(neighbor2NewPos));
-                    
-                    // Update the linked top vertex for neighbor2
-                    const linkedTop2 = this.vertices[neighbor2.linkedVertex];
-                    const localUp2 = getLocalUpVector(neighbor2.position);
-                    const toTop2 = linkedTop2.position.clone().sub(neighbor2.position);
-                    const currentHeight2 = toTop2.dot(localUp2);
-                    linkedTop2.position.copy(neighbor2.position.clone().add(localUp2.multiplyScalar(currentHeight2)));
+                    for (const neighbor of [neighbor1, neighbor2]) {
+                        const position = resizeFootprintNeighbor(neighbor.position, opposite.position, horizontalDisp, localUp);
+                        neighbor.position.copy(getVisiblePointBelow(position));
+                        const top = this.vertices[neighbor.linkedVertex];
+                        const up = getLocalUpVector(neighbor.position);
+                        const height = top.position.clone().sub(neighbor.position).dot(up);
+                        top.position.copy(neighbor.position).addScaledVector(up, height);
+                    }
                 }
                 
                 // Move the linked top vertex for the dragged vertex to stay directly above

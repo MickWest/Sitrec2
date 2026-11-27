@@ -13,6 +13,7 @@ import {
     guiMenus,
     guiShowHideViews,
     infoDiv,
+    markSitchDirty,
     NodeFactory,
     NodeMan,
     setNewSitchObject,
@@ -819,6 +820,13 @@ export const menuMethods = {
                     console.log(`Created overlay at ground point, now in edit mode`);
                 }
             },
+            addRegion: () => {
+                closeMenu();
+                const region = Synth3DManager.createRegionAtPoint(groundPoint);
+                Synth3DManager.recordPresence(region, true);
+                region.setEditMode(true);
+                markSitchDirty();
+            },
             addGrid: () => {
                 closeMenu();
 
@@ -972,37 +980,24 @@ export const menuMethods = {
         }
         if (overlayAtPoint) {
             const overlayLabel = overlayAtPoint.name || overlayAtPoint.id;
-            const kindLabel = overlayAtPoint.kindName === "grid" ? "Grid" : "Overlay";
+            const kind = overlayAtPoint.kindName ?? "overlay";
+            const kindLabel = kind[0].toUpperCase() + kind.slice(1);
             const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit ${kindLabel}: ${overlayLabel}`;
             menu.add(menuData, "editOverlay").name(menuLabel)
                 .tooltip(t("custom.contextMenu.tooltips.editOverlay"));
         }
 
-        menu.addHeading(t("custom.contextMenu.groupAdd"));
-        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"))
-            .tooltip(t("custom.contextMenu.tooltips.dropPin"));
-        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"))
-            .tooltip(t("custom.contextMenu.tooltips.addFixedObject"));
-        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"))
-            .tooltip(t("custom.contextMenu.tooltips.createTrackWithObject"));
-        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"))
-            .tooltip(t("custom.contextMenu.tooltips.createInOutObjectTrack"));
-        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"))
-            .tooltip(t("custom.contextMenu.tooltips.createTrackNoObject"));
-        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}))
-            .tooltip(t("custom.contextMenu.tooltips.addBalloon"));
-        menu.add(menuData, "addKite").name(t("custom.contextMenu.addKite"))
-            .tooltip(t("custom.contextMenu.tooltips.addKite"));
-        menu.add(menuData, "addSpotlight").name(t("custom.contextMenu.addSpotlight"))
-            .tooltip(t("custom.contextMenu.tooltips.addSpotlight"));
-        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"))
-            .tooltip(t("custom.contextMenu.tooltips.addBuilding"));
-        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"))
-            .tooltip(t("custom.contextMenu.tooltips.addClouds"));
-        menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"))
-            .tooltip(t("custom.contextMenu.tooltips.addGroundOverlay"));
-        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"))
-            .tooltip(t("custom.contextMenu.tooltips.addGroundGrid"));
+        const add = menu.addFolder(t("custom.contextMenu.groupAdd")).close();
+        const additions = [
+            ["dropPin","dropPin"], ["addFixedObject","addFixedObject"],
+            ["createTrackWithObject","createTrackWithObject"], ["createInOutObjectTrack","createInOutObjectTrack"],
+            ["createSyntheticTrack","createTrackNoObject"], ["addBalloon","addBalloon"], ["addKite","addKite"],
+            ["addSpotlight","addSpotlight"], ["addBuilding","addBuilding"], ["addClouds","addClouds"],
+            ["addOverlay","addGroundOverlay"], ["addGrid","addGroundGrid"], ["addRegion","addRegion"],
+        ];
+        for (const [action,key] of additions) {
+            add.add(menuData,action).name(t("custom.contextMenu."+key)).tooltip(t("custom.contextMenu.tooltips."+key));
+        }
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");

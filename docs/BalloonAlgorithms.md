@@ -971,7 +971,7 @@ Several Sitrec tools can produce a drifting path. They solve different problems.
 | **Global Fit: Physics → Sky Lantern** | Fits the broader lantern model, which has a rise/cooling/descent profile and can combine wind variation with altitude shear | Fits a physical-motion model to the selected directions; it does not use the reduced Balloon model-selection procedure |
 | **Global Fit: Wind Tracer** | Fits passive drift with a separately solved initial 3D position and a model of camera pointing motion | Solves the position in closed form within its search and allows specified forms of pointing error |
 | **Windblown Object (on first LOS)** | Starts at the supplied distance and moves with the supplied wind | Uses the first direction only; later directions do not alter its path |
-| **Add Balloon**, from the ground context menu | Generates a flight from a chosen release point, launch delay, ascent rate, wind field and optional gusts | Does not fit camera directions |
+| **Add → Balloon**, from the ground context menu | Generates a flight from a chosen release point, launch delay, ascent rate, wind field and optional gusts | Does not fit camera directions |
 
 ### The live Physics Sky Lantern model
 

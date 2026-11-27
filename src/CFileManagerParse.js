@@ -139,6 +139,7 @@ export const parseMethods = {
         const metadataOverride = options.metadataOverride || null;
         return this.parseAsset(filename, filename, result, metadataOverride)
             .then(async parsedResult => {
+                if (options.canApply && !options.canApply()) return [];
                 if (options.trackOptions?.canApplyTLE && !options.trackOptions.canApplyTLE()) return [];
                 if (options.trackOptions?.automaticCatalog) {
                     const assets = Array.isArray(parsedResult) ? parsedResult : [parsedResult];

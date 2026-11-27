@@ -44,6 +44,7 @@ import {assert} from "../assert";
 import {LoadingManager} from "../CLoadingManager";
 import {resolveURLForFetch} from "../SitrecObjectResolver";
 import {t} from "../i18n";
+import {boundsCorners, footprintLatLon} from "../GroundFootprint";
 import {eventMethods} from "./CNodeGroundOverlayEvents";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
@@ -342,12 +343,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         this.freeTransform = true;
         this.corners = corners;
         this._cachedHomography = null;
-        const lats = corners.map(c => c.lat);
-        const lons = corners.map(c => c.lon);
-        this.north = Math.max(...lats);
-        this.south = Math.min(...lats);
-        this.east = Math.max(...lons);
-        this.west = Math.min(...lons);
+        this.updateBoundsFromCorners();
         this.updateMesh();
     }
     
@@ -360,12 +356,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         const centerLon = (this.east + this.west) / 2;
         const centerECEF = LLAToECEF(centerLat, centerLon, 0);
 
-        const corners = [
-            {lat: this.north, lon: this.west},
-            {lat: this.north, lon: this.east},
-            {lat: this.south, lon: this.east},
-            {lat: this.south, lon: this.west}
-        ];
+        const corners = boundsCorners(this);
 
         return corners.map(corner => {
             let pos = LLAToECEF(corner.lat, corner.lon, 0);
@@ -387,32 +378,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             return this.corners.map(c => ({lat: c.lat, lon: c.lon}));
         }
         
-        const centerLat = (this.north + this.south) / 2;
-        const centerLon = (this.east + this.west) / 2;
-
-        const corners = [
-            {lat: this.north, lon: this.west},
-            {lat: this.north, lon: this.east},
-            {lat: this.south, lon: this.east},
-            {lat: this.south, lon: this.west}
-        ];
-
-        if (this.rotation !== 0) {
-            const centerECEF = LLAToECEF(centerLat, centerLon, 0);
-            const up = getLocalUpVector(centerECEF);
-            const rotationRad = radians(this.rotation);
-            
-            return corners.map(corner => {
-                const pos = LLAToECEF(corner.lat, corner.lon, 0);
-                const offset = pos.clone().sub(centerECEF);
-                const rotatedOffset = offset.clone().applyAxisAngle(up, rotationRad);
-                const rotatedPos = centerECEF.clone().add(rotatedOffset);
-                const lla = ECEFToLLAVD_radii(rotatedPos);
-                return {lat: lla.x, lon: lla.y};
-            });
-        }
-        
-        return corners;
+        return this.rotation === 0 ? boundsCorners(this) : footprintLatLon(this.getCornerPositions());
     }
     
     disposeTileMeshes() {
@@ -1337,10 +1303,11 @@ export class CNodeGroundOverlay extends CNode3DGroup {
         // tileVisibilityChanged / tileChanged events as the terrain quad-tree
         // re-subdivides, and each one calls createOverlayTileFromTerrainTile
         // (very expensive) even though nothing is on screen to render.
-        EventManager.addEventListener("terrainLoaded", () => {
+        this.onOverlayTerrainLoaded = () => {
             if (!this.visible) { this._overlayDirty = true; return; }
             this.updateMesh();
-        });
+        };
+        EventManager.addEventListener("terrainLoaded",this.onOverlayTerrainLoaded);
 
         this.onTileVisibilityChangedBound = this.onTileVisibilityChanged.bind(this);
         this.onTileChangedBound = this.onTileChanged.bind(this);
@@ -1840,6 +1807,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     
     dispose() {
         this.unregisterInteraction?.();
+        EventManager.removeEventListener("terrainLoaded",this.onOverlayTerrainLoaded);
 
         EventManager.removeEventListener("tileVisibilityChanged", this.onTileVisibilityChangedBound);
         EventManager.removeEventListener("tileChanged", this.onTileChangedBound);

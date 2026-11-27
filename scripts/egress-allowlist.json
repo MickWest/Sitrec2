@@ -291,6 +291,18 @@
       "mayReceive": ["none"]
     },
     {
+      "host": "overpass-api.de",
+      "purpose": "query OpenStreetMap for transmission lines and supports inside a user-defined region",
+      "trigger": "only when the user imports a region using this service or opens its manual download URL; unavailable in the secure build",
+      "mayReceive": ["precise-position"]
+    },
+    {
+      "host": "overpass.private.coffee",
+      "purpose": "query OpenStreetMap for transmission lines and supports inside a user-defined region",
+      "trigger": "only when the user imports a region using this service or opens its manual download URL; unavailable in the secure build",
+      "mayReceive": ["precise-position"]
+    },
+    {
       "host": "nominatim.openstreetmap.org",
       "purpose": "geocoding: a place name the user typed, or (SHF tool page) the name of a position the user chose",
       "trigger": "the user types a place name, or asks the SHF tool for a location name",

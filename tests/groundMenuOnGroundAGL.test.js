@@ -32,9 +32,11 @@ let nodeMan, menu, menuData, camera, target;
 
 function makeMenu() {
     const controller = {name: () => controller, tooltip: () => controller, disable: () => controller};
+    const folder = {add: jest.fn(() => controller), close: jest.fn().mockReturnThis()};
     return {
+        folder, addFolder: jest.fn(() => folder),
         open: jest.fn(), destroy: jest.fn(), addHTML: jest.fn(), addHeading: jest.fn(),
-        add: (obj, key) => { menuData = obj; return controller; },
+        add: jest.fn(obj => { menuData = obj; return controller; }),
     };
 }
 
@@ -113,4 +115,16 @@ test("target on ground with AGL off goes to the ground's MSL height", () => {
     expect(lat).toBeCloseTo(LAT, 9);
     expect(lon).toBeCloseTo(LON, 9);
     expect(alt).toBeCloseTo(GROUND_MSL, 4);
+});
+
+
+test("all scene creation items are in one initially closed Add folder", () => {
+    rightClickGround();
+    expect(menu.addFolder.mock.calls).toEqual([["Add"]]);
+    expect(menu.folder.close).toHaveBeenCalledTimes(1);
+    const additions = menu.folder.add.mock.calls.map(([, key]) => key);
+    expect(additions).toEqual(["dropPin", "addFixedObject", "createTrackWithObject", "createInOutObjectTrack",
+        "createSyntheticTrack", "addBalloon", "addKite", "addSpotlight", "addBuilding", "addClouds",
+        "addOverlay", "addGrid", "addRegion"]);
+    expect(menu.add.mock.calls.every(([, key]) => !additions.includes(key))).toBe(true);
 });

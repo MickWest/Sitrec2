@@ -6,6 +6,7 @@ import {CManager} from "./CManager";
 import {CNodeSynthBuilding} from "./nodes/CNodeSynthBuilding";
 import {CNodeSynthClouds} from "./nodes/CNodeSynthClouds";
 import {CNodeGroundOverlay} from "./nodes/CNodeGroundOverlay";
+import {CNodeGroundRegion} from "./nodes/CNodeGroundRegion";
 import {CNodeGroundGrid} from "./nodes/CNodeGroundGrid";
 import {CNodeSpotlight} from "./nodes/CNodeSpotlight";
 import {SpotlightField} from "./clouds/SpotlightField";
@@ -387,27 +388,18 @@ export class C3DSynthManager extends CManager {
     }
     
     /**
-     * Add a new ground overlay (or ground grid, when overlayData.type === "grid")
+     * Add an image overlay, ground grid or named region
      * @param {Object} overlayData - Overlay configuration
      * @param {boolean} [overlayData.gotoOnCreate] - If true, camera will go to overlay after creation
      */
     addOverlay(overlayData) {
         this.exitAllEditModes();
-        const isGrid = overlayData.type === "grid";
-        const id = overlayData.id || `${isGrid ? "groundGrid" : "groundOverlay"}_${this.nextOverlayID++}`;
-        const gotoOnCreate = overlayData.gotoOnCreate;
-        delete overlayData.gotoOnCreate;
+        const [Overlay, prefix] = overlayData.type === "grid" ? [CNodeGroundGrid, "groundGrid"]
+            : overlayData.type === "region" ? [CNodeGroundRegion, "groundRegion"] : [CNodeGroundOverlay, "groundOverlay"];
+        const id = overlayData.id || prefix + "_" + this.nextOverlayID++;
+        const {gotoOnCreate} = overlayData;
+        const overlay = new Overlay({...overlayData,id});
 
-        const overlay = isGrid
-            ? new CNodeGroundGrid({
-                ...overlayData,
-                id: id
-            })
-            : new CNodeGroundOverlay({
-                ...overlayData,
-                id: id
-            });
-        
         this.overlaysList[id] = overlay;
         this.bindElementControls(overlay);
         console.log(`Added overlay: ${id}`);
@@ -456,8 +448,8 @@ export class C3DSynthManager extends CManager {
     findOverlayAtLatLon(lat, lon) {
         for (const id in this.overlaysList) {
             const overlay = this.overlaysList[id];
-            if (lat >= overlay.south && lat <= overlay.north &&
-                lon >= overlay.west && lon <= overlay.east) {
+            const {u, v} = overlay.latLonToUV(lat, lon);
+            if (overlay.visible && u >= 0 && u <= 1 && v >= 0 && v <= 1) {
                 return overlay;
             }
         }
@@ -485,6 +477,13 @@ export class C3DSynthManager extends CManager {
         
         console.log(`Created overlay: ${overlay.overlayID} at ground point`);
         return overlay;
+    }
+
+    createRegionAtPoint(groundPoint) {
+        const {x: centerLat, y: centerLon} = ECEFToLLAVD_radii(groundPoint);
+        return this.addOverlay({
+            type: "region", centerLat, centerLon, width: 2000, height: 2000, name: `Region ${this.nextOverlayID}`,
+        });
     }
 
     /**
@@ -582,10 +581,7 @@ export class C3DSynthManager extends CManager {
         
         if (data.overlays) {
             data.overlays.forEach(overlayData => {
-                const overlay = overlayData.type === "grid"
-                    ? CNodeGroundGrid.deserialize(overlayData)
-                    : CNodeGroundOverlay.deserialize(overlayData);
-                this.overlaysList[overlay.overlayID] = overlay;
+                this.addOverlay(overlayData);
             });
             this.nextOverlayID = data.nextOverlayID || Object.keys(this.overlaysList).length + 1;
             console.log(`Loaded ${Object.keys(this.overlaysList).length} overlays`);

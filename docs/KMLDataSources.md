@@ -30,6 +30,10 @@ structure.
 | **FlightAware** | flightaware.com | `<Document>` with origin/destination `<Point>` markers + a `<gx:Track>` placemark | No — one flight per file |
 | **FlightRadar24 (FR24)** | flightradar24.com | `<Document><Folder name="Route">` of timed `<Point>`s (+ a `Trail` folder) | No — one flight per file |
 
+An **Overpass Turbo KML** with OpenStreetMap power lines, towers and poles imports as an editable
+power network. For the query, KML export steps and instructions for moving a tower while its wires
+stay attached, see [Importing power lines and supports](SceneObjects.md#importing-power-lines-and-supports).
+
 Other KML files (Google Earth shapes, ground overlays, point landmarks) are also accepted, but
 they produce *scene features*, not tracks — see
 [Non-track KML content](#non-track-kml-content-overlays-shapes-points).
