@@ -13,6 +13,11 @@
 # tag rule. This repository's environment allows main and every tag ("*"); the trigger
 # below is what limits deploys to release tags.
 #
+# The github-pages environment also has a required reviewer. A release tag can be pushed
+# before the release's local checks have finished (see the manifest job of docker.yml), so
+# the build below runs at once, and the deploy job waits until the release is approved. A
+# rejected deploy leaves the site on the previous release. A manual run waits the same way.
+#
 # Nothing here is written to the repository. The build is uploaded as a workflow artifact
 # (Actions storage, retention 1 day) and handed to the Pages CDN; there is no commit, no
 # branch, no push. Repository size is unaffected by deploying, however often it runs. The

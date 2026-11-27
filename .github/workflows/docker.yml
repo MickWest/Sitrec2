@@ -18,7 +18,10 @@ name: Docker Image
 #      read the registry but cannot write to it or sign anything.
 #   4. "manifest" creates the multi-arch manifest list so a single
 #      image tag works on both architectures (only if the smoke test and both
-#      reviews pass).
+#      reviews pass). It runs in the "release-publish" environment, which has a
+#      required reviewer: the job waits until the release's local gates have
+#      passed and the release is approved, so the image can be built while those
+#      gates still run, and is published only after them.
 
 on:
   push:
@@ -719,6 +722,15 @@ jobs:
     # review is here so that a critical finding stops publication, as it did when
     # the review was a step of the package job.
     needs: [package, smoke-test, review]
+    # The hold on publication. The version tag can be pushed before the release's
+    # local checks (unit tests, regression, policy check) have finished, so that this
+    # workflow builds, smoke-tests and reviews the image while they run. Nothing is
+    # published until a required reviewer of this environment approves the job; a
+    # rejected job fails the run, and the version is then never released.
+    # The environment MUST have a required reviewer. GitHub creates a missing
+    # environment with no protection rules, and this job would then publish at once,
+    # so the release process checks the reviewer before it pushes a tag early.
+    environment: release-publish
     runs-on: ubuntu-latest
     permissions:
       # contents: write creates the GitHub Release at the end of this job, which is

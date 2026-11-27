@@ -261,6 +261,34 @@ docker() {
             self.assertNotIn('continue-on-error', item)
             self.assertNotIn('if', item)
 
+    def test_publication_waits_for_the_release_approval(self):
+        # The tag can be pushed before the local release checks end. Only the job that
+        # publishes waits for the approval; the jobs that build, smoke-test and review
+        # must run at once, or nothing is gained.
+        jobs = RELEASE['jobs']
+        self.assertEqual(jobs['manifest'].get('environment'), 'release-publish')
+        for name, job in jobs.items():
+            if name != 'manifest':
+                with self.subTest(job=name):
+                    self.assertNotIn('environment', job)
+        # Each step that makes a release public is in the held job: the version tag
+        # of the index, and the GitHub Release.
+        text = json.dumps(jobs['manifest']['steps'])
+        self.assertIn('Tag the attested index for release', text)
+        self.assertIn('gh release', text)
+        for name, job in jobs.items():
+            if name != 'manifest':
+                with self.subTest(job=name):
+                    self.assertNotIn('gh release', json.dumps(job.get('steps', [])))
+
+    def test_pages_deploy_is_the_only_job_in_the_held_environment(self):
+        # The Pages demo deploys a release tag too. Its hold is the required reviewer
+        # of the github-pages environment, which only the deploy job uses; the build
+        # runs at once, and the deploy waits for the same approval as the image.
+        pages = yaml.safe_load((ROOT / '.github/workflows/pages.yml').read_text())
+        self.assertEqual(pages['jobs']['deploy']['environment']['name'], 'github-pages')
+        self.assertNotIn('environment', pages['jobs']['build'])
+
     def test_review_reads_the_image_from_the_build_record(self):
         # A step output of package does not reach another job. The review takes the
         # platform image from the record artifact, by digest, never from a build tag.

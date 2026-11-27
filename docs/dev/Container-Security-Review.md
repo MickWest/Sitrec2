@@ -87,6 +87,13 @@ reviewed**, each on a runner of its own architecture with no emulation. `review`
 `smoke-test` both need `package` and run side by side, and `manifest` needs all three, so
 an image carrying a credential never becomes a version tag or `latest`.
 
+`manifest` also runs in the `release-publish` environment, which has a required reviewer.
+The version tag can thus be pushed while the release's local checks still run: the image is
+built, smoke-tested and reviewed at once, and nothing is published until the release is
+approved. A rejected or cancelled run publishes nothing. The environment must keep its
+reviewer, because GitHub creates a missing environment with no protection rules; the release
+process checks it before each early tag push.
+
 The `review` job can read the repository and the registry, and nothing more. The scanners
 are third-party tools, so they do not run in the `package` job, which holds a registry
 write token and signing rights. `review` takes each image by digest from the record that
