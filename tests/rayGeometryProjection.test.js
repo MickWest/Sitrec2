@@ -80,9 +80,14 @@ test("wide ray intervals invert launch slopes consistently", () => {
 });
 
 test("WGS84 endpoints agree with independent ellipsoid/geoid shooting for Pic Gaspard", () => {
+    // The rays of a 4096-row table over [-0.03564453125, 0] rad, but only rows 940 to 1068:
+    // the same spacing, step and atmosphere, so the same rays bracket this sightline (near row
+    // 1004). Measured 2026-11-27: the endpoint angle is bit-identical to the full table's, and
+    // the full table took 181 s, which made this the last suite of every unit test run.
+    const fullMin = -0.03564453125, spacing = -fullMin / 4095;
     const table = buildRayTable({settings: {maxDistance: 500000, distanceSamples: 512,
         step: 100, humidity: 0}, height: 2827.6, radius: 6376171,
-        minAngle: -0.03564453125, maxAngle: 0, rows: 4096});
+        minAngle: fullMin + 940 * spacing, maxAngle: fullMin + 1068 * spacing, rows: 129});
     // WGS84 endpoints at 42.41445,2.13353,2827.6 MSL and
     // 44.99817687,6.330330848,3883 MSL, with EGM96 separation at each.
     const result = projectRayEndpoint(table, 443464.1877049465, -14368.882391230756);
