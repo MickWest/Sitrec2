@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.211.0 (2026-11-27)
+
+### New Features
+- **UK suspension towers** (Sitrec → Extra Tools → *Custom Object Designer*; in a sitch, right-click a tower → *Browse custom objects…*): seven standard British double-circuit tower designs, L2, L3, L4(m), L6, L7(c), L8(c) and L12, each with the standard height and crossarm span of its series. Search for "UK suspension" or for a series such as "L4". Help → Documentation → Data and Tracks → *Objects and 3D Models (Planes)* shows the seven at the same scale, to compare with a photograph.
+- **Power grid import for a region** (right-click the ground → *Add* → *Region*, then Objects → *Region: name* → *Import power grid for this area*): mark an area on the ground, which you can move, resize and rotate, and Sitrec gets the mapped power lines, towers and poles inside it from OpenStreetMap, with no file to export. Sitrec sends the four corners of the region to the Overpass server that you select, and only when you click the button; the area can be at most 25 km north to south and 25 km east to west. If the server is busy or does not answer in time, *Copy download URL* gives a link to open in a browser later, and you drag the saved file into Sitrec. See Help → Documentation → Data and Tracks → *Adding Objects and Tracks* (#15225 "Import Overpass turbo Power Pylons , Lines and Poles").
+
+### Improvements
+- **UK towers in an imported power grid** (a power grid from a file that you drag into Sitrec, or from a region): a mapped tower with a UK design reference such as L2, L4(m) or L6 D now gets the suspension tower model of that series. Towers mapped as angle or terminal towers do not change (#15225 "Import Overpass turbo Power Pylons , Lines and Poles").
+- **Ground menu** (right-click the ground): the items that add things are now in one *Add* folder, which starts closed, and their names are shorter: *Add* → *3D Object*, *Add* → *Balloon*, and so on. *Drop Pin* is now *Add* → *Pin*.
+- **Power grid names** (Objects): an imported power network is now *Power grid 1*, *Power grid 2*, and so on. Its tooltip gives the file name and the numbers of towers, poles and line routes (#15225 "Import Overpass turbo Power Pylons , Lines and Poles").
+- **Edit Overlay and Edit Grid** (right-click the ground): the item is now shown when the point is inside the real outline of the overlay or grid, also when it is rotated, and it is not shown for an overlay or grid that is hidden.
+
+### Security
+- The Docker images of Sitrec now take the latest security updates for the system packages that handle user accounts and Zstandard compression.
+
 ## Version 2.210.1 (2026-11-26)
 
 ### Bug Fixes
