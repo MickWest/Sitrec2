@@ -13,6 +13,8 @@ function supportDesign(tags) {
         const ukStyle = ukSuspensionStyle(tags["design:ref"]);
         if (ukStyle) return ukStyle;
     }
+    if (tags.design === "guyed_v-frame") return "guyedV";
+    if (tags.design === "delta") return "horizontal";
     if (tags.design === "donau") return "danube";
     if (tags.design === "barrel") return "barrel";
     if (tags.design === "bipole") return "wintrack";
@@ -30,7 +32,11 @@ function heightMetres(value) {
 function readKML(container, add) {
     for (const child of [...many(container.Document), ...many(container.Folder)]) readKML(child, add);
     for (const placemark of many(container.Placemark)) {
-        const tags = Object.fromEntries(many(placemark.ExtendedData?.Data).map(d => [d.name, d.value?.["#text"]]));
+        const fields = placemark.ExtendedData;
+        const tags = Object.fromEntries([
+            ...many(fields?.SchemaData).flatMap(schema => many(schema.SimpleData).map(d => [d.name, d["#text"]?.trim()])),
+            ...many(fields?.Data).map(d => [d.name, d.value?.["#text"]?.trim()]),
+        ]);
         if (!Object.hasOwn(supports, tags.power) && !isWay(tags.power)) continue;
         function readGeometry(geometry) {
             for (const type of ["Point", "LineString"]) {

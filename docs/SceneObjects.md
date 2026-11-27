@@ -89,8 +89,13 @@ only lines, run the query above to include the tagged points where OpenStreetMap
 **Height** in the designer changes the structure from base to top. **Location → Alt** moves
 the entire structure up or down. Imported supports start on the terrain. Sitrec uses a
 mapped height when available and otherwise uses the preset height. Recognized design tags
-can select a Danube, barrel, twin-pole, timber H-frame or single-level tower. A North American
-line tagged 765 kV with three cables defaults to a horizontal pylon. Crossarm layout and wire sag are approximate.
+can select a Danube, barrel, twin-pole, timber H-frame or single-level tower. Both KML and
+direct region imports read the design on each mapped tower. For example, `design=guyed_v-frame`
+selects the **US guyed-V lattice tower** and `design=delta` selects the **US single-circuit
+horizontal pylon**. A KML must include the tower tags in its extended data for this to work.
+An untagged tower on a North American 765 kV line with three cables defaults to a horizontal
+pylon. Towers on the same line can have different structures. If Street View shows a different
+shape, choose the matching preset for that support. Crossarm layout and wire sag are approximate.
 
 On a UK tower, a mapped `design:ref` such as `L2`, `L4(m)` or `L6 D` selects the corresponding suspension model. If you know the series from a photograph, right-click the imported tower and use **Browse custom objects…**. Search for the series to apply its standard dimensions, or change only **Regional design** under **Edit design…** to keep the dimensions you have. [Compare the UK tower silhouettes](CustomModels.md#ground-objects)
 

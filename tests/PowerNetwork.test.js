@@ -11,12 +11,13 @@ const feature = (properties,type,coordinates) => ({type:"Feature",properties,geo
 const geo = {type:"FeatureCollection",features:[feature(line,"LineString",[a,bend,b]),
     feature(tower,"Point",a), feature(pole,"Point",b)]};
 
+const kmlPlacemark = (tags,type,coords) => '<Placemark><ExtendedData>' +
+    Object.entries(tags).map(([key,v]) => '<Data name="'+key+'"><value>'+v+'</value></Data>').join("") +
+    '</ExtendedData><'+type+'><coordinates>'+coords+'</coordinates></'+type+'></Placemark>';
+
 test("Overpass KML, GeoJSON and raw node references reproduce the same power network", () => {
-    const placemark = (tags,type,coords) => '<Placemark><ExtendedData>' +
-        Object.entries(tags).map(([key,v]) => '<Data name="'+key+'"><value>'+v+'</value></Data>').join("") +
-        '</ExtendedData><'+type+'><coordinates>'+coords+'</coordinates></'+type+'></Placemark>';
-    const kml = '<kml><Document><Folder>'+placemark(line,"LineString",[a,bend,b].join(" "))+
-        placemark(tower,"Point",a)+placemark(pole,"Point",b)+'</Folder></Document></kml>';
+    const kml = '<kml><Document><Folder>'+kmlPlacemark(line,"LineString",[a,bend,b].join(" "))+
+        kmlPlacemark(tower,"Point",a)+kmlPlacemark(pole,"Point",b)+'</Folder></Document></kml>';
     const expected = parsePowerNetwork(geo);
     expect(parsePowerNetwork(parseXml(kml))).toEqual(expected);
     const elements = [a,bend,b].map(([lon,lat],id) => ({type:"node",id,lon,lat}));
@@ -27,6 +28,21 @@ test("Overpass KML, GeoJSON and raw node references reproduce the same power net
     expect(expected.points.map(p => p.kind)).toEqual(["pylon",undefined,"pole"]);
     expect(parsePowerNetwork({type:"FeatureCollection",features:[feature({},"LineString",[a,b])]})).toBeNull();
     expect(parsePowerNetwork(parseXml("<kml><Document><Placemark><Point/></Placemark></Document></kml>"))).toBeNull();
+});
+
+test("guyed V-frame and delta KML tower tags take precedence over the 765 kV fallback at each tower", () => {
+    const kml = '<kml><Document>' + kmlPlacemark({...line,voltage:"765000"},"LineString",[a,bend,b].join(" ")) +
+        kmlPlacemark({power:"tower",design:"guyed_v-frame"},"Point",a) +
+        '<Placemark><ExtendedData><SchemaData><SimpleData name="power">tower</SimpleData>' +
+        '<SimpleData name="design">delta</SimpleData></SchemaData></ExtendedData>' +
+        '<Point><coordinates>'+bend+'</coordinates></Point></Placemark>' +
+        kmlPlacemark({power:"tower"},"Point",b)+'</Document></kml>';
+    const network = parsePowerNetwork(parseXml(kml));
+    expect(network.points.map(p => p.design)).toEqual(["guyedV","horizontal",undefined]);
+    const display = createPowerNetworkGeometry(network,() => new Vector3());
+    try {
+        expect(display.points.map(p => p.presetId)).toEqual(["ground-guyed-v","ground-horizontal-pylon","ground-horizontal-pylon"]);
+    } finally {display.dispose();}
 });
 
 test("incomplete Overpass ways split at missing nodes", () => {

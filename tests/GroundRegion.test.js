@@ -11,7 +11,7 @@ test.each([diamond, diamond.slice().reverse()].map(corners => [corners]))("a rot
     const support = point(0.123456789, 1);
     const data = regionalPowerFeatures([
         way([point(-4, 1), support, point(4, 1)]),
-        {type: "node", ...support, tags: {power: "tower", height: "46"}},
+        {type: "node", ...support, tags: {power: "tower", height: "46", design: "guyed_v-frame"}},
         way([point(1.5, 1.5), point(1.8, 1.5)]), // Inside the bounding box, outside the region.
     ], corners);
     const network = parsePowerNetwork(data);
@@ -19,7 +19,7 @@ test.each([diamond, diamond.slice().reverse()].map(corners => [corners]))("a rot
     const route = network.ways[0].path.map(i => network.points[i]);
     expect(route).toHaveLength(3);
     expect(route[0].lon).toBeCloseTo(-1, 12);
-    expect(route[1]).toMatchObject({...support, kind: "pylon", height: 46});
+    expect(route[1]).toMatchObject({...support, kind: "pylon", height: 46, design: "guyedV"});
     expect(route[2].lon).toBeCloseTo(1, 12);
 });
 
