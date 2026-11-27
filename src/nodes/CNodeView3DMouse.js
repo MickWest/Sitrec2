@@ -27,8 +27,7 @@ import {par} from "../par";
 import {DRAG, getMousePosition, screenToNDC} from "../mouseMoveView";
 import {mouseInViewOnly, mouseInRenderedView, ndcToView, setRaycasterFromView, viewToClient, withDisplayedCamera} from "../ViewUtils";
 import {DebugArrowAB} from "../threeExt";
-import {CNode3DObject} from "./CNode3DObject";
-import {powerLayers} from "../PowerObjectLinks";
+import {intersectContextObjects} from "../ContextObjectPicking";
 import {FeatureManager} from "../CFeatureManager";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {intersectSphere2, V3} from "../threeUtils";
@@ -1226,17 +1225,6 @@ export const mouseMethods = {
         const mouseRay = screenToNDC(this, mouseX, mouseY);
         
         if (this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
-            // First, check for 3D objects using raycasting (they have priority over tracks).
-            // Match the raycaster's layers to the camera's so we never pick objects
-            // the camera couldn't render (Three.js raycaster does test layers, but defaults to layer 0 only).
-            const prevRaycasterMask = this.raycaster.layers.mask;
-            this.raycaster.layers.mask = this.camera.layers.mask;
-            this.raycaster.setFromCamera(mouseRay, this.camera);
-            // Other panes may have rendered a different detail level since this one.
-            for (const layer of powerLayers(NodeMan)) if (layer.visible) layer.display.setView(this.camera,this.heightPx);
-            const allIntersects = this.raycaster.intersectObjects(this.scene.children, true);
-            this.raycaster.layers.mask = prevRaycasterMask;
-
             // Helper to check if object or any parent has ignoreContextMenu
             const shouldIgnoreContextMenu = (obj) => {
                 let current = obj;
@@ -1285,7 +1273,7 @@ export const mouseMethods = {
             // Filter out objects marked to ignore context menu (overlays, clouds, sprites),
             // objects locked to the camera's own position track, and anything not actually
             // rendered in this view.
-            const intersects = allIntersects.filter(intersect =>
+            const intersects = intersectContextObjects(this, mouseX, mouseY, NodeMan, intersect =>
                 !shouldIgnoreContextMenu(intersect.object)
                 && !sharesCameraRootTrack(intersect.object)
                 && wasRendered(intersect.object)

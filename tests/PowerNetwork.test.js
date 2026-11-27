@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import {Matrix4, PerspectiveCamera, Vector3} from "three";
+import {Matrix4, PerspectiveCamera, Raycaster, Vector3} from "three";
 import {parseXml} from "../src/parseXml";
 import {parsePowerNetwork} from "../src/PowerNetworkFormat";
 import {createPowerNetworkGeometry} from "../src/PowerNetworkGeometry";
@@ -33,6 +33,26 @@ test("incomplete Overpass ways split at missing nodes", () => {
     const geometry = [a,b,null,bend,a].map(p => p && {lon:p[0],lat:p[1]});
     const network = parsePowerNetwork({elements:[{type:"way",tags:line,geometry}]});
     expect(network.ways.map(w => w.path)).toEqual([[0,1],[2,0]]);
+});
+
+test("an isolated wide tower can be picked on its outer insulator in both detail levels", () => {
+    const network = {ways:[],points:[{lon:0,lat:0,kind:"pylon",design:"flat",objectId:"wide",batched:true}]};
+    const display = createPowerNetworkGeometry(network,() => new Vector3());
+    try {
+        const cell = display.group.children[0];
+        display.group.updateMatrixWorld(true);
+        const {height,armSpan} = display.points[0].parameters;
+        for (const lod of cell.children) {
+            cell.children.forEach(child => {child.visible = child === lod;});
+            const mesh = lod.children[0], transform = new Matrix4();
+            mesh.getMatrixAt(0,transform);
+            const ray = new Raycaster(new Vector3(armSpan/2,height*.745,100).applyMatrix4(transform),
+                new Vector3(0,0,-1).transformDirection(transform));
+            const hit = ray.intersectObject(mesh)[0];
+            expect(hit?.face).toBeTruthy();
+            expect(mesh.userData.supportIds[hit.instanceId]).toBe("wide");
+        }
+    } finally {display.dispose();}
 });
 
 test("British suspension design references select the matching shared model", () => {

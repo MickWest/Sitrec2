@@ -1,4 +1,5 @@
 import {SceneLine} from "./SceneLines";
+import {prepareObjectForPick} from "./ContextObjectPicking";
 import {SceneLineMaterial} from "./SceneLineMaterial";
 import {acquireControlLease} from "./InteractionRouter";
 import {editingControls} from "./EditorInteraction";
@@ -390,10 +391,8 @@ class CObjectMoveWidget {
     pickObjectSurface(raycaster, view) {
         if (!view || !this.isObjectShownInView(this.node, view)) return null;
         const node = this.node, group = node.group;
-        const scale = group.scale.clone(), viewScale = node._viewScale, mask = raycaster.layers.mask;
+        const mask = raycaster.layers.mask, restore = prepareObjectForPick(node,view);
         try {
-            // Pick the size actually drawn in this view, including Main View Scale.
-            node.applyViewScale?.(view);
             group.updateWorldMatrix(true, true);
             raycaster.layers.mask = view.camera.layers.mask;
             const meshes = [];
@@ -401,9 +400,7 @@ class CObjectMoveWidget {
             return raycaster.intersectObjects(meshes, false)[0] ?? null;
         } finally {
             raycaster.layers.mask = mask;
-            group.scale.copy(scale);
-            node._viewScale = viewScale;
-            group.updateWorldMatrix(true, true);
+            restore?.();
         }
     }
 

@@ -128,7 +128,7 @@ export function createPowerNetworkGeometry(network, groundAt) {
                 const distance = raycaster.ray.origin.distanceTo(alongRay);
                 const tolerance = 3 * (raycaster.camera?.isOrthographicCamera ? 1 : distance) / pickFocal;
                 if (gap <= tolerance*tolerance && distance >= raycaster.near && distance <= raycaster.far)
-                    hits.push({distance,point:alongMast.clone(),object:mesh,instanceId});
+                    hits.push({distance,point:alongMast.clone(),object:mesh,instanceId,supportPickMargin:true});
             });
         };
     }
@@ -178,6 +178,9 @@ export function createPowerNetworkGeometry(network, groundAt) {
                 mesh.instanceMatrix.needsUpdate = true;
                 mesh.computeBoundingSphere();
             }
+            // Include crossarms and guy anchors in the cell's picking and LOD bounds.
+            near.computeBoundingBox();
+            box.union(near.boundingBox);
         }
         let v = 0, r = 0;
         for (const {a,b,kindA,kindB,count,fromPort,toPort} of cell.spans) {

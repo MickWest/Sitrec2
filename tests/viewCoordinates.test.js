@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
-import {Mesh, MeshBasicMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, SphereGeometry, Vector3} from "three";
+import {BoxGeometry, Group, Mesh, MeshBasicMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, SphereGeometry, Vector3} from "three";
+import {intersectContextObjects} from "../src/ContextObjectPicking";
 import {PointEditorWidget} from "../src/PointEditorWidget";
 import {ViewMan} from "../src/CViewManager";
 import {setObjectMoveMode} from "../src/ObjectMoveModes";
@@ -55,6 +56,36 @@ beforeEach(() => {
     setObjectMoveMode('surface');
     adjustHeightHAE.mockReset().mockImplementation(p => p);
     ViewMan.iterateVisibleIncludingOverlays.mockImplementation(() => {});
+});
+
+test("tower picking uses its displayed rotation, gives exact hits priority and leaves open ground clickable", () => {
+    const camera = new OrthographicCamera(-50,50,50,-50,.1,100);
+    camera.position.z = 20;
+    camera.updateMatrixWorld(true);
+    const group = new Group(), scene = new Group();
+    const arm = new Mesh(new BoxGeometry(8,.3,.3),new MeshBasicMaterial());
+    arm.position.x = 10;
+    group.add(arm);
+    scene.add(group);
+    const node = {group,model:arm,common:{rotateZ:90},applyViewScale() {},rotateForDisplay() {group.rotateZ(Math.PI/2);},
+        proceduralModel:{recipe:{parameters:{groundKind:"pylon"}}}};
+    const manager = {list:{tower:{data:node}},iterate(callback) {callback("tower",node);}};
+    const view = {camera,scene,raycaster:new Raycaster(),widthPx:100,heightPx:100,
+        div:{getBoundingClientRect:() => ({left:0,top:0,width:100,height:100})},findObjectID:obj => obj.id};
+    const pick = (x,y) => intersectContextObjects(view,x,y,manager,() => true)[0]?.object;
+    try {
+        expect(pick(50,38)).toBe(arm);
+        expect(pick(52,38)).toBe(arm);
+        expect(pick(56,38)).toBeUndefined();
+        expect(pick(60,50)).toBeUndefined();
+        const other = new Mesh(arm.geometry,arm.material);
+        other.rotation.z = Math.PI/2;
+        other.position.set(2,12,-1);
+        scene.add(other);
+        scene.updateMatrixWorld(true);
+        expect(pick(52,38)).toBe(other);
+        expect(group.rotation.z).toBeCloseTo(0);
+    } finally {arm.geometry.dispose(); arm.material.dispose();}
 });
 
 test.each([false, true])("rendered NDC and client/pane conversions round trip (letterbox %s)", letterbox => {

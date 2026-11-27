@@ -150,7 +150,7 @@ test("a visible-light frame gets the visible color policy and reflections; an in
     expect(viewColorPolicy(view, 2)).toEqual({active: false, toneMapping: false, exposure: 1, opticsBeforeSensor: false});
     expect(viewColorPolicy({...view, frameRenderMode: null}, 2).active).toBe(false);
     expect(viewColorPolicy({...view, frameRenderMode: "visible"}, 2)).toEqual({active: true, toneMapping: true, exposure: 1, opticsBeforeSensor: true});
-    const ObjectNode = methods("src/nodes/CNode3DObject.js", "CNode3DObject", ["preRender", "applyViewScale", "postRender"],
+    const ObjectNode = methods("src/nodes/CNode3DObject.js", "CNode3DObject", ["preRender", "rotateForDisplay", "applyViewScale", "postRender"],
         {Globals: {objectScaleMain: 1}, effectiveRenderMode});
     const node = Object.assign(new ObjectNode(), {common: {}, group: new Group(), baseScale: 1, updateEnvMap: jest.fn()});
     node.preRender({id: "lookView", renderMode: "physicalThermal", frameRenderMode: null});

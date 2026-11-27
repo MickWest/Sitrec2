@@ -2425,17 +2425,7 @@ ${trackPlacemark}    </Document>
             this.origQuaternion = target.quaternion.clone();
             this.origScale = target.scale.clone();
 
-            if (common.rotateY) {
-                target.rotateY(common.rotateY * Math.PI / 180);
-            }
-
-            if (common.rotateX) {
-                target.rotateX(common.rotateX * Math.PI / 180);
-            }
-
-            if (common.rotateZ) {
-                target.rotateZ(common.rotateZ * Math.PI / 180);
-            }
+            this.rotateForDisplay();
 
             target.updateMatrix();
             target.updateMatrixWorld(true);
@@ -2902,9 +2892,7 @@ ${trackPlacemark}    </Document>
     // Both views draw the SAME scene, so this cannot be baked into the object: it is applied
     // per render pass instead. preRender runs immediately before each view's own draw (see
     // indexRender.js), so whatever it leaves on the group is what that view renders, and the
-    // next view sets its own. Everything outside a render pass — picking, bounding boxes —
-    // therefore sees the scale of whichever view drew last, which is the main view at its
-    // exaggerated size. That is the right answer for clicking on what you can see.
+    // next view sets its own. Context picking reapplies the clicked view's transform.
     //
     // At the default of 1 nothing is touched at all, so a sitch that never opens this control
     // renders exactly as it did before it existed.
@@ -2918,6 +2906,12 @@ ${trackPlacemark}    </Document>
         this.group.scale.setScalar(wanted);
     }
 
+    rotateForDisplay() {
+        const {rotateY, rotateX, rotateZ} = this.common;
+        if (rotateY) this.group.rotateY(rotateY * Math.PI / 180);
+        if (rotateX) this.group.rotateX(rotateX * Math.PI / 180);
+        if (rotateZ) this.group.rotateZ(rotateZ * Math.PI / 180);
+    }
 
 }
 

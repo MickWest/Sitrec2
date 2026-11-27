@@ -81,7 +81,7 @@ only lines, run the query above to include the tagged points where OpenStreetMap
 
 #### Edit an imported pole or tower
 
-1. In **Main** or **Look** view, zoom in and **right-click the pole or tower itself**. Its object editor opens. The rest of the network stays in the shared layer, so you can edit one pole even if the KML contains hundreds.
+1. In **Main** or **Look** view, **right-click a leg, brace, crossarm or insulator** to open the tower editor. A narrow margin around thin members makes them easier to pick. Zoom in if the tower is small on screen. The rest of the network stays in the shared layer.
 2. To correct its **height or shape**, click **Edit design…**. Set **Height** in metres. For a tower, adjust **Crossarm span** or choose a different **Regional design**. Click **Apply to object**. To replace the whole design at its preset dimensions, use **Browse custom objects…**, select the preset, then **Use this object**. Search for `transmission` to compare tower silhouettes. [Ground object presets](CustomModels.md#ground-objects)
 3. To correct its **position**, use **Surface** move mode and drag the green disk. To turn the crossarms, **Control-click the widget** and drag the amber ring left or right. **Rotate Y°** in the object menu lets you enter an exact angle. Control-click the ring again to return to moving. [Move and rotate controls](MovingObjects.md#rotate-an-object)
 4. Check the spans on either side. Their ends follow the insulators as you move, rotate, resize or change the design. **Save the sitch** to keep the edits and the layer visibility. The original KML stays as exported.

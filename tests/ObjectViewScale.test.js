@@ -10,7 +10,7 @@ import {effectiveRenderMode} from '../src/rendering/ViewRenderMode';
 const source = fs.readFileSync(path.join(__dirname, '../src/nodes/CNode3DObject.js'), 'utf8');
 const declaration = parse(source, {sourceType: 'module'}).program.body
     .find(node => node.type === 'ExportNamedDeclaration' && node.declaration?.id?.name === 'CNode3DObject').declaration;
-const selected = declaration.body.body.filter(node => ['preRender', 'applyViewScale', 'postRender'].includes(node.key?.name));
+const selected = declaration.body.body.filter(node => ['preRender', 'rotateForDisplay', 'applyViewScale', 'postRender'].includes(node.key?.name));
 
 test('the object render lifecycle has no silently overwritten methods', () => {
     const methods = declaration.body.body.filter(node => node.type === 'ClassMethod' && node.kind === 'method');

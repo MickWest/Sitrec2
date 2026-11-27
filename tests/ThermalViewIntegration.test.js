@@ -483,7 +483,7 @@ test("choosing Visible releases the thermal pipeline; an open settings folder ke
 });
 
 test("thermal look pre-render skips RGB reflection capture while preserving visible main behavior",()=>{
-    const Lifecycle=methods("src/nodes/CNode3DObject.js","CNode3DObject",["preRender","applyViewScale","postRender"],{Globals:{objectScaleMain:1},effectiveRenderMode});
+    const Lifecycle=methods("src/nodes/CNode3DObject.js","CNode3DObject",["preRender","rotateForDisplay","applyViewScale","postRender"],{Globals:{objectScaleMain:1},effectiveRenderMode});
     const node=Object.assign(new Lifecycle(),{common:{},group:new Group(),baseScale:1,updateEnvMap:jest.fn()});
     node.preRender({id:"lookView",renderMode:"physicalThermal"});expect(node.updateEnvMap).not.toHaveBeenCalled();
     node.preRender({id:"mainView",renderMode:"visible"});expect(node.updateEnvMap).toHaveBeenCalledTimes(1);
