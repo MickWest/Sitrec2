@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.211.1 (2026-11-27)
+
+### Improvements
+- Pylon picking now covers the whole visible structure (legs, braces, crossarms, insulators) and uses the rotation and scale shown in the clicked view. A small margin makes thin members easier to select, while an exact hit on another object takes priority. Imported towers now include their outer crossarms and guy anchors in the reach check, so wide towers can be picked on their outer insulators in both detail levels. (04837c84; src/ContextObjectPicking.js, src/PowerNetworkGeometry.js, src/nodes/CNodeView3DMouse.js)
+- KML and direct Overpass power grid imports now map tower design tags per tower: guyed V-frame tags use the guyed-V model and delta tags use the horizontal model, ahead of the 765 kV fallback. KML imports read these tags from both Data and SimpleData fields. (8060d2f5; src/PowerNetworkFormat.js, docs/SceneObjects.md)
+
+### Documentation
+- The "Adding Objects and Tracks" page is rewritten and reorganized: it starts from a new custom sitch, explains how to make an object move, describes 3D objects, pins and the right-click menu, and has sections for the building, cloud, ground overlay, ground grid and spotlight editors, plus where things are in the menus, saving, and the kinds of track. (docs/SceneObjects.md)
+
 ## Version 2.211.0 (2026-11-27)
 
 ### New Features

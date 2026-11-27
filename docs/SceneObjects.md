@@ -1,135 +1,528 @@
 # Adding Objects and Tracks
 
-In a Custom sitch, right-clicking the ground opens a menu that places things at that point: a
-camera or target position, a pin, a 3D object, a track, a balloon, a building, a cloud layer, a
-ground overlay or a measurement grid or a region. This page describes each item in that menu, the editors for
-buildings, clouds, ground overlays and ground grids, and how to find, change and remove each thing
-after you make it.
-
-This page has four parts:
-
-- **A. [The ground menu](#a-the-ground-menu)**: every item, and where the new thing appears
-- **B. [Right-clicking things that are already there](#b-right-clicking-things-that-are-already-there)**
-- **C. [The editors](#c-the-editors)**: buildings, clouds, ground overlays and ground grids
-- **D. [Finding, saving and removing](#d-finding-saving-and-removing)**
-
-Read [Tracks and objects](#tracks-and-objects) first if you are not sure what the difference is,
-or which object is on which track.
-
-To reposition an object in Main or Look view, see [Moving Objects](MovingObjects.md): the
-Surface, Camera plane, In / out and Screen plane modes, and the Opt/Alt controls.
-
-For OpenStreetMap power lines, [import directly from a region](#import-a-power-grid-for-a-region) or [drop an Overpass Turbo KML](#importing-power-lines-and-supports).
-If the network is already in your sitch, go straight to [Edit an imported pole or tower](#edit-an-imported-pole-or-tower).
-
----
+Start in a custom sitch. To open an empty one, choose **File → New Sitch (Empty)** or click
+**New Sitch** in the sitch browser.
 
 ## Tracks and objects
 
-A **track** is a path: it gives a position for each frame. An **object** is a model or a shape
-that Sitrec draws at a position. Tracks are in the **Contents** menu, and objects are in the
-**Objects** menu. An object is at a fixed position, or it is on a track and moves along it. One
-track can have several objects on it, or none.
+A **track** gives a position for each frame. An **object** is a shape or model in the scene.
+An object can stay in one place or follow a track. Several objects can share a track, and a
+track can show a path even if nothing rides on it. Open **Contents** to edit a track and
+**Objects** to change how an object looks or where it sits.
 
-### Importing power lines and supports
+| What you want to add | How to start |
+|---|---|
+| An object that stays in one place | Right-click the ground in **Main** or **Look** view and choose **Add → 3D Object**. A grey sphere appears and its editor opens. |
+| An object that moves | Choose **Add → Moving Object** from the same menu. Sitrec creates both the object and its track. |
+| A path without an object | Choose **Add → Flight Path**. You can draw the path now and put an object on it later. |
+| A recorded track | Drag the track file into Sitrec or choose **File → Import File**. [Loading and Filtering Tracks](Tracks.md#importing-tracks) |
 
-**Already have an Overpass Turbo KML?** Drag the `.kml` into your custom sitch. Open
-**Objects** and look for **Power grid 1**, **Power grid 2**, and so on. Hover over a
-row to see its full filename and how many towers, poles and line routes were imported. Its checkbox shows or
-hides the whole network. GeoJSON and raw Overpass JSON work the same way.
+### Make an object move
 
-#### Import a power grid for a region
+1. Go to the frame where the motion should start. Right-click the starting spot on the ground,
+   expand **Add**, and choose **Moving Object**. The track opens in edit mode with its first
+   control point at that spot.
+2. Move the playhead to a later frame. Right-click a second spot on the ground and choose
+   **Add Point Here**. The two points now tell Sitrec where the object should be at those frames.
+3. Press **Escape** to finish editing. Drag the playhead between the two frames to see the object
+   move. To change the path later, open the track in **Contents** and turn on **Edit Track**.
 
-1. Right-click the ground in **Main** or **Look** view. Expand **Add** and choose **Region**. A shaded square, initially 2 km on each side, opens in edit mode at the clicked point.
-2. Drag the shaded interior to move it, a **yellow corner** to resize it, or the **cyan handle** to rotate it. For a narrow transmission corridor, make a long rectangle and turn it to follow the line. You can also enter the angle in **Rotation**.
-3. Click **Import power grid for this area**. Sitrec sends the four corners to the selected **Overpass server**. The result appears as a numbered **Power grid** in **Objects**. Hover over its row to see the filename, which includes the region name. Wires stop at the region edge. Data © OpenStreetMap contributors. [OpenStreetMap data and attribution](https://www.openstreetmap.org/copyright)
-4. Turn off **Edit region** when you finish. **Show region** controls the shaded footprint. The power network has its own visibility checkbox. Save the sitch to keep the region and the downloaded network together. Reopening the sitch uses the saved data.
+To use a track you already have, choose **Add → 3D Object**, then select the track under
+**Location → Position** in the object's editor. [Object location](#location-a-manual-position-or-a-track)
 
-![A narrow region rotated along a power line. The editor shows the Overpass server and import button. Yellow corner handles resize the red outline, and the cyan handle rotates it.](docimages/power-grid-region.jpg)
+### On this page
 
-*The yellow handles resize the footprint and the cyan handle turns it. Imagery powered by Esri. Power network © OpenStreetMap contributors.*
+- [Ground menu](#a-the-ground-menu), [3D objects](#3d-objects), [hand-drawn tracks](#hand-drawn-tracks) and [pins](#pins)
+- [Right-click an existing item](#b-right-clicking-things-that-are-already-there), [use the scene editors](#c-the-editors), or [find, save and remove items](#d-finding-saving-and-removing)
+- [Balloons and kites](#balloons-and-kites), [find a kite anchor or balloon launch site](#find-a-kite-anchor-or-balloon-launch-site), and [import or edit power lines](#importing-power-lines-and-supports)
 
-The region stays available under **Objects → Region: *name***. Repeating the import for the same footprint keeps its existing layer. Moving or resizing the region and importing again adds a separate layer. If the two footprints overlap, both layers include the shared area.
+---
 
-Keep the query within 25 km east to west and 25 km north to south, including after rotation. Creating, moving or resizing a region sends no query. The import button can send one request at a time, with at least 30 seconds between requests to the same server. A busy server gets at least a minute, or longer if requested. You choose when to retry.
+## A. The ground menu
 
-**If the server is busy or times out**, click **Copy download URL** in the region editor. You can also select and copy the **Download URL** field. Its tooltip gives the local time to retry. After that time, paste the URL into a browser, save the response as `power-grid.json`, and drag the file into Sitrec. The URL contains the same query and uses the same server you selected. A raw JSON file includes the full mapped routes returned by Overpass, so wires can extend beyond the region when you import it by hand.
+Right-click the terrain or globe in **Main** or **Look** view to open **Ground**. Expand **Add**
+to place an object or draw a track. The camera, target and terrain commands are on the ground
+menu itself.
 
-**No mapped power lines or supports** means OpenStreetMap returned no matching features. Move or enlarge the region and retry. You can also import a previously downloaded KML.
+Hold **Shift** and right-click to reach the ground behind a pin, track, building or other object.
+This also works while an editor is open. If the pointer is over the sky, the usual right-click behavior applies.
 
-#### Export a power network from Overpass Turbo
+The top of the menu shows the location of the point you clicked:
 
-1. Open [Overpass Turbo](https://overpass-turbo.eu/) and zoom the map to the part of the line you want in Sitrec.
-2. Paste the query below into the editor and click **Run**. It requests both the line routes and the individual pole and tower locations in the visible map area.
-3. Choose **Export**, find **KML** under **Data**, and click **download**. Drag the downloaded file into Sitrec.
+- latitude and longitude, to six decimal places
+- the altitude [above mean sea level (MSL)](GIS.md#three-kinds-of-height)
+- the height above the WGS84 ellipsoid (HAE), with the difference between the two in parentheses
 
-```text
-[out:json][timeout:25][bbox:{{bbox}}];
-(
-  node["power"~"^(tower|pole)$"];
-  way["power"~"^(line|minor_line)$"];
-);
-out body;
->;
-out skel qt;
-```
+You can select and copy this text.
 
-**If you see wires but no towers**, zoom in first. Sitrec draws a single stroke for a distant route.
-Close up, the lines come from the mapped routes, and a support appears at each point tagged
-`power=tower` or `power=pole`. A bend in a line can be just a bend. If your export contains
-only lines, run the query above to include the tagged points where OpenStreetMap has them.
+### Menu items
 
-#### Edit an imported pole or tower
+| Item | What it does | Where the result goes |
+|---|---|---|
+| **Set Camera Above** | Moves the camera's fixed position to the clicked latitude and longitude. The camera keeps its current altitude | The camera position |
+| **Set Camera on Ground** | Moves the camera's fixed position to the clicked point, 2 m above the ground (eye level) | The camera position |
+| **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
+| **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
+| **Add → Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
+| **Add → 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
+| **Add → Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
+| **Add → Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
+| **Add → Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
+| **Add → Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, with the same name |
+| **Add → Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, with the same name |
+| **Add → Spotlight** | Places a projector on the ground. Its beams light up clouds overhead as the timeline plays. See [Spotlights](#spotlights) | **Objects**, as *Spotlight 1*, *Spotlight 2*, … |
+| **Add → Building** | Opens the editor for a 15 × 15 m building, 4 m high, centered on the clicked point. [Buildings](#buildings) | **Objects**, as *Building: Building 1* |
+| **Add → Clouds** | Opens the editor for a round patch of clouds at 10,000 ft, 500 m in radius, centered above the clicked point. [Clouds](#clouds) | **Objects**, as *Clouds: Clouds 1* |
+| **Add → Ground Overlay** | Opens the editor for a ground overlay 0.02° square, centered on the clicked point. Supply the image in the editor. [Ground overlays](#ground-overlays) | **Objects**, as *Overlay: Overlay 1* |
+| **Add → Ground Grid** | Opens the editor for a square measurement grid, 1000 m or ft on each side in your current units, with major lines every 100 and minor lines every 10. [Ground grids](#ground-grids) | **Objects**, as *Grid: Grid 1* |
+| **Add → Region** | Defines a movable, rotatable area on the ground. [Import a power grid for a region](#import-a-power-grid-for-a-region) | **Objects**, as *Region: Region 1* |
+| **Center Terrain square here** | Moves the center of the terrain square to the clicked point. Only shown when **Dynamic Subdivision** is off (see [Terrain and Elevation](Terrain.md)) | The terrain |
+| **Google Maps Here** | Opens Google Maps at the clicked point in a new browser tab | A new tab |
+| **Google Earth Here** | Downloads a small KML file, *Sitrec Pin.kml*, with a pin at the clicked point. Open it in Google Earth | Your downloads |
 
-1. In **Main** or **Look** view, **right-click a leg, brace, crossarm or insulator** to open the tower editor. A narrow margin around thin members makes them easier to pick. Zoom in if the tower is small on screen. The rest of the network stays in the shared layer.
-2. To correct its **height or shape**, click **Edit design…**. Set **Height** in metres. For a tower, adjust **Crossarm span** or choose a different **Regional design**. Click **Apply to object**. To replace the whole design at its preset dimensions, use **Browse custom objects…**, select the preset, then **Use this object**. Search for `transmission` to compare tower silhouettes. [Ground object presets](CustomModels.md#ground-objects)
-3. To correct its **position**, use **Surface** move mode and drag the green disk. To turn the crossarms, **Control-click the widget** and drag the amber ring left or right. **Rotate Y°** in the object menu lets you enter an exact angle. Control-click the ring again to return to moving. [Move and rotate controls](MovingObjects.md#rotate-an-object)
-4. Check the spans on either side. Their ends follow the insulators as you move, rotate, resize or change the design. **Save the sitch** to keep the edits and the layer visibility. The original KML stays as exported.
+**Google Maps Here** and **Google Earth Here** are shown only on installations that enable extra
+help links.
 
-**Height** in the designer changes the structure from base to top. **Location → Alt** moves
-the entire structure up or down. Imported supports start on the terrain. Sitrec uses a
-mapped height when available and otherwise uses the preset height. Recognized design tags
-can select a Danube, barrel, twin-pole, timber H-frame or single-level tower. Both KML and
-direct region imports read the design on each mapped tower. For example, `design=guyed_v-frame`
-selects the **US guyed-V lattice tower** and `design=delta` selects the **US single-circuit
-horizontal pylon**. A KML must include the tower tags in its extended data for this to work.
-An untagged tower on a North American 765 kV line with three cables defaults to a horizontal
-pylon. Towers on the same line can have different structures. If Street View shows a different
-shape, choose the matching preset for that support. Crossarm layout and wire sag are approximate.
+When the ground you click is within an existing item, an **Edit** group offers the matching commands.
 
-On a UK tower, a mapped `design:ref` such as `L2`, `L4(m)` or `L6 D` selects the corresponding suspension model. If you know the series from a photograph, right-click the imported tower and use **Browse custom objects…**. Search for the series to apply its standard dimensions, or change only **Regional design** under **Edit design…** to keep the dimensions you have. [Compare the UK tower silhouettes](CustomModels.md#ground-objects)
+- **Edit Clouds: *name*** when the clicked point is under a cloud layer (within its radius)
+- **Edit Overlay: *name***, **Edit Grid: *name*** or **Edit Region: *name*** when the clicked point is inside a visible overlay, grid or region
 
-#### Change wire connections
+Each one opens that item's editor. This is the usual way to edit clouds, overlays, grids and regions from
+the 3D view, because a right-click on them passes through to the ground behind.
 
-Open **Wire connections** in the support's object menu. **From** lists the previous support
-and **To** lists the next one in the mapped route order. A junction can list several neighbors.
-For example, on a route that runs **Tower 1 → Tower 2 → Tower 3**, open **Tower 2**. Its
-**From** shows **Tower 1** and its **To** shows **Tower 3**.
+The camera and target items move the fixed positions that the camera and target use when they are
+not following a track. If the camera or target follows a track, the move has no visible effect
+until you switch back to the fixed position.
 
-- **Reroute a span** by choosing another support in its existing **From** or **To** row.
-- **Disconnect a span** by choosing **None** in that row.
-- **Add a branch or a hand-placed pole** with **Add To**. Choose the pole you want to reach. **Add From** adds a span coming from the pole you choose. Sitrec connects the outgoing insulator points on one support to the incoming points on the other.
+If you right-clicked in the **look view**, a new track (from any of the three track items, from
+**Add → Balloon** or from **Add → Kite**) is also shown in the look view. A track made from the main view is shown only in
+the main view. You can change this later with **Show in look view** in the track's folder.
 
-You can also connect two hand-placed supports this way. Give them distinct names in their
-object menus so they are easy to pick from the list. Save the sitch after changing connections.
+### 3D objects
 
-If you prepare your own KML and already have an editable pole at a mapped location, set the
-mapped point's `sitrec:object` tag to that object's node ID to use it in the route. Opening
-the same file in a sitch without that object shows the mapped model.
+**Add → 3D Object** places a grey sphere and opens its editor. Drag the sphere itself, or use
+the move widget that appears when the pointer is near it. You can reopen the editor by
+right-clicking the object. [Moving Objects](MovingObjects.md)
+
+To change the sphere's shape, model, size or material, use the editor or the object's folder
+in **Objects**. For a generated shape, the size control (such as **Radius (m)**) is just below
+**Geometry**. Shape sizes are in meters. **Mesh Detail** controls the number of segments.
+[Objects and 3D Models](CustomModels.md)
+
+If the sphere is hard to see from a distance, temporarily increase **Objects → Global Scale**.
+This enlarges all objects. Set it back to 1 to see them at their real size.
+
+#### Location: a manual position, or a track
+
+Open the object's folder in **Objects** and expand **Location**. For objects created with
+**3D Object** or either **Moving Object** command, **Position** offers two choices.
+
+- Choose **Manual** to set **Lat**, **Lon** and **Alt** or drag the object with the move widget.
+  **Above Ground Level** and **Allow Small Altitudes** work as in the camera's **Location**
+  group. An object from **Add → 3D Object** starts here.
+- Choose a **track by name** to make the object follow it. The manual coordinates disappear.
+  The list includes hand-drawn and loaded tracks, balloons and kites. A moving object starts
+  on the track created with it.
+
+New tracks appear in the list as soon as you add or load them. When you switch back to
+**Manual**, the object stays where the track put it on the current frame. It also stays there
+if you delete the track and choose to keep the object.
+
+![The menu of an object, Object 1, in two states. Left: Position on Manual, with the Lat, Lon and Alt values in the Location group. Right: Position on Track 1, with those values hidden, and an On Track row above the Location group with a button "Track 1"](docimages/scene-objects-location.jpg)
+
+The **Banking** control of the object sets how it points on the track. With **Position** on
+**Manual** the object does not move, so it keeps the heading that it has: north for a new object.
+Select **Fixed Heading** in **Banking** to turn it.
+
+A balloon's sphere and a kite stay with their own track, and have no **Location** group. The
+**On Track** row of their folder names that track.
+
+A fixed object can also serve as the camera position or the target. [Use a fixed object in a track list](#use-a-fixed-object-in-a-track-list)
+
+### Hand-drawn tracks
+
+**Add → Flight Path** and both **Moving Object** commands create a track from control points.
+Each point sets a position at a particular frame. The track opens in edit mode so you can
+place or adjust those points. [Edit hand-drawn tracks](Tracks.md#hand-drawn-tracks)
+
+A hand-drawn track's folder in **Contents** starts with **Name**, then an **Object** row for each
+object on the track, then **Edit Track**. Next come **Go to Track**, **Focus Camera Here** and
+**Follow Camera Here**, then the **Path**, **Smoothing** and **Display** groups.
+**Add Custom Graph**, **Export Spline** and **Delete Track** are at the end.
+See [Track Display Controls](Tracks.md#track-display-controls). The button of an **Object** row
+opens the menu of that object, and the object's folder in **Objects** has an **On Track** row
+whose button opens the menu of the track: see
+[How the menus show the links](#how-the-menus-show-the-links). The track's menu and the object's
+menu can be open at the same time.
+
+#### In->Out tracks
+
+Set the **In** and **Out** frames before making the track. At the frames you want, use
+**Time → In Frame [I]** and **Time → Out Frame [O]**, or press **Alt+I** and **Alt+O**.
+[Keys for time and frames](TimeAndSync.md#keys-for-time-and-frames)
+
+Then right-click the ground and choose **Add → Moving Object (In→Out)**. The track starts
+with two control points.
+
+- The **In** point is at the spot you clicked.
+- The **Out** point is 200 screen pixels to the right of the first in the view you clicked.
+
+Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
+timeline. **Constant Speed** is on, so the object moves at a steady speed along the track.
+**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height above the
+ground and follows the terrain under it. Drag the up/down arrows on the object or either
+control point to change the height of the whole track. Dragging the object itself or the green
+disk keeps the lock height. See [Moving Objects](MovingObjects.md#tracks-and-altitude-locks).
+
+### Pins
+
+**Add → Pin** places a pin labelled *New Feature* and opens a window titled **Edit: *label***. In
+it you can change **Label Text**, **Arrow Length**, **Arrow Color** and **Text Color**, and read
+the pin's latitude, longitude and altitudes. While the window is open you can drag the pin in the
+view. **Delete Pin** removes it (it asks first). **Done**, Escape, or a double-click on the window
+title closes the window.
+
+Pins do not have a folder in a menu. To edit a pin later, right-click it. **Show → Pins in Main**
+and **Show → Pins in Look** show or hide all pins in each view. **Pins in Look** is off by default,
+so a new pin shows only in the main view until you turn it on.
+
+---
+
+## B. Right-clicking things that are already there
+
+A right-click in a 3D view picks the first thing it finds, in this order:
+
+1. a **pin**: opens the pin's edit window
+2. a **3D object** (including buildings): opens its edit window, as described below
+3. a **track** line, within about 10 pixels of the pointer: opens the track's menu, titled
+   **Track: *name***, with the same controls as the track's folder in **Contents**
+4. a star, planet or satellite
+5. the **ground**: opens the ground menu
+
+**3D object.** The edit window is titled with the object's name and holds the controls of its
+folder in the **Objects** menu. It stays open while you work in the view. While it is open, the
+object can be dragged with its move widget. You can also move any movable object without opening
+a window: hold **Opt** (Option, on a Mac) or **Alt** (Windows, Linux) and drag it. Click the
+**Move mode** icon on either view's left toolbar to choose the movement constraint, or press
+**Opt+M** / **Alt+M** to cycle modes. See [Moving Objects](MovingObjects.md) for the four modes,
+object-body dragging and track altitude locks.
+
+**Building.** Right-clicking a building puts it in edit mode and opens its editor at the pointer.
+See [Buildings](#buildings).
+
+**Clouds, overlays, grids and regions** do not catch the right-click. It goes through to the ground, and the
+ground menu then offers **Edit Clouds**, **Edit Overlay**, **Edit Grid** or **Edit Region** for the item under the
+pointer.
+
+**While a track is in edit mode**, a plain right-click opens that track's edit menus. See
+[Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks).
+
+**While a track's menu or any edit window is open** (for a building, a cloud layer, an overlay, a
+grid, a 3D object or a pin), use **Shift-right-click** to open **Ground** alongside the editor.
+
+---
+
+## C. The editors
+
+Buildings, clouds, ground overlays and ground grids share one way of working:
+
+- **Edit mode** shows colored handles in the 3D views. Drag a handle to change the item.
+- **The editor** is a floating window titled **Edit: *name***. It holds the same controls as the
+  item's folder in the **Objects** menu, so a change in one shows in the other. You can drag the
+  window, or dock it in a sidebar.
+- **Closing the editor leaves edit mode.** Double-click its title, or press **Escape** when it is
+  the top window. You can also clear **Edit Mode** in the item's folder.
+- **Only one editor is open at a time.** Opening an editor closes any other editor.
+- **Escape during a drag** cancels that drag and puts the item back where it was.
+- **Delete** or **Backspace** deletes the item being edited, after asking you. This works for a
+  building, a cloud layer, an overlay or a grid.
+- **Undo** (**Cmd**/**Ctrl** + **Z**) works for creating, dragging and deleting.
+
+Handles keep the same size on screen at any zoom. Heights and sizes are shown in your current small
+units (meters or feet), and the label ends with the unit, for example **Radius (ft)**. Where a
+control has a fixed unit, its row gives that unit.
+
+### Buildings
+
+Right-click the ground and choose **Add → Building**, or right-click an existing building. You can
+also turn on **Edit Mode** in **Objects → Building: *name***.
+
+A new building is a 15 × 15 m box, 4 m high, with a flat roof. It sits on the ground: if the
+terrain or 3D tiles under it change, the building moves back onto the ground.
+
+#### Handles
+
+![A building with a pitched roof in edit mode, with yellow spheres at its corners, a grey sphere at the middle of the roof and a cyan sphere at one end of the ridgeline, beside its editor with the Height folder open](docimages/scene-objects-building-handles.jpg)
+*A building in edit mode, beside its editor. **Ridgeline Height** is raised to 26 ft, so the roof is pitched. The roof hides most of the fourth yellow sphere. The area outside each corner that rotates the building has no mark.*
+
+| Handle | Drag it to |
+|---|---|
+| **Yellow** sphere at each bottom corner | Resize the footprint. The opposite corner stays fixed and the footprint stays a rectangle |
+| Just **outside** a yellow corner, in the direction away from the building | Rotate the whole building about its center |
+| **Grey** sphere at the center of the roof | Raise or lower the whole roof |
+| **Cyan** sphere at one end of the ridgeline | Raise or lower the ridgeline above the roof edge. This makes a pitched roof from a flat one |
+| The **building itself** | Move the building over the ground |
+
+Hold **Option** / **Alt** and drag the building or one of its handles to make a copy and drag the
+copy. Press **Escape** during that drag to cancel the copy.
+
+A new building starts at the rotation you last gave a building, so a row of buildings along one
+street comes out already aligned.
+
+#### Controls
+
+These are in **Objects → Building: *name*** and in the editor.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Name** | *Building 1*, *Building 2*, ... | The name in the menus and the editor title |
+| **Visible** (title checkbox) | on | Show or hide the building |
+| **Edit Mode** | on when created | Show the handles and the editor |
+| **Height → Roof Edge Height** | 4 m | Height of the top of the walls, above the highest ground point under the building. The slider goes up to 1000 m. The grey roof handle has no upper limit |
+| **Height → Ridgeline Height** | same as Roof Edge Height | Height of the roof ridge, up to 1000 m. When it equals Roof Edge Height, the roof is flat. It cannot be lower than the roof edge |
+| **Height → Ridgeline Inset** | 0 | Moves both ends of the ridge inward, which slopes the end faces of the roof |
+| **Height → Roof Eaves** | 0 | Extends the roof beyond the walls |
+| **Material → Type** | lambert | Lighting model: basic, lambert, phong or physical |
+| **Material → Wall Color** | light grey | Color of the walls |
+| **Material → Roof Color** | dark grey | Color of the roof |
+| **Material → Opacity** | 1 | 0 is invisible, 1 is solid |
+| **Material → Transparent** | on | Lets Opacity below 1 take effect |
+| **Material → Wireframe** | off | Draws the building as edges only |
+| **Material → Depth Test** | on | Turn off to draw the building on top of everything in front of it |
+| **Delete Building** | | Deletes the building, after asking you |
+
+**Objects → Remove all Buildings** deletes every synthetic building at once. Undo restores all the buildings in one step.
+
+### Clouds
+
+Right-click the ground and choose **Add → Clouds**, or right-click the ground under an existing
+cloud layer and choose **Edit Clouds: *name***. You can also turn on **Edit Mode** in
+**Objects → Clouds: *name***.
+
+A cloud layer is a round patch of cloud puffs at one altitude. The puffs always face the camera.
+For volumetric clouds over the whole sky, lit by the Sun, use **Lighting → Clouds** instead: see
+[Clouds](Clouds.md).
+
+#### Handles
+
+Each handle turns white when the pointer is over it.
+
+![A cloud layer seen from above, with grey cloud puffs over a dry lake bed, a yellow sphere at the center, a cyan sphere on the edge and an orange sphere on the other side, beside its editor](docimages/scene-objects-cloud-handles.jpg)
+*A new cloud layer in edit mode, seen from above, beside its editor. The grey shapes are the cloud puffs.*
+
+| Handle | Drag it to |
+|---|---|
+| **Yellow**, at the center | Raise or lower the layer |
+| **Cyan**, on the edge | Change the radius |
+| **Orange**, opposite the cyan handle, halfway from the center to the edge | Move the layer |
+
+#### Controls
+
+These are in **Objects → Clouds: *name*** and in the editor.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Name** | *Clouds 1*, *Clouds 2*, ... | The name in the menus and the editor title |
+| **Visible** (title checkbox) | on | Show or hide the layer |
+| **Edit Mode** | on when created | Show the handles and the editor |
+| **Properties → Altitude** | 10,000 ft | Height of the layer |
+| **Properties → Radius** | 500 m | Radius of the layer |
+| **Properties → Cloud Size** | 200 m | Width of each cloud puff. Its height is half its width |
+| **Properties → Density** | 0.5 | How many puffs fill the layer. The number also grows with the area |
+| **Properties → Opacity** | 0.8 | How solid the puffs are |
+| **Properties → Brightness** | 1 | Values above 1 make the puffs glow |
+| **Properties → Sun Reflection** | 0 | Brightens the clouds around the point where the Sun's reflection on the layer is seen from the camera, over this radius in meters. 0 is off |
+| **Properties → Depth** | 0 | Spreads the puffs up and down over this thickness |
+| **Properties → Edge Wiggle** | 0 | Makes the edge of the layer irregular. The value is a fraction of the radius |
+| **Properties → Edge Frequency** | 5 | How many waves are added together to make the edge. A higher value gives a finer edge |
+| **Properties → Seed** | 0 | Change it for a different, but repeatable, arrangement of puffs |
+| **Properties → Feather** | 1000 m | Distance inside the edge over which the puffs thin out |
+| **Wind → Wind Mode** | No Wind | *No Wind* keeps the layer still. *Use Local* and *Use Target* move it with the local or target wind. *Custom* uses the two settings below |
+| **Wind → Wind From (°)** | 270 | Direction the wind blows from. Shown only for *Custom* |
+| **Wind → Wind (knots)** | 50 | Wind speed. Shown only for *Custom* |
+| **Delete Clouds** | | Deletes the layer, after asking you |
+
+With wind, the layer drifts from its position at frame 0 by the wind speed times the time since
+frame 0. It moves as one piece.
+
+### Ground overlays
+
+A ground overlay is an image draped on the terrain, such as a map, a satellite photo or a site
+plan. You can add one from the ground menu or from a file.
+
+- **Right-click the ground → Add → Ground Overlay**. The overlay has no image yet and shows a grey
+  square with a red circle. Give it an image with **Image URL** or **Rehost Local Image**.
+- **In a named sitch**, drag an image file onto Sitrec and choose **Ground Overlay** in the *Import Image* dialog.
+  The overlay is placed at the center of the main view, about 0.01° square, named after the file,
+  and opens in edit mode. In a new, unnamed sitch a dropped image opens in the video view, so
+  use the ground menu to make an overlay there.
+
+To edit an existing overlay, right-click the ground inside it and choose **Edit Overlay: *name***,
+or turn on **Edit Mode** in **Objects → Overlay: *name***.
+
+#### Handles
+
+![A grey square with a red circle draped on desert ground, with a yellow sphere at each corner, a cyan sphere near the north edge and a magenta sphere inside it, beside its editor](docimages/scene-objects-overlay-handles.jpg)
+*A new ground overlay in edit mode, with one lock point, beside its editor. It has no image yet, so it shows the grey square with the red circle.*
+
+| Handle | Drag it to |
+|---|---|
+| **Yellow** sphere at each corner | Resize. The opposite corner stays fixed and the overlay stays a rectangle. With **Free Transform** on, each corner moves by itself |
+| **Cyan** sphere near the north edge | Rotate the overlay about its center |
+| The **image itself** | Move the overlay |
+| **Magenta** sphere (a lock point) | Warp the image so that this point of the image goes where you drop it |
+
+**Lock points** help you match an image to the ground. In edit mode, right-click a feature on the
+overlay to pin that point of the image. You can place up to three. Then drag a lock point onto the
+place where that feature really is. With one lock point, the image moves.
+
+Dragging a lock point turns on **Free Transform**. **Option** / **Alt** + right-click a lock point
+removes it.
+
+#### Controls
+
+These are in **Objects → Overlay: *name*** and in the editor.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Name** | *Overlay 1*, ... or the file name | The name in the menus and the editor title |
+| **Visible** (title checkbox) | on | Show or hide the overlay |
+| **Edit Mode** | on when created | Show the handles and the editor |
+| **Lock Shape** | off | Hides the corner and rotation handles, so you cannot change the size, shape or rotation by accident. You can still drag the overlay to move it |
+| **Free Transform** | off | Lets each corner move by itself, for a perspective warp. Turning it on sets **Rotation** to 0. Turning it off returns the overlay to a rectangle |
+| **Show Border** | off | Draws a red border around the overlay. The border is also shown while the pointer is over the overlay's folder |
+| **Properties → Image URL** | empty | Web address of the image |
+| **Properties → Rehost Local Image** | | Choose an image file on your computer. Sitrec uploads it and puts its address in Image URL. You must be logged in |
+| **Properties → North**, **South**, **East**, **West** | 0.01° from the clicked point | The edges of the overlay, in degrees |
+| **Properties → Rotation** | 0 | Rotation in degrees, −180 to 180 |
+| **Properties → Altitude (ft)** | 0 | Always in feet. At 0 the overlay is draped over the terrain. Above 0 it is a flat sheet at that altitude, for example for clouds taken from a satellite image |
+| **Properties → Wireframe** | off | Draws the overlay's triangles as lines |
+| **Properties → Opacity** | 1 | 0 is invisible, 1 is solid |
+| **Cloud Extraction → Extract Clouds** | off | Keeps only the parts of the image close to **Cloud Color**, and makes the rest transparent |
+| **Cloud Extraction → Cloud Color** | #E0E0E0 | The color to keep |
+| **Cloud Extraction → Fuzziness** | 40 | How far from Cloud Color a pixel can be and still be fully kept |
+| **Cloud Extraction → Feather** | 40 | A further range over which pixels fade out, instead of a hard cut |
+| **Go to Overlay** | | Moves the main view camera to look down on the overlay |
+| **Delete Overlay** | | Deletes the overlay, after asking you |
+
+To place cloud cover from a satellite image at its actual height, load the image as a ground
+overlay. Turn on **Extract Clouds**, pick the cloud color and set **Altitude (ft)** to the cloud height.
+
+### Ground grids
+
+A ground grid is a measurement grid draped on the terrain, with major and minor lines. Lines stay
+the same width on screen at any distance, and fade out when they get too close together.
+
+Right-click the ground and choose **Add → Ground Grid**. To edit an existing grid, right-click the
+ground inside it and choose **Edit Grid: *name***, or turn on **Edit Mode** in
+**Objects → Grid: *name***.
+
+The grid has the same **yellow** corner, **cyan** rotation and move-by-dragging handles as a ground
+overlay. It has no lock points.
+
+#### Controls
+
+These are in **Objects → Grid: *name*** and in the editor. The grid keeps its real size when you
+change the unit system.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Name** | *Grid 1*, ... | The name in the menus and the editor title |
+| **Visible** (title checkbox) | on | Show or hide the grid |
+| **Edit Mode** | on when created | Show the handles and the editor |
+| **Width**, **Height** | 1000 | Size of the grid |
+| **Major Step** | 100 | Spacing of the major lines. 0 turns them off |
+| **Minor Step** | 10 | Spacing of the minor lines. 0 turns them off |
+| **Lat/Lon Grid** | off | Draws lines of latitude and longitude at round values instead. See below |
+| **Min Pixel Spacing** | 10 | Lat/Lon Grid only: the smallest on-screen gap between minor lines |
+| **Max Pixel Spacing** | 200 | Lat/Lon Grid only: the largest on-screen gap between minor lines |
+| **Major Line Width** | 1.5 | Width of major lines, in screen pixels |
+| **Minor Line Width** | 1 | Width of minor lines, in screen pixels |
+| **Minor Brightness** | 0.4 | How bright the minor lines are, compared with the major lines |
+| **Rotation** | 0 | Rotation in degrees, −180 to 180 |
+| **Altitude** | 0 | At 0 the grid is draped over the terrain. Above 0 it is a flat sheet at that height |
+| **Major Color** | yellow | Color of the major lines and the outline |
+| **Minor Color** | same as Major Color | Color of the minor lines |
+| **Lock Colors** | on | Makes Minor Color follow Major Color. Turn it off to set Minor Color by itself |
+| **Opacity** | 1 | 0 is invisible, 1 is solid |
+| **Go to Grid** | | Moves the main view camera to look down on the grid |
+| **Delete Grid** | | Deletes the grid, after asking you |
+
+The outline of the grid is always drawn, so a grid with both steps at 0 is still visible and can
+still be dragged.
+
+**Lat/Lon Grid.** With this on, the lines are at exact round coordinates: whole degrees, tenths,
+hundredths and so on. Each view picks its own spacing as you zoom, so that the gap between minor
+lines stays between **Min Pixel Spacing** and **Max Pixel Spacing**. Major lines are ten times the
+minor spacing. A label at the bottom of each 3D view shows the spacing drawn there, for example
+*Major: 0.001°, Minor: 0.0001°*. While it is on, **Major Step**, **Minor Step** and **Rotation**
+are disabled and the grid is squared to north. Your step values are kept for when you turn it
+off. The rotation is not restored.
+
+### Spotlights
+
+Right-click the ground and choose **Add → Spotlight**. The projector starts with four moving beams.
+Choose **Overcast Stratus** under **Lighting → Clouds → Preset** for a low cloud base, then
+play the timeline to see the patches in Look view. Hold **Opt/Alt** and drag the projector to
+move it along the ground.
+
+Open the projector under **Objects** to change its pattern, adjust the brightness of all beams
+with one lumens slider or turn on faint beam cones. The [Spotlights guide](Spotlights.md) includes an illustrated
+setup, a control reference and directions for matching the patches to footage.
+
+#### Patterns from real projectors and shows
+
+Choose a SkyTracker cloverleaf or oval, program a 36-ray Spaceflower with its three-digit dial,
+or import a cue from a QLC+ workspace. [Presets and beam counts](Spotlights.md#choose-a-preset) ·
+[Spaceflower AUTO](Spotlights.md#program-a-spaceflower) · [QLC+ import](Spotlights.md#import-a-qlc-movement-effect)
+
+---
+
+## D. Finding, saving and removing
+
+### Where things are in the menus
+
+| Thing | Menu folder | How to remove it |
+|---|---|---|
+| Loaded or hand-drawn track | **Contents → *track name*** | **Delete Track** (asks first). For a hand-drawn track with an object, you can keep the object or delete it too |
+| 3D object you placed | **Objects → *object name*** | **Delete Object** at the end of its folder (asks first) |
+| Balloon | **Contents → *Balloon***, and its sphere in **Objects** with the same name | **Delete Track** (asks first) removes both |
+| Kite | **Contents → *Kite***, and the kite object in **Objects** with the same name | **Delete Track** (asks first) removes both |
+| Camera Track, Traverse Track | **Contents → Camera Track**, **Contents → Traverse Track** | A Custom sitch always has them. To hide a line, clear its **Show Track Line** title checkbox |
+| Camera Object, Traverse Object | **Objects → Camera Object**, **Objects → Traverse Object** | A Custom sitch always has them. To hide one, clear its **Visible** title checkbox |
+| Spotlight | **Objects → *projector name*** | **Delete projector** |
+| Building | **Objects → Building: *name*** | **Delete Building**, or **Delete** / **Backspace** in edit mode. **Objects → Remove all Buildings** removes them all |
+| Cloud layer | **Objects → Clouds: *name*** | **Delete Clouds**, or **Delete** / **Backspace** in edit mode |
+| Ground overlay | **Objects → Overlay: *name*** | **Delete Overlay**, or **Delete** / **Backspace** in edit mode |
+| Region | **Objects → Region: *name*** | **Delete region** in its editor |
+| Ground grid | **Objects → Grid: *name*** | **Delete Grid**, or **Delete** / **Backspace** in edit mode |
+| Pin | none: right-click the pin | **Delete Pin** in its edit window |
+
+You can drag the **Objects** or **Contents** menu off the menu bar to keep it open while you work.
+See [The Menu System](UserInterface.md#the-menu-system).
+
+### Saving
+
+Save the custom sitch to keep the tracks and objects you added, together with their settings.
+When you reopen it, they come back where you left them.
+An image you dragged in as a ground overlay is saved with the sitch like other files you drop in.
+An overlay made with **Image URL** keeps that address. See
+[Saving and Loading Sitches](SavingAndLoading.md).
 
 ### The kinds of track
 
 | Track | Where it comes from | What sets its positions |
 |---|---|---|
 | Loaded track | A file that you load. See [Loading and Filtering Tracks](Tracks.md) | The file |
-| Hand-drawn track | **Add → Moving Object**, **Add → Flight Path** | Control points that you place |
+| Hand-drawn track | **Add → Flight Path** or either **Moving Object** command | The position and frame of each control point |
 | Balloon, kite | **Add → Balloon**, **Add → Kite** | The launch point or the anchor, and the wind: **Physics → Wind → Wind Source** |
 | **Camera Track** | Every Custom sitch has it | **Camera → Location → Position**: a manual position, the flight simulator, an orbit, a track, or an object. See [Camera and Target](CameraAndTarget.md) |
 | **Traverse Track** | Every Custom sitch has it | The camera's lines of sight, and **Traverse → LOS Traverse Method**. See [Traverse Analysis and the Verdict](TraverseAnalysis.md) |
 | **Satellite**, **Satellite 2** | Shown when the satellite is in the loaded data | The orbit of the satellite. See [Satellites](Satellites.md) |
 
-The target is not a track of its own. It is the track or the position that you select in
-**Target → Target Track**, and it has no folder.
+Choose what serves as the target in **Target → Target Track**. If you choose an existing
+track, its folder in **Contents** carries the `Target` tag.
 
 ### The kinds of object
 
@@ -139,7 +532,7 @@ The target is not a track of its own. It is the track or the position that you s
 | **Traverse Object** | The Traverse Track | No |
 | The marker of a loaded track | That track | No |
 | A balloon's sphere, a kite | Its balloon or kite track | No |
-| An object from **Add → 3D Object** or **Add → Moving Object** | What its **Location → Position** selects: **Manual** (no track) or a track | Yes. See [Location](#location-a-manual-position-or-a-track) |
+| An object from **Add → 3D Object** or either **Moving Object** command | The track selected in **Location → Position**, or a fixed position with **Manual** | Yes. See [Location](#location-a-manual-position-or-a-track) |
 
 ### How the menus show the links
 
@@ -178,120 +571,52 @@ title has the same text in full.
 
 ### Names
 
-Things with **one name** are one thing in two menus: the object cannot leave its track. A loaded
-track and its marker have one name, and so do a balloon and its sphere, and a kite and its kite
-object. When you give one a new name, the other gets it too.
+A loaded track and its marker share a name. So do a balloon and its sphere, and a kite and
+its model. Rename one in **Contents** or **Objects** and the name changes in both menus.
 
-Things with **different names** are two things. A hand-drawn track and the object made with it
-are *Track 3* and *Object 3*, and each has its own name: you can put the object on a different
-track. The Camera Track and the Camera Object are two things too, as are the Traverse Track and
-the Traverse Object.
+A hand-drawn track and the object made with it have separate names, such as *Track 3* and
+*Object 3*. You can rename them independently and put the object on another track. The Camera
+Track and Camera Object also have separate names, as do the Traverse Track and Traverse Object.
 
 A sitch that was saved before balloons and kites had one name keeps its two names, for example
 *Balloon* and *Object 1*. The tag `on Balloon` on the object then shows where it is.
 
+### Use a fixed object in a track list
+
+While **Position** is **Manual**, the object is itself in the other track lists of the sitch,
+under its name. Select it there as you select a track:
+
+| List | With the object selected |
+|---|---|
+| **Target → Target Track** | The target is at the object |
+| **Camera → Location → Position** | The camera is at the object |
+| **Camera → Camera Tweaks → Orbit Target** | The Orbit camera position circles the object |
+| **Position** of another object | That object is at the same place |
+| **Traverse → Reverse Balloon Launch Finder → Start From** | The reverse flight starts at the object |
+| **Terrain → Zoom to track** | The terrain moves to the object |
+
+The position that these lists use is the **Lat**, **Lon** and **Alt** of the object. When you
+give the object a new name, the lists show the new name, and a list that has the object selected
+keeps it. When a track has the same name as the object, the object is in the lists with
+*(object)* after its name.
+
+When you put the object on a track, the object goes out of these lists, because the track is in
+them. A list that had the object selected then changes to that track, so it stays with the
+object. When you delete the object, a list that had it selected goes back to its first choice.
+
+### See also
+
+- [Loading and Filtering Tracks](Tracks.md): track edit mode, and the controls in a track's folder
+- [Objects and 3D Models](CustomModels.md): the controls in an object's folder
+- [Terrain and Elevation](Terrain.md): the terrain square and Dynamic Subdivision
+- [Wind in Sitrec](Wind.md): the wind that moves balloons and cloud layers
+- [Sitrec User Interface](UserInterface.md): menus, windows and measurements
+- [Saving and Loading Sitches](SavingAndLoading.md)
+- [Keyboard Shortcuts](KeyboardShortcuts.md)
+
 ---
 
-## A. The ground menu
-
-Right-click the ground (terrain, or the globe) in the main view or the look view. The menu is
-titled **Ground**. It is only available in a Custom sitch. **File → New Sitch (Empty)** starts a fresh
-one, and so does the **New Sitch** button in the sitch browser.
-
-Hold **Shift** and right-click to reach the ground behind a pin, track, building or other object.
-This also works while an editor is open. If the pointer is over the sky, the usual right-click behavior applies.
-
-The top of the menu shows the location of the point you clicked:
-
-- latitude and longitude, to six decimal places
-- the altitude [above mean sea level (MSL)](GIS.md#three-kinds-of-height)
-- the height above the WGS84 ellipsoid (HAE), with the difference between the two in parentheses
-
-You can select and copy this text.
-
-### Menu items
-
-| Item | What it does | Where the result goes |
-|---|---|---|
-| **Set Camera Above** | Moves the camera's fixed position to the clicked latitude and longitude. The camera keeps its current altitude | The camera position |
-| **Set Camera on Ground** | Moves the camera's fixed position to the clicked point, 2 m above the ground (eye level) | The camera position |
-| **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
-| **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
-| **Add → Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
-| **Add → 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
-| **Add → Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
-| **Add → Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
-| **Add → Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
-| **Add → Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, with the same name |
-| **Add → Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, with the same name |
-| **Add → Spotlight** | Places a projector on the ground. Its beams light up clouds overhead as the timeline plays. See [Spotlights](#spotlights) | **Objects**, as *Spotlight 1*, *Spotlight 2*, … |
-| **Add → Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
-| **Add → Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
-| **Add → Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
-| **Add → Ground Grid** | Adds a measurement grid draped on the ground, 1000 × 1000 of your current small units (meters or feet), with major lines every 100 and minor lines every 10, and opens its editor | **Objects**, as *Grid: Grid 1* |
-| **Add → Region** | Defines a movable, rotatable area on the ground. [Import a power grid for a region](#import-a-power-grid-for-a-region) | **Objects**, as *Region: Region 1* |
-| **Center Terrain square here** | Moves the center of the terrain square to the clicked point. Only shown when **Dynamic Subdivision** is off (see [Terrain and Elevation](Terrain.md)) | The terrain |
-| **Google Maps Here** | Opens Google Maps at the clicked point in a new browser tab | A new tab |
-| **Google Earth Here** | Downloads a small KML file, *Sitrec Pin.kml*, with a pin at the clicked point. Open it in Google Earth | Your downloads |
-
-**Google Maps Here** and **Google Earth Here** are shown only on installations that enable extra
-help links.
-
-The **Add** folder starts closed. Expand it to place a pin, object, region or other feature. Camera, target and terrain commands remain on the ground menu.
-
-Two more items can appear, under an **Edit** heading, when you right-click inside something that
-already exists:
-
-- **Edit Clouds: *name*** when the clicked point is under a cloud layer (within its radius)
-- **Edit Overlay: *name***, **Edit Grid: *name*** or **Edit Region: *name*** when the clicked point is inside a visible overlay, grid or region
-
-Each one opens that item's editor. This is the usual way to edit clouds, overlays and grids from
-the 3D view, because a right-click on them passes through to the ground behind.
-
-The camera and target items move the fixed positions that the camera and target use when they are
-not following a track. If the camera or target follows a track, the move has no visible effect
-until you switch back to the fixed position.
-
-If you right-clicked in the **look view**, a new track (from any of the three track items, from
-**Add → Balloon** or from **Add → Kite**) is also shown in the look view. A track made from the main view is shown only in
-the main view. You can change this later with **Show in look view** in the track's folder.
-
-### In->Out tracks
-
-**Add → Moving Object (In→Out)** makes a track with two control points:
-
-- the first at the **In** frame, at the point you clicked
-- the second at the **Out** frame, 200 screen pixels to the right of the first in the view you
-  clicked
-
-Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
-timeline. **Constant Speed** is on, so the object moves at a steady speed along the track.
-**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height above the
-ground and follows the terrain under it. Drag the up/down arrows on the object or either
-control point to change the height of the whole track. Dragging the object itself or the green
-disk keeps the lock height. See [Moving Objects](MovingObjects.md#tracks-and-altitude-locks).
-
-The control points take their frame numbers when you make the track, so set the In and Out frames
-first, with **Time → In Frame [I]** and **Time → Out Frame [O]**, or **Alt+I** and **Alt+O** at
-those frames. See
-[Keys for time and frames](TimeAndSync.md#keys-for-time-and-frames).
-
-### Hand-drawn tracks
-
-All three track items create a hand-drawn track: a spline through control points you place by
-hand. It starts in edit mode. To add, move and delete control points, and to leave edit mode, see
-[Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks) in
-[Loading and Filtering Tracks](Tracks.md).
-
-A hand-drawn track's folder in **Contents** starts with **Name**, then an **Object** row for each
-object on the track, then **Edit Track**. Next come **Go to Track**, **Focus Camera Here** and
-**Follow Camera Here**, then the **Path**, **Smoothing** and **Display** groups.
-**Add Custom Graph**, **Export Spline** and **Delete Track** are at the end.
-See [Track Display Controls](Tracks.md#track-display-controls). The button of an **Object** row
-opens the menu of that object, and the object's folder in **Objects** has an **On Track** row
-whose button opens the menu of the track: see
-[How the menus show the links](#how-the-menus-show-the-links). The track's menu and the object's
-menu can be open at the same time.
+## Balloons and kites
 
 ### Balloons
 
@@ -325,6 +650,10 @@ held. The kite flies downwind of the anchor, at the height where its lift, its d
 and the pull of the line are in balance. Use it to test if a kite can be at the position of an
 object in a video, with the wind of that day.
 
+A new custom sitch starts with zero wind, so the kite stays on the ground. In **Physics → Wind**,
+choose a **Wind Source**. With **Manual**, set **Target Wind From** and increase **Target Wind
+Speed** until the kite lifts. A wind from the west puts the kite east of its anchor. [Wind in Sitrec](Wind.md)
+
 ![Main view of a black octopus kite in the air above a town. The kite has a wide head with pale openings at its front, an eye with an orange rim, and eight long tentacles with orange spots that trail to the right. Thin lines go from the underside of the head to one point below it, and a white line goes from that point down to the lower left. A blue line shows the path of the kite](docimages/scene-objects-kite.jpg)
 
 A kite in the main view. The white line is the flying line, from the anchor on the ground to the tow point of the kite. The thin lines above the tow point are the bridle of the kite. The blue line is the kite's track. This kite is the **Octopus kite · 14 m, black** design.
@@ -334,6 +663,28 @@ select **Browse custom objects…**, then the **Kites** type. See
 [Objects and 3D Models](CustomModels.md#procedural-custom-objects). The kite points its nose into the
 wind, and its tails or tentacles move with the wind at the kite: faster in a stronger wind, and
 slower for a larger kite.
+
+The kite's folder in **Contents** has these settings:
+
+| Control | Default | What it does |
+|---|---|---|
+| **Anchor Altitude (m MSL)** | ground at the clicked point | Altitude above mean sea level of the point where the line is held |
+| **Line Length (m)** | 100 | Length of the flying line, from the anchor to the kite |
+| **Line Weight (g/m)** | 0.5 | Weight of one meter of line. About 0.5 for a small kite, and 5 or more for a large show kite |
+| **Line Diameter (mm)** | 1 | Thickness of the line, for the push of the wind on it. About 1 for a small kite, and 3 or more for a large show kite |
+| **Wind Variability (%)** | 10 | How gusty the wind is, from 0 to 40: the typical size of a gust as a percentage of the wind speed. The gusts move the kite slowly from side to side, and up and down. See [How the kite flies](#how-the-kite-flies) |
+| **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
+| **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
+| **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |
+| **Wind Source** (read only) | | The wind source that flies the kite: the choice of **Physics → Wind → Wind Source**. It is at the top of the folder, below the **Object** row, whose button opens the menu of the kite object |
+
+It also has the track display controls, **Show in look view** (for the track and the flying
+line) and **Delete Track**, which asks before it deletes the kite and its object. To move the
+anchor, drag the kite with its move widget, or hold **Option** / **Alt** and drag it: the anchor
+moves by the same amount, and the kite flies from the new anchor. The kite is added to the
+camera and target track lists.
+
+#### Kite lights
 
 For a lit kite, choose one of the **LED delta kite · 6 m** designs, or use
 **Edit design… → LED lights** to add LEDs to another kite. Fixed radial strips
@@ -355,10 +706,7 @@ object's **LED Tail** controls adjust the show without rebuilding the tails.
 For ready-made tail lights, choose an **LED tail kite** preset: a solid-blue 12 m
 tail or twin 8 m rainbow tails. Both have night previews and editable light patterns.
 
-**The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
-**Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
-so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind
-of zero, so a new kite is on the ground until you set a wind.
+#### How the kite flies
 
 **The flight model.** The lift and the drag of a kite go with the square of the wind speed, and
 its weight does not change. So:
@@ -414,25 +762,14 @@ The mass, the lifting area, the lift coefficient and the drag coefficient are pa
 design: **Edit design…** in the kite's object folder, then the **Flight** folder. The values of
 the preset kites are estimates for each type of kite. They are not measurements of a real kite.
 
-The kite's folder in **Contents** has these settings:
+---
 
-| Control | Default | What it does |
-|---|---|---|
-| **Anchor Altitude (m MSL)** | ground at the clicked point | Altitude above mean sea level of the point where the line is held |
-| **Line Length (m)** | 100 | Length of the flying line, from the anchor to the kite |
-| **Line Weight (g/m)** | 0.5 | Weight of one meter of line. About 0.5 for a small kite, and 5 or more for a large show kite |
-| **Line Diameter (mm)** | 1 | Thickness of the line, for the push of the wind on it. About 1 for a small kite, and 3 or more for a large show kite |
-| **Wind Variability (%)** | 10 | How gusty the wind is, from 0 to 40: the typical size of a gust as a percentage of the wind speed. The gusts move the kite slowly from side to side, and up and down. See **The gusts** above |
-| **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
-| **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
-| **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |
-| **Wind Source** (read only) | | The wind source that flies the kite: the choice of **Physics → Wind → Wind Source**. It is at the top of the folder, below the **Object** row, whose button opens the menu of the kite object |
+## Find a kite anchor or balloon launch site
 
-It also has the track display controls, **Show in look view** (for the track and the flying
-line) and **Delete Track**, which asks before it deletes the kite and its object. To move the
-anchor, drag the kite with its move widget, or hold **Option** / **Alt** and drag it: the anchor
-moves by the same amount, and the kite flies from the new anchor. The kite is added to the
-camera and target track lists.
+Use these tools when you can see an object in the video and want to estimate where it could
+have come from. The [Kite Anchor Finder](#kite-anchor-finder) shows where someone could hold
+the line. The [Reverse Balloon Launch Finder](#reverse-balloon-launch-finder) traces a rising
+balloon back to the ground.
 
 ### Kite Anchor Finder
 
@@ -627,417 +964,91 @@ longer than 10 h*.
 When the flight at **Buoyancy Max (m/s)** also needs more than 10 hours, there is no launch
 site, and **Flight Time** shows *Longer than 10 h*.
 
-### Pins
-
-**Add → Pin** places a pin labelled *New Feature* and opens a window titled **Edit: *label***. In
-it you can change **Label Text**, **Arrow Length**, **Arrow Color** and **Text Color**, and read
-the pin's latitude, longitude and altitudes. While the window is open you can drag the pin in the
-view. **Delete Pin** removes it (it asks first). **Done**, Escape, or a double-click on the window
-title closes the window.
-
-Pins do not have a folder in a menu. To edit a pin later, right-click it. **Show → Pins in Main**
-and **Show → Pins in Look** show or hide all pins in each view. **Pins in Look** is off by default,
-so a new pin shows only in the main view until you turn it on.
-
-### 3D objects
-
-**Add → 3D Object** opens the new object's edit window straight away, because a grey sphere 5 m in
-radius on open ground can be hard to find. While the window is open you can drag the object with
-the [move widget](MovingObjects.md) that appears when the pointer is near it. You can drag the
-widget or the object itself. The window holds the same controls as the
-object's folder in the **Objects** menu: geometry or model, size, material and so on. See
-[Objects and 3D Models](CustomModels.md).
-
-#### Location: a manual position, or a track
-
-The folder of an object from **Add → 3D Object**, **Add → Moving Object** or **Add → Moving Object
-(In→Out)** has a **Location** group, directly below **Name**. Its **Position** control sets what
-gives the object its position:
-
-- **Manual**: the **Lat**, **Lon** and **Alt** values below it, with **Above Ground Level** and
-  **Allow Small Altitudes**, as in the camera's **Location** group. You can also drag the object
-  with the move widget. An object from **Add → 3D Object** starts here.
-- **A track**: every track of the sitch is in the list, by its name: hand-drawn tracks, loaded
-  tracks, balloons and kites. The object moves along the track and points along it, and the manual
-  values are hidden. An object from **Add → Moving Object** starts on its own track.
-
-So, to put an object on a path that is already there, select the path in **Position**. Several
-objects can be on one track. When you change **Position** back to **Manual**, the object stays
-where the track put it on the current frame. The same happens when you delete the track. A track
-that you add or load later comes into the list by itself, and no object goes to it by itself.
-
-While **Position** is **Manual**, the object is itself in the other track lists of the sitch,
-under its name. Select it there as you select a track:
-
-| List | With the object selected |
-|---|---|
-| **Target → Target Track** | The target is at the object |
-| **Camera → Location → Position** | The camera is at the object |
-| **Camera → Camera Tweaks → Orbit Target** | The Orbit camera position circles the object |
-| **Position** of another object | That object is at the same place |
-| **Traverse → Reverse Balloon Launch Finder → Start From** | The reverse flight starts at the object |
-| **Terrain → Zoom to track** | The terrain moves to the object |
-
-The position that these lists use is the **Lat**, **Lon** and **Alt** of the object. When you
-give the object a new name, the lists show the new name, and a list that has the object selected
-keeps it. When a track has the same name as the object, the object is in the lists with
-*(object)* after its name.
-
-When you put the object on a track, the object goes out of these lists, because the track is in
-them. A list that had the object selected then changes to that track, so it stays with the
-object. When you delete the object, a list that had it selected goes back to its first choice.
-
-![The menu of an object, Object 1, in two states. Left: Position on Manual, with the Lat, Lon and Alt values in the Location group. Right: Position on Track 1, with those values hidden, and an On Track row above the Location group with a button "Track 1"](docimages/scene-objects-location.jpg)
-
-The **Banking** control of the object sets how it points on the track. With **Position** on
-**Manual** the object does not move, so it keeps the heading that it has: north for a new object.
-Select **Fixed Heading** in **Banking** to turn it.
-
-A balloon's sphere and a kite stay with their own track, and have no **Location** group. The
-**On Track** row of their folder names that track.
-
-In the folder, the size of a generated shape (for example **Radius (m)**) is just below
-**Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in
-meters in every sitch. **Delete Object**, at the end of the folder, removes an object you made;
-objects that the sitch itself defines, such as the traverse object, have no delete button, and
-a balloon's sphere goes with its balloon.
-
 ---
 
-## B. Right-clicking things that are already there
+## Importing power lines and supports
 
-A right-click in a 3D view picks the first thing it finds, in this order:
+To add OpenStreetMap power lines, [select a region in Sitrec](#import-a-power-grid-for-a-region)
+or drag in an existing Overpass Turbo KML, GeoJSON or raw Overpass JSON file. Either way, open
+**Objects** and look for **Power grid 1**, **Power grid 2**, and so on. Hover over a row to see
+the filename and the number of towers, poles and line routes. Its checkbox shows or hides the
+whole network. To change a support already in the scene, see [Edit an imported pole or tower](#edit-an-imported-pole-or-tower).
 
-1. a **pin**: opens the pin's edit window
-2. a **3D object** (including buildings): opens its edit window, as described below
-3. a **track** line, within about 10 pixels of the pointer: opens the track's menu, titled
-   **Track: *name***, with the same controls as the track's folder in **Contents**
-4. a star, planet or satellite
-5. the **ground**: opens the ground menu
+### Import a power grid for a region
 
-**3D object.** The edit window is titled with the object's name and holds the controls of its
-folder in the **Objects** menu. It stays open while you work in the view. While it is open, the
-object can be dragged with its move widget. You can also move any movable object without opening
-a window: hold **Opt** (Option, on a Mac) or **Alt** (Windows, Linux) and drag it. Click the
-**Move mode** icon on either view's left toolbar to choose the movement constraint, or press
-**Opt+M** / **Alt+M** to cycle modes. See [Moving Objects](MovingObjects.md) for the four modes,
-object-body dragging and track altitude locks.
-
-**Building.** Right-clicking a building puts it in edit mode and opens its editor at the pointer.
-See [Buildings](#buildings).
-
-**Clouds, overlays and grids** do not catch the right-click. It goes through to the ground, and the
-ground menu then offers **Edit Clouds**, **Edit Overlay** or **Edit Grid** for the item under the
-pointer.
-
-**While a track is in edit mode**, a plain right-click opens that track's edit menus. See
-[Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks).
+1. Right-click the ground in **Main** or **Look** view. Expand **Add** and choose **Region**. A shaded square, initially 2 km on each side, opens in edit mode at the clicked point.
+2. Drag the shaded interior to move it, a **yellow corner** to resize it, or the **cyan handle** to rotate it. For a narrow transmission corridor, make a long rectangle and turn it to follow the line. You can also enter the angle in **Rotation**.
+3. Click **Import power grid for this area**. Sitrec sends the four corners to the selected **Overpass server**. The result appears as a numbered **Power grid** in **Objects**. Hover over its row to see the filename, which includes the region name. Wires stop at the region edge. Data © OpenStreetMap contributors. [OpenStreetMap data and attribution](https://www.openstreetmap.org/copyright)
+4. Turn off **Edit region** when you finish. **Show region** controls the shaded footprint. The power network has its own visibility checkbox. Save the sitch to keep the region and the downloaded network together. Reopening the sitch uses the saved data.
 
-**While a track's menu or any edit window is open** (for a building, a cloud layer, an overlay, a
-grid, a 3D object or a pin), use **Shift-right-click** to open **Ground** alongside the editor.
-
----
-
-## C. The editors
+![A narrow region rotated along a power line. The editor shows the Overpass server and import button. Yellow corner handles resize the red outline, and the cyan handle rotates it.](docimages/power-grid-region.jpg)
 
-Buildings, clouds, ground overlays and ground grids share one way of working:
+*The yellow handles resize the footprint and the cyan handle turns it. Imagery powered by Esri. Power network © OpenStreetMap contributors.*
 
-- **Edit mode** shows colored handles in the 3D views. Drag a handle to change the item.
-- **The editor** is a floating window titled **Edit: *name***. It holds the same controls as the
-  item's folder in the **Objects** menu, so a change in one shows in the other. You can drag the
-  window, or dock it in a sidebar.
-- **Closing the editor leaves edit mode.** Double-click its title, or press **Escape** when it is
-  the top window. You can also clear **Edit Mode** in the item's folder.
-- **Only one editor is open at a time.** Opening an editor closes any other editor.
-- **Escape during a drag** cancels that drag and puts the item back where it was.
-- **Delete** or **Backspace** deletes the item being edited, after asking you. This works for a
-  building, a cloud layer, an overlay or a grid.
-- **Undo** (**Cmd**/**Ctrl** + **Z**) works for creating, dragging and deleting.
+The region stays available under **Objects → Region: *name***. Repeating the import for the same footprint keeps its existing layer. Moving or resizing the region and importing again adds a separate layer. If the two footprints overlap, both layers include the shared area.
 
-Handles keep the same size on screen at any zoom. Heights and sizes are shown in your current small
-units (meters or feet), and the label ends with the unit, for example **Radius (ft)**. Where a
-control has a fixed unit, its row gives that unit.
+Keep the query within 25 km east to west and 25 km north to south, including after rotation. Creating, moving or resizing a region sends no query. The import button can send one request at a time, with at least 30 seconds between requests to the same server. A busy server gets at least a minute, or longer if requested. You choose when to retry.
 
-### Spotlights
+**If the server is busy or times out**, click **Copy download URL** in the region editor. You can also select and copy the **Download URL** field. Its tooltip gives the local time to retry. After that time, paste the URL into a browser, save the response as `power-grid.json`, and drag the file into Sitrec. The URL contains the same query and uses the same server you selected. A raw JSON file includes the full mapped routes returned by Overpass, so wires can extend beyond the region when you import it by hand.
 
-Right-click the ground and choose **Add → Spotlight**. The projector starts with four moving beams.
-Choose **Overcast Stratus** under **Lighting → Clouds → Preset** for a low cloud base, then
-play the timeline to see the patches in Look view. Hold **Opt/Alt** and drag the projector to
-move it along the ground.
-
-Open the projector under **Objects** to change its pattern, adjust the brightness of all beams
-with one lumens slider or turn on faint beam cones. The [Spotlights guide](Spotlights.md) includes an illustrated
-setup, a control reference and directions for matching the patches to footage.
-
-#### Patterns from real projectors and shows
-
-Choose a SkyTracker cloverleaf or oval, program a 36-ray Spaceflower with its three-digit dial,
-or import a cue from a QLC+ workspace. [Presets and beam counts](Spotlights.md#choose-a-preset) ·
-[Spaceflower AUTO](Spotlights.md#program-a-spaceflower) · [QLC+ import](Spotlights.md#import-a-qlc-movement-effect)
-
-### Buildings
-
-Right-click the ground and choose **Add → Building**, or right-click an existing building. You can
-also turn on **Edit Mode** in **Objects → Building: *name***.
-
-A new building is a 15 × 15 m box, 4 m high, with a flat roof. It sits on the ground: if the
-terrain or 3D tiles under it change, the building moves back onto the ground.
-
-#### Handles
-
-![A building with a pitched roof in edit mode, with yellow spheres at its corners, a grey sphere at the middle of the roof and a cyan sphere at one end of the ridgeline, beside its editor with the Height folder open](docimages/scene-objects-building-handles.jpg)
-*A building in edit mode, beside its editor. **Ridgeline Height** is raised to 26 ft, so the roof is pitched. The roof hides most of the fourth yellow sphere. The area outside each corner that rotates the building has no mark.*
-
-| Handle | Drag it to |
-|---|---|
-| **Yellow** sphere at each bottom corner | Resize the footprint. The opposite corner stays fixed and the footprint stays a rectangle |
-| Just **outside** a yellow corner, in the direction away from the building | Rotate the whole building about its center |
-| **Grey** sphere at the center of the roof | Raise or lower the whole roof |
-| **Cyan** sphere at one end of the ridgeline | Raise or lower the ridgeline above the roof edge. This makes a pitched roof from a flat one |
-| The **building itself** | Move the building over the ground |
-
-Hold **Option** / **Alt** and drag the building or one of its handles to make a copy and drag the
-copy. Press **Escape** during that drag to cancel the copy.
-
-A new building starts at the rotation you last gave a building, so a row of buildings along one
-street comes out already aligned.
-
-#### Controls
-
-These are in **Objects → Building: *name*** and in the editor.
-
-| Control | Default | What it does |
-|---|---|---|
-| **Name** | *Building 1*, *Building 2*, ... | The name in the menus and the editor title |
-| **Visible** (title checkbox) | on | Show or hide the building |
-| **Edit Mode** | on when created | Show the handles and the editor |
-| **Height → Roof Edge Height** | 4 m | Height of the top of the walls, above the highest ground point under the building. The slider goes up to 1000 m. The grey roof handle has no upper limit |
-| **Height → Ridgeline Height** | same as Roof Edge Height | Height of the roof ridge, up to 1000 m. When it equals Roof Edge Height, the roof is flat. It cannot be lower than the roof edge |
-| **Height → Ridgeline Inset** | 0 | Moves both ends of the ridge inward, which slopes the end faces of the roof |
-| **Height → Roof Eaves** | 0 | Extends the roof beyond the walls |
-| **Material → Type** | lambert | Lighting model: basic, lambert, phong or physical |
-| **Material → Wall Color** | light grey | Color of the walls |
-| **Material → Roof Color** | dark grey | Color of the roof |
-| **Material → Opacity** | 1 | 0 is invisible, 1 is solid |
-| **Material → Transparent** | on | Lets Opacity below 1 take effect |
-| **Material → Wireframe** | off | Draws the building as edges only |
-| **Material → Depth Test** | on | Turn off to draw the building on top of everything in front of it |
-| **Delete Building** | | Deletes the building, after asking you |
-
-**Objects → Remove all Buildings** deletes every synthetic building at once. Undo restores all the buildings in one step.
-
-### Clouds
-
-Right-click the ground and choose **Add → Clouds**, or right-click the ground under an existing
-cloud layer and choose **Edit Clouds: *name***. You can also turn on **Edit Mode** in
-**Objects → Clouds: *name***.
-
-A cloud layer is a round patch of cloud puffs at one altitude. The puffs always face the camera.
-For volumetric clouds over the whole sky, lit by the Sun, use **Lighting → Clouds** instead: see
-[Clouds](Clouds.md).
-
-#### Handles
-
-Each handle turns white when the pointer is over it.
-
-![A cloud layer seen from above, with grey cloud puffs over a dry lake bed, a yellow sphere at the center, a cyan sphere on the edge and an orange sphere on the other side, beside its editor](docimages/scene-objects-cloud-handles.jpg)
-*A new cloud layer in edit mode, seen from above, beside its editor. The grey shapes are the cloud puffs.*
-
-| Handle | Drag it to |
-|---|---|
-| **Yellow**, at the center | Raise or lower the layer |
-| **Cyan**, on the edge | Change the radius |
-| **Orange**, opposite the cyan handle, halfway from the center to the edge | Move the layer |
-
-#### Controls
-
-These are in **Objects → Clouds: *name*** and in the editor.
-
-| Control | Default | What it does |
-|---|---|---|
-| **Name** | *Clouds 1*, *Clouds 2*, ... | The name in the menus and the editor title |
-| **Visible** (title checkbox) | on | Show or hide the layer |
-| **Edit Mode** | on when created | Show the handles and the editor |
-| **Properties → Altitude** | 10,000 ft | Height of the layer |
-| **Properties → Radius** | 500 m | Radius of the layer |
-| **Properties → Cloud Size** | 200 m | Width of each cloud puff. Its height is half its width |
-| **Properties → Density** | 0.5 | How many puffs fill the layer. The number also grows with the area |
-| **Properties → Opacity** | 0.8 | How solid the puffs are |
-| **Properties → Brightness** | 1 | Values above 1 make the puffs glow |
-| **Properties → Sun Reflection** | 0 | Brightens the clouds around the point where the Sun's reflection on the layer is seen from the camera, over this radius in meters. 0 is off |
-| **Properties → Depth** | 0 | Spreads the puffs up and down over this thickness |
-| **Properties → Edge Wiggle** | 0 | Makes the edge of the layer irregular. The value is a fraction of the radius |
-| **Properties → Edge Frequency** | 5 | How many waves are added together to make the edge. A higher value gives a finer edge |
-| **Properties → Seed** | 0 | Change it for a different, but repeatable, arrangement of puffs |
-| **Properties → Feather** | 1000 m | Distance inside the edge over which the puffs thin out |
-| **Wind → Wind Mode** | No Wind | *No Wind* keeps the layer still. *Use Local* and *Use Target* move it with the local or target wind. *Custom* uses the two settings below |
-| **Wind → Wind From (°)** | 270 | Direction the wind blows from. Shown only for *Custom* |
-| **Wind → Wind (knots)** | 50 | Wind speed. Shown only for *Custom* |
-| **Delete Clouds** | | Deletes the layer, after asking you |
-
-With wind, the layer drifts from its position at frame 0 by the wind speed times the time since
-frame 0. It moves as one piece.
-
-### Ground overlays
-
-A ground overlay is an image draped on the terrain, such as a map, a satellite photo or a site
-plan. There are two ways to make one:
-
-- **Drag an image file** onto Sitrec and choose **Ground Overlay** in the *Import Image* dialog.
-  The overlay is placed at the center of the main view, about 0.01° square, named after the file,
-  and opens in edit mode. A sitch that has no name (a new sitch, or a sitch from a template,
-  before its first save) does not show this dialog: use the second way there.
-- **Right-click the ground → Add → Ground Overlay**. The overlay has no image yet and shows a grey
-  square with a red circle. Give it an image with **Image URL** or **Rehost Local Image**.
-
-To edit an existing overlay, right-click the ground inside it and choose **Edit Overlay: *name***,
-or turn on **Edit Mode** in **Objects → Overlay: *name***.
-
-#### Handles
-
-![A grey square with a red circle draped on desert ground, with a yellow sphere at each corner, a cyan sphere near the north edge and a magenta sphere inside it, beside its editor](docimages/scene-objects-overlay-handles.jpg)
-*A new ground overlay in edit mode, with one lock point, beside its editor. It has no image yet, so it shows the grey square with the red circle.*
-
-| Handle | Drag it to |
-|---|---|
-| **Yellow** sphere at each corner | Resize. The opposite corner stays fixed and the overlay stays a rectangle. With **Free Transform** on, each corner moves by itself |
-| **Cyan** sphere near the north edge | Rotate the overlay about its center |
-| The **image itself** | Move the overlay |
-| **Magenta** sphere (a lock point) | Warp the image so that this point of the image goes where you drop it |
-
-**Lock points** help you match an image to the ground. In edit mode, right-click a feature on the
-overlay to pin that point of the image. You can place up to three. Then drag a lock point onto the
-place where that feature really is. With one lock point, the image moves.
-
-Dragging a lock point turns on **Free Transform**. **Option** / **Alt** + right-click a lock point
-removes it.
-
-#### Controls
-
-These are in **Objects → Overlay: *name*** and in the editor.
-
-| Control | Default | What it does |
-|---|---|---|
-| **Name** | *Overlay 1*, ... or the file name | The name in the menus and the editor title |
-| **Visible** (title checkbox) | on | Show or hide the overlay |
-| **Edit Mode** | on when created | Show the handles and the editor |
-| **Lock Shape** | off | Hides the corner and rotation handles, so you cannot change the size, shape or rotation by accident. You can still drag the overlay to move it |
-| **Free Transform** | off | Lets each corner move by itself, for a perspective warp. Turning it on sets **Rotation** to 0. Turning it off returns the overlay to a rectangle |
-| **Show Border** | off | Draws a red border around the overlay. The border is also shown while the pointer is over the overlay's folder |
-| **Properties → Image URL** | empty | Web address of the image |
-| **Properties → Rehost Local Image** | | Choose an image file on your computer. Sitrec uploads it and puts its address in Image URL. You must be logged in |
-| **Properties → North**, **South**, **East**, **West** | 0.01° from the clicked point | The edges of the overlay, in degrees |
-| **Properties → Rotation** | 0 | Rotation in degrees, −180 to 180 |
-| **Properties → Altitude (ft)** | 0 | Always in feet. At 0 the overlay is draped over the terrain. Above 0 it is a flat sheet at that altitude, for example for clouds taken from a satellite image |
-| **Properties → Wireframe** | off | Draws the overlay's triangles as lines |
-| **Properties → Opacity** | 1 | 0 is invisible, 1 is solid |
-| **Cloud Extraction → Extract Clouds** | off | Keeps only the parts of the image close to **Cloud Color**, and makes the rest transparent |
-| **Cloud Extraction → Cloud Color** | #E0E0E0 | The color to keep |
-| **Cloud Extraction → Fuzziness** | 40 | How far from Cloud Color a pixel can be and still be fully kept |
-| **Cloud Extraction → Feather** | 40 | A further range over which pixels fade out, instead of a hard cut |
-| **Go to Overlay** | | Moves the main view camera to look down on the overlay |
-| **Delete Overlay** | | Deletes the overlay, after asking you |
-
-### Ground grids
-
-A ground grid is a measurement grid draped on the terrain, with major and minor lines. Lines stay
-the same width on screen at any distance, and fade out when they get too close together.
-
-Right-click the ground and choose **Add → Ground Grid**. To edit an existing grid, right-click the
-ground inside it and choose **Edit Grid: *name***, or turn on **Edit Mode** in
-**Objects → Grid: *name***.
-
-The grid has the same **yellow** corner, **cyan** rotation and move-by-dragging handles as a ground
-overlay. It has no lock points.
-
-#### Controls
-
-These are in **Objects → Grid: *name*** and in the editor. The grid keeps its real size when you
-change the unit system.
-
-| Control | Default | What it does |
-|---|---|---|
-| **Name** | *Grid 1*, ... | The name in the menus and the editor title |
-| **Visible** (title checkbox) | on | Show or hide the grid |
-| **Edit Mode** | on when created | Show the handles and the editor |
-| **Width**, **Height** | 1000 | Size of the grid |
-| **Major Step** | 100 | Spacing of the major lines. 0 turns them off |
-| **Minor Step** | 10 | Spacing of the minor lines. 0 turns them off |
-| **Lat/Lon Grid** | off | Draws lines of latitude and longitude at round values instead. See below |
-| **Min Pixel Spacing** | 10 | Lat/Lon Grid only: the smallest on-screen gap between minor lines |
-| **Max Pixel Spacing** | 200 | Lat/Lon Grid only: the largest on-screen gap between minor lines |
-| **Major Line Width** | 1.5 | Width of major lines, in screen pixels |
-| **Minor Line Width** | 1 | Width of minor lines, in screen pixels |
-| **Minor Brightness** | 0.4 | How bright the minor lines are, compared with the major lines |
-| **Rotation** | 0 | Rotation in degrees, −180 to 180 |
-| **Altitude** | 0 | At 0 the grid is draped over the terrain. Above 0 it is a flat sheet at that height |
-| **Major Color** | yellow | Color of the major lines and the outline |
-| **Minor Color** | same as Major Color | Color of the minor lines |
-| **Lock Colors** | on | Makes Minor Color follow Major Color. Turn it off to set Minor Color by itself |
-| **Opacity** | 1 | 0 is invisible, 1 is solid |
-| **Go to Grid** | | Moves the main view camera to look down on the grid |
-| **Delete Grid** | | Deletes the grid, after asking you |
-
-The outline of the grid is always drawn, so a grid with both steps at 0 is still visible and can
-still be dragged.
-
-**Lat/Lon Grid.** With this on, the lines are at exact round coordinates: whole degrees, tenths,
-hundredths and so on. Each view picks its own spacing as you zoom, so that the gap between minor
-lines stays between **Min Pixel Spacing** and **Max Pixel Spacing**. Major lines are ten times the
-minor spacing. A label at the bottom of each 3D view shows the spacing drawn there, for example
-*Major: 0.001°, Minor: 0.0001°*. While it is on, **Major Step**, **Minor Step** and **Rotation**
-are disabled and the grid is squared to north. Your step values are kept for when you turn it
-off. The rotation is not restored.
-
----
-
-## D. Finding, saving and removing
-
-### Where things are in the menus
-
-| Thing | Menu folder | How to remove it |
-|---|---|---|
-| Hand-drawn track | **Contents → *track name*** | **Delete Track** (asks first) |
-| Balloon | **Contents → *Balloon***, and its sphere in **Objects** with the same name | **Delete Track** (asks first) removes both |
-| Kite | **Contents → *Kite***, and the kite object in **Objects** with the same name | **Delete Track** (asks first) removes both |
-| 3D object, including the object on a track | **Objects → *object name*** | **Delete Object** (asks first). **Delete Track** on the object's track asks whether to delete the object too. A balloon's sphere and a kite object have no **Delete Object** |
-| Camera Track, Traverse Track | **Contents → Camera Track**, **Contents → Traverse Track** | A Custom sitch always has them. To hide a line, clear its **Show Track Line** title checkbox |
-| Camera Object, Traverse Object | **Objects → Camera Object**, **Objects → Traverse Object** | A Custom sitch always has them. To hide one, clear its **Visible** title checkbox |
-| Building | **Objects → Building: *name*** | **Delete Building**, or **Delete** / **Backspace** in edit mode. **Objects → Remove all Buildings** removes them all |
-| Cloud layer | **Objects → Clouds: *name*** | **Delete Clouds**, or **Delete** / **Backspace** in edit mode |
-| Ground overlay | **Objects → Overlay: *name*** | **Delete Overlay**, or **Delete** / **Backspace** in edit mode |
-| Region | **Objects → Region: *name*** | **Delete region** in its editor |
-| Ground grid | **Objects → Grid: *name*** | **Delete Grid**, or **Delete** / **Backspace** in edit mode |
-| Pin | none: right-click the pin | **Delete Pin** in its edit window |
-
-You can drag the **Objects** or **Contents** menu off the menu bar to keep it open while you work.
-See [The Menu System](UserInterface.md#the-menu-system).
-
-### Saving
-
-Tracks, balloons, 3D objects, pins, buildings, cloud layers, overlays and grids are saved with a
-Custom sitch, with their settings. When you load the sitch, they come back where you left them.
-An image you dragged in as a ground overlay is saved with the sitch like other files you drop in.
-An overlay made with **Image URL** keeps that address. See
-[Saving and Loading Sitches](SavingAndLoading.md).
-
----
-
-## Tips
-
-- **Can't see a new object?** A sphere 5 m in radius is small from far away. Use **Global Scale** in
-  the **Objects** menu to make all objects larger while you find it. Set it back to 1 for real size.
-- **Satellite image with clouds.** Drag the image in as a ground overlay, turn on
-  **Extract Clouds**, pick the cloud color, then set **Altitude (ft)** to the cloud height.
-- **Right-click does not open the ground menu?** In a Custom sitch, hold **Shift** and right-click
-  where the pointer is over terrain. This works while a track is in edit mode.
-
-## See also
-
-- [Loading and Filtering Tracks](Tracks.md): track edit mode, and the controls in a track's folder
-- [Objects and 3D Models](CustomModels.md): the controls in an object's folder
-- [Terrain and Elevation](Terrain.md): the terrain square and Dynamic Subdivision
-- [Wind in Sitrec](Wind.md): the wind that moves balloons and cloud layers
-- [Sitrec User Interface](UserInterface.md): menus, windows and measurements
-- [Saving and Loading Sitches](SavingAndLoading.md)
-- [Keyboard Shortcuts](KeyboardShortcuts.md)
+**No mapped power lines or supports** means OpenStreetMap returned no matching features. Move or enlarge the region and retry. You can also import a previously downloaded KML.
+
+### Export a power network from Overpass Turbo
+
+1. Open [Overpass Turbo](https://overpass-turbo.eu/) and zoom the map to the part of the line you want in Sitrec.
+2. Paste the query below into the editor and click **Run**. It requests both the line routes and the individual pole and tower locations in the visible map area.
+3. Choose **Export**, find **KML** under **Data**, and click **download**. Drag the downloaded file into Sitrec.
+
+```text
+[out:json][timeout:25][bbox:{{bbox}}];
+(
+  node["power"~"^(tower|pole)$"];
+  way["power"~"^(line|minor_line)$"];
+);
+out body;
+>;
+out skel qt;
+```
+
+**If you see wires but no towers**, zoom in first. Sitrec draws a single stroke for a distant route.
+Close up, the lines come from the mapped routes, and a support appears at each point tagged
+`power=tower` or `power=pole`. A bend in a line can be just a bend. If your export contains
+only lines, run the query above to include the tagged points where OpenStreetMap has them.
+
+### Edit an imported pole or tower
+
+1. In **Main** or **Look** view, **right-click a leg, brace, crossarm or insulator** to open the tower editor. A narrow margin around thin members makes them easier to pick. Zoom in if the tower is small on screen. The rest of the network stays in the shared layer.
+2. To correct its **height or shape**, click **Edit design…**. Set **Height** in metres. For a tower, adjust **Crossarm span** or choose a different **Regional design**. Click **Apply to object**. To replace the whole design at its preset dimensions, use **Browse custom objects…**, select the preset, then **Use this object**. Search for `transmission` to compare tower silhouettes. [Ground object presets](CustomModels.md#ground-objects)
+3. To correct its **position**, use **Surface** move mode and drag the green disk. To turn the crossarms, **Control-click the widget** and drag the amber ring left or right. **Rotate Y°** in the object menu lets you enter an exact angle. Control-click the ring again to return to moving. [Move and rotate controls](MovingObjects.md#rotate-an-object)
+4. Check the spans on either side. Their ends follow the insulators as you move, rotate, resize or change the design. **Save the sitch** to keep the edits and the layer visibility. The original KML stays as exported.
+
+**Height** in the designer changes the structure from base to top. **Location → Alt** moves
+the entire structure up or down. Imported supports start on the terrain. Sitrec uses a
+mapped height when available and otherwise uses the preset height. Recognized design tags
+can select a Danube, barrel, twin-pole, timber H-frame or single-level tower. Both KML and
+direct region imports read the design on each mapped tower. For example, `design=guyed_v-frame`
+selects the **US guyed-V lattice tower** and `design=delta` selects the **US single-circuit
+horizontal pylon**. A KML must include the tower tags in its extended data for this to work.
+An untagged tower on a North American 765 kV line with three cables defaults to a horizontal
+pylon. Towers on the same line can have different structures. If Street View shows a different
+shape, choose the matching preset for that support. Crossarm layout and wire sag are approximate.
+
+On a UK tower, a mapped `design:ref` such as `L2`, `L4(m)` or `L6 D` selects the corresponding suspension model. If you know the series from a photograph, right-click the imported tower and use **Browse custom objects…**. Search for the series to apply its standard dimensions, or change only **Regional design** under **Edit design…** to keep the dimensions you have. [Compare the UK tower silhouettes](CustomModels.md#ground-objects)
+
+### Change wire connections
+
+Open **Wire connections** in the support's object menu. **From** lists the previous support
+and **To** lists the next one in the mapped route order. A junction can list several neighbors.
+For example, on a route that runs **Tower 1 → Tower 2 → Tower 3**, open **Tower 2**. Its
+**From** shows **Tower 1** and its **To** shows **Tower 3**.
+
+- **Reroute a span** by choosing another support in its existing **From** or **To** row.
+- **Disconnect a span** by choosing **None** in that row.
+- **Add a branch or a hand-placed pole** with **Add To**. Choose the pole you want to reach. **Add From** adds a span coming from the pole you choose. Sitrec connects the outgoing insulator points on one support to the incoming points on the other.
+
+You can also connect two hand-placed supports this way. Give them distinct names in their
+object menus so they are easy to pick from the list. Save the sitch after changing connections.
+
+If you prepare your own KML and already have an editable pole at a mapped location, set the
+mapped point's `sitrec:object` tag to that object's node ID to use it in the route. Opening
+the same file in a sitch without that object shows the mapped model.

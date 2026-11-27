@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.211.1 (2026-11-27)
+
+### Improvements
+- **Power grid towers**: right-click a tower leg, brace, crossarm or insulator to open its editor. Thin parts are easier to hit, and a direct hit on another object still wins.
+- **Power grid imports**: KML and direct Overpass imports now draw towers tagged as guyed V-frames with the guyed-V model and towers tagged as delta with the horizontal model. Each tower on a line can have its own design.
+
 ## Version 2.211.0 (2026-11-27)
 
 ### New Features
