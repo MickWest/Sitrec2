@@ -6,6 +6,7 @@ import {copyProceduralModel, copyVehicleRecipe, vehicleFileStem} from "../../too
 import {exportProceduralVehicle, loadProceduralVehicle, openVehicleBrowser} from "../procedural/VehicleLoader";
 import {refreshVehicleBakeUsage} from "../procedural/VehicleBakeAssets";
 import {collectVehicleSpinners, poseVehicleSpinners} from "../procedural/VehicleAnimation";
+import {prepareModelSkinning} from "../rendering/ModelSkinning";
 import {applyVehicleLightOverrides, captureVehicleLightOverrides, vehicleLightState} from "../procedural/VehicleLightState";
 import {KITE_LED_PATTERN_FIELDS, KITE_LED_TAIL_PATTERN_FIELDS} from "../../tools/vehicles/kiteParameters.js";
 import {refreshPowerLinks, syncPowerLinkFolder} from "../PowerObjectLinkControls";
@@ -174,6 +175,7 @@ export const proceduralObjectMethods = {
         }
         this._vehicleSpinParts = collectVehicleSpinners(this.model);
         if (this.proceduralModel) {
+            this.updateModelSkinning = prepareModelSkinning(this.model);
             this._vehicleLightBaseline = Object.fromEntries(this.lights.map(light => [light.light.name,vehicleLightState(light)]));
             applyVehicleLightOverrides(this.lights,this.vehicleLightOverrides);
         }

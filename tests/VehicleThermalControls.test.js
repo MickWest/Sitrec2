@@ -10,7 +10,8 @@ import {attachThermalDebug, createThermalControls, createVehicleThermalPreview, 
 import {createVehicleStudio} from "../tools/vehicles/studio.js";
 import {mountVehicleDesigner} from "../tools/vehicles/designer.js";
 import {downloadVehicleBlob} from "../tools/vehicles/files.js";
-import {Box3, Group, PerspectiveCamera, Scene, Vector3} from "three";
+import {Box3, Group, PerspectiveCamera, Scene, Vector3, WebGLRenderer} from "three";
+import {visibleVehicleBounds} from "../tools/vehicles/thermalTags.js";
 import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {createVehicleRecipe} from "../tools/vehicles/recipe.js";
 
@@ -169,6 +170,35 @@ test("the near IR view keeps the visible camera, its orbit and the full canvas; 
         studio.setMode("visible");
         expect(studio.controls.enabled).toBe(true); expect(studio.camera.aspect).toBeCloseTo(1.6, 12);
     } finally {studio.dispose();}
+});
+
+test.each(["ground-radio-tower", "a340-600"])("Overall scale resizes %s against a stationary preview grid", id => {
+    const parsed = new DOMParser().parseFromString(fs.readFileSync(path.join(__dirname, "../tools/vehicles/index.html"), "utf8"), "text/html");
+    document.body.innerHTML = parsed.body.innerHTML;
+    const preset = PRESETS.find(p => p.id === id);
+    const editor = mountVehicleDesigner(document, {persist: false, initialRecipe: createVehicleRecipe(preset.parameters, preset.name, id)});
+    try {
+        const draw = jest.spyOn(WebGLRenderer.mock.results.at(-1).value, "render");
+        const tick = () => requestAnimationFrame.mock.lastCall[0](performance.now());
+        tick();
+        const [scene, camera] = draw.mock.lastCall;
+        const grid = scene.getObjectByProperty("type", "GridHelper");
+        const spacing = grid.scale.x, floor = grid.position.clone(), eye = camera.position.clone();
+        const bounds = () => visibleVehicleBounds(scene.getObjectByName(preset.name));
+        const full = bounds();
+        const input = document.querySelector("#field-overallScale");
+        for (const scale of [.01, 100, 1]) {
+            input.value = scale;
+            input.dispatchEvent(new Event("input"));
+            tick();
+            expect(grid.scale.x).toBeCloseTo(spacing, 8);
+            expect(grid.position).toEqual(floor);
+            expect(camera.position).toEqual(eye);
+            const resized = bounds();
+            expect(resized.max.y - resized.min.y).toBeCloseTo((full.max.y - full.min.y) * scale, 7);
+            expect(resized.min.y).toBeGreaterThanOrEqual(floor.y);
+        }
+    } finally {editor.dispose();}
 });
 
 test("the shared editor lazily activates IR, snapshots it, uses visible thumbnails and restores IR", async () => {

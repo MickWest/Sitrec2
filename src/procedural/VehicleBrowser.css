@@ -3,6 +3,7 @@
 .shell {height:100dvh;display:flex;flex-direction:column;background:#101923}
 header {display:flex;align-items:center;justify-content:space-between;padding:18px 26px;border-bottom:1px solid #31404f;flex-shrink:0}
 h1 {font-size:21px;margin:0} header p {color:#a5b6c7;margin:5px 0 0}
+.shell:has(> #editor:not([hidden])) > header {display:none}
 button,input,select {font:inherit;color:inherit;border:1px solid #405366;background:#1b2b3b;border-radius:6px;padding:9px 12px}
 button {cursor:pointer} button:hover {border-color:var(--accent);background:#263c4c}
 button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--accent);outline-offset:2px}

@@ -1,13 +1,14 @@
 import {normalizeParameters, readParameterFile} from "./vehicleSchema.js";
-import {copyVehicleRecipe, VEHICLE_GENERATOR, VEHICLE_GENERATOR_REVISION} from "./recipeFormat.js";
+import {copyVehicleRecipe, VEHICLE_GENERATOR} from "./recipeFormat.js";
 
 export function createVehicleRecipe(parameters, name = "My vehicle", presetId = null) {
     const normalized = normalizeParameters(parameters);
-    // Revision 2 changes transmission towers. Other model families can still
-    // exchange newly saved recipes with revision 1 readers.
-    const tower = normalized.vehicleType === "ground" && normalized.groundKind === "pylon";
+    // Record the earliest generator that can reproduce this shape.
+    const revisions = {pylon: 2, radioTower: 3, brickWall: 4, chainLink: 4, woodFence: 4, railing: 4};
+    const pterosaur = normalized.wingTip === "membrane" || normalized.billShape === "jaws";
+    const birdRevision = normalized.length > 2 || normalized.wingspan > 3.6 ? 7 : pterosaur ? 6 : normalized.headCrest > 0 ? 5 : 1;
     return {format: "sitrec-procedural-vehicle", version: 1, generator: VEHICLE_GENERATOR,
-        generatorRevision: tower ? VEHICLE_GENERATOR_REVISION : 1, name: String(name).slice(0, 100),
+        generatorRevision: normalized.vehicleType === "bird" ? birdRevision : revisions[normalized.groundKind] ?? 1, name: String(name).slice(0, 100),
         presetId, parameters: normalized};
 }
 export function readVehicleRecipe(value) {

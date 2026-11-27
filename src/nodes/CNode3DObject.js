@@ -2366,6 +2366,7 @@ ${trackPlacemark}    </Document>
     }
 
     destroyObject() {
+        this.updateModelSkinning = undefined;
         this._solarSurfacePatches?.dispose();
         this._solarSurfacePatches = null;
         const hadCaster = this.hasVisibleShadowCaster?.() || this._lastShadowCasterActive;
@@ -2432,6 +2433,7 @@ ${trackPlacemark}    </Document>
         } else if (target) {
             target.updateMatrixWorld(true);
         }
+        this.updateModelSkinning?.();
 
         if (this.solarSurface) this.updateSolarSurface(view);
 

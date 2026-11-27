@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import {addKiteLights, animateKiteLamp} from "./kiteLights.js";
+import {addKiteLights, animateKiteLamp, updatePreviewGlow} from "./kiteLights.js";
 
 export const LIGHT_GROUP = {name: "Lights", note: "Lights follow the generated body. Locations are family approximations; brightness and flash timing are editable visual defaults.", fields: [
     {key:"lightsEnabled",label:"Procedural lights",type:"checkbox",value:true},
@@ -55,7 +55,12 @@ export function addVehicleLights(model, p) {
         lamps.push({light,lens,intensity,phase});
         return light;
     }
-    if(balloon) {
+    if (model.obstructionLamps) {
+        for (const {name, flashing, intensity} of model.obstructionLamps) {
+            const lens = root.getObjectByName(name + " lens");
+            lamp(name, "#ff170e", center(lens), "point", flashing, lens, 0, intensity);
+        }
+    } else if(balloon) {
         for(const a of model.internalLamps)lamp(a.name,a.color,a.position,"point",false,a.lens,0,a.intensity*p.glow);
     } else if(drone) {
         if(p.positionLights)for(const a of model.statusLamps)lamp(a.name,a.color,a.position);
@@ -110,5 +115,6 @@ export function animateVehicleLights(model,time,animate=true) {
         // Keep the light count stable during flashing to avoid shader recompiles.
         lamp.light.intensity=on?lamp.intensity*0.025:0;
         lamp.lens.material.emissiveIntensity=on?2.5:0.025;
+        if (model.obstructionLamps) updatePreviewGlow(model.root, lamp, lamp.light, on ? 1 : 0, Math.sqrt(lamp.intensity) * .13);
     }
 }

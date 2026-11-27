@@ -3,17 +3,18 @@ const choice = (key, label, options, value) => ({key, label, options, value, typ
 const color = (key, label, value) => ({key, label, value, type: "color"});
 
 export const BIRD_FLIGHT_STYLES = {flap: "Flapping", glide: "Gliding · wings held still", bursts: "Flap, then glide"};
-export const BIRD_WING_TIPS = {pointed: "Pointed", rounded: "Rounded", fingered: "Separate feathers (eagle, crane)"};
+export const BIRD_WING_TIPS = {pointed: "Pointed", rounded: "Rounded", fingered: "Separate feathers (eagle, crane)", membrane: "Membrane on a long wing finger"};
 export const BIRD_TAIL_SHAPES = {rounded: "Rounded", square: "Square", wedge: "Wedge", pointed: "Long and pointed", forked: "Forked"};
-export const BIRD_BILL_SHAPES = {pointed: "Pointed", hooked: "Hooked", flat: "Flat (duck, goose)", pouch: "Pouch (pelican)"};
+export const BIRD_BILL_SHAPES = {pointed: "Pointed", hooked: "Hooked", flat: "Flat (duck, goose)", pouch: "Pouch (pelican)", jaws: "Long tapered jaws"};
 export const BIRD_WING_PATTERNS = {plain: "None", tips: "Wing tips", flight: "Flight feathers",
     flightUnder: "Flight feathers, underside only", bars: "Two wing bars and the tips"};
 
 export const BIRD_GROUPS = [
     {name: "Bird", open: true, note: "The bird is in its flight pose, with the bill toward +Z. The length is from the bill tip to the tail tip.", fields: [
-        number("length", "Length, bill tip to tail tip · m", 0.01, 2, 0.005, 0.6),
+        number("length", "Length, bill tip to tail tip · m", 0.01, 3, 0.005, 0.6),
         number("bodyDepth", "Body depth · % of length", 10, 45, 0.5, 23),
         number("headSize", "Head length · % of length", 4, 25, 0.5, 12),
+        number("headCrest", "Head crest · % of head length", 0, 150, 1, 0),
         number("neckLength", "Neck length · % of length", 0, 40, 0.5, 5),
         choice("neckPose", "Neck in flight", {straight: "Stretched forward", folded: "Drawn back (heron, pelican)"}, "straight"),
         number("billLength", "Bill length · % of length", 2, 32, 0.5, 9),
@@ -23,7 +24,7 @@ export const BIRD_GROUPS = [
         number("legLength", "Feet beyond the tail tip · % of length", 0, 40, 1, 15),
     ]},
     {name: "Wings", open: true, note: "The wingspan is for flat wings. The wrist is the bend at the front edge of the wing.", fields: [
-        number("wingspan", "Wingspan · m", 0.01, 3.6, 0.01, 1.4),
+        number("wingspan", "Wingspan · m", 0.01, 7, 0.01, 1.4),
         number("wingChord", "Wing chord · % of wingspan", 5, 30, 0.5, 12),
         number("armFraction", "Inner wing · % of wing length", 20, 65, 1, 45),
         number("wristSweep", "Outer wing swept back · °", 0, 50, 1, 18),

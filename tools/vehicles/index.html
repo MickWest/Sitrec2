@@ -59,10 +59,12 @@
         "./kiteParameters.js": "./kiteParameters.js?v=__BUILD_V__",
         "./kitePresets.js": "./kitePresets.js?v=__BUILD_V__",
         "./bird.js": "./bird.js?v=__BUILD_V__",
+        "./pterosaur.js": "./pterosaur.js?v=__BUILD_V__",
         "./birdParameters.js": "./birdParameters.js?v=__BUILD_V__",
         "./birdPresets.js": "./birdPresets.js?v=__BUILD_V__",
         "./roadVehicle.js": "./roadVehicle.js?v=__BUILD_V__",
         "./groundObject.js": "./groundObject.js?v=__BUILD_V__",
+        "./wallsAndFences.js": "./wallsAndFences.js?v=__BUILD_V__",
         "./transmissionTower.js": "./transmissionTower.js?v=__BUILD_V__",
         "./ukTransmission.js": "./ukTransmission.js?v=__BUILD_V__",
         "./groundParameters.js": "./groundParameters.js?v=__BUILD_V__",
@@ -84,8 +86,9 @@
         <input id="fileInput" type="file" accept=".json,application/json" hidden>
     </header>
     <main class="workspace">
-        <aside class="sidebar" aria-label="Object parameters">
-            <section class="preset-panel">
+        <aside class="sidebar preset-sidebar" aria-label="Presets and preview settings">
+            <button type="button" id="toggleSetup" aria-controls="presetPanel previewModePanel thermalPanel" aria-expanded="false">Presets and preview settings</button>
+            <section class="preset-panel" id="presetPanel">
                 <div class="section-label">START WITH A PRESET <span id="presetCount"></span></div>
                 <label for="presetSearch" class="sr-only">Search objects, region or role</label>
                 <input id="presetSearch" type="search" placeholder="Search objects or role…" autocomplete="off">
@@ -105,13 +108,11 @@
                 <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
                 <input id="designName" type="text" maxlength="100" value="My object">
             </section>
-            <section class="preview-mode-panel">
+            <section class="preview-mode-panel" id="previewModePanel">
                 <label for="renderMode">Preview mode</label>
                 <select id="renderMode"><option value="visible">Normal view</option><option value="ir">IR preview</option></select>
             </section>
             <div id="thermalPanel" hidden></div>
-            <div id="parameterFolders"></div>
-            <div class="sidebar-note">Dimensions in metres · angles in degrees.<br>Editable visual approximations.</div>
         </aside>
         <section class="preview" id="preview" aria-label="Interactive 3D object preview">
             <div id="canvasMount"></div>
@@ -150,6 +151,10 @@
                 <p class="orbit-hint">Drag to orbit <span>·</span> Scroll to zoom <span>·</span> Right-drag to pan</p>
             </div>
         </section>
+        <aside class="sidebar parameter-sidebar" aria-label="Object parameters">
+            <div id="parameterFolders"></div>
+            <p class="sidebar-note">Dimensions in metres · angles in degrees.</p>
+        </aside>
     </main>
     <footer><span id="status" role="status">Starting 3D preview…</span><span id="geometryStats"></span><a href="README.md" target="_blank" rel="noopener noreferrer">Help & model conventions ↗</a></footer>
     <script type="module">

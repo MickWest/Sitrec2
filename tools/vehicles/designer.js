@@ -4,6 +4,7 @@ import {kiteFlightProperties, kiteLiftingArea, kiteMinimumWind} from "./kiteFlig
 import {usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 import {disposeVehicle} from "./vehicle.js";
 import {animateVehicleLights} from "./vehicleLights.js";
+import {withSRGBInputs} from "./designColors.js";
 
 import {createVehicleRecipe, readVehicleRecipe} from "./recipe.js";
 import {generateVehicle} from "./generator.js";
@@ -19,6 +20,10 @@ export function mountVehicleDesigner(root = document, options = {}) {
 const $ = id => root.querySelector(`#${id}`);
 const lifecycle = new AbortController();
 const events = {signal: lifecycle.signal};
+const setupToggle = $("toggleSetup");
+setupToggle.addEventListener("click", () => {
+    setupToggle.setAttribute("aria-expanded", String(setupToggle.getAttribute("aria-expanded") !== "true"));
+}, events);
 const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
@@ -54,8 +59,8 @@ if (options.initialRecipe) {
 
 const studio = createVehicleStudio($("canvasMount"),{background:"#e4ebf2",damping:true,onChange:() => {renderDirty = true;}});
 const {renderer,scene,controls} = studio;
-let grid = new THREE.GridHelper(1, 20, "#a8bbca", "#c2d0da");
-grid.material.transparent = true; grid.material.opacity = 0.6; scene.add(grid);
+const grid = withSRGBInputs(() => new THREE.GridHelper(1, 20, "#a8bbca", "#c2d0da"));
+grid.material.transparent = true; scene.add(grid);
 grid.userData.thermal = false;
 
 // The near IR view shares the normal view's camera, so it keeps the view buttons.
@@ -207,7 +212,7 @@ for (const group of parameterGroups(params)) {
         } else input.type = field.type;
         const elements = [input];
         if (field.type === "number") {
-            const header = document.createElement("div"); header.className = "field-header"; header.append(label, input); row.append(header);
+            row.classList.add("number-field");
             const range = document.createElement("input"); range.type = "range"; range.id = `slider-${field.key}`; range.setAttribute("aria-label", field.label);
             for (const control of [input, range]) {control.min = field.min; control.max = field.max; control.step = field.step;}
             if (field.log) {
@@ -218,7 +223,7 @@ for (const group of parameterGroups(params)) {
             input.addEventListener("change", () => { input.value = params[field.key]; });
             // input fires during the drag; change only fires when the thumb is released.
             range.addEventListener("input", () => changed(field, field.log ? Number((10 ** range.valueAsNumber).toPrecision(3)) : range.valueAsNumber, range));
-            row.append(range); elements.push(range);
+            row.append(label, range, input); elements.push(range);
         } else {
             row.append(label, input);
             if (field.type === "checkbox" || field.type === "color") row.classList.add(field.type === "checkbox" ? "check-field" : "color-field");
@@ -288,26 +293,33 @@ function rebuild() {
     setWireframe(model.root, $("wireframe").checked);
     const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params),kite=isKite(params),bird=isBird(params), aerial=drone||balloon||kite;
     const ground = isGroundObject(params);
-    const gridSize = Math.max(model.stats.size.x, model.stats.size.z,model.stats.size.y*.6) * 2.5;
-    // The model and its stats have the Overall scale. The parameters are the full-size dimensions, so they get it here.
+    const size = model.stats.size;
+    const previewSize = Math.max(size.x, size.z, size.y * .6) * 2.5;
     const scale = params.overallScale;
+    // The grid uses the design's full-size dimensions as its reference. Only the preview model moves onto the floor.
+    grid.scale.setScalar(previewSize / scale);
+    const clearance = ground ? .002 : bird ? params.length * .1 : road ? .025 :
+        aerial ? Math.min(params.width, params.height) * .1 : Math.max(params.diameter * .15, .15);
+    const lowest = (model.sweepBounds ?? model.bounds).min.y;
+    const lift = new THREE.Vector3(0, clearance * scale - lowest, 0);
+    model.root.position.add(lift);
+    model.root.updateMatrixWorld(true);
+    model.bounds.translate(lift);
+    model.sweepBounds?.translate(lift);
+    controls.maxDistance = Math.max(300, previewSize * 12);
     // Three significant digits for a size below 1 m (or 10 m²), so a small model does not show as 0.00.
     const metres = value => `${value >= 1 ? value.toFixed(2) : Number(value.toPrecision(3))} m`;
     const squareMetres = value => `${value >= 10 ? value.toFixed(1) : Number(value.toPrecision(3))} m²`;
-    // The grid of a bird is below the lowest place of its wings.
-    grid.scale.setScalar(gridSize); grid.position.y = bird ? model.sweepBounds.min.y - params.length * .1 * scale :
-        model.bounds.min.y - (ground ? .002 : road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15)) * scale;
-    controls.maxDistance = Math.max(300, gridSize * 12);
     $("aspectLabel").parentElement.hidden = ground;
     $("animateProps").parentElement.hidden = ground;
-    $("animateLights").parentElement.hidden = ground;
+    $("animateLights").parentElement.hidden = ground && !model.lamps.length;
     if (ground) {
-        for (const [metric, label, value] of [["length", "DEPTH", model.stats.size.z],
-            ["span", "WIDTH", model.stats.size.x], ["area", "HEIGHT", model.stats.size.y]]) {
+        for (const [metric, label, value] of [["length", params.length ? "LENGTH" : "DEPTH", model.stats.size.z],
+            ["span", params.length ? "THICKNESS" : "WIDTH", model.stats.size.x], ["area", "HEIGHT", model.stats.size.y]]) {
             $(metric + "Label").textContent = label;
             $(metric + "Metric").textContent = metres(value);
         }
-        $("spanMetric").title = "Overall width";
+        $("spanMetric").title = params.length ? "Overall thickness" : "Overall width";
     } else {
         $("lengthMetric").textContent = metres(drone||kite?model.stats.size.z:params.length*scale);
         $("lengthLabel").textContent = bird?"LENGTH":drone||kite?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
@@ -334,7 +346,7 @@ function rebuild() {
 function fit() {
     if (!model) return;
     const view = currentView === "perspective" && (params.ledEnabled || params.ledTailEnabled) ? "underside" : currentView;
-    const direction = view === "perspective" && params.groundKind === "pylon" ? transmissionViewDirection : undefined;
+    const direction = view === "perspective" && ["pylon", "radioTower"].includes(params.groundKind) ? transmissionViewDirection : undefined;
     studio.fit(model.sweepBounds ?? model.bounds,{view,direction,paddingX:1.25,paddingY:1.55});
     renderDirty = true;
 }
@@ -356,10 +368,14 @@ $("showGrid").addEventListener("change", () => {grid.visible = $("showGrid").che
 function setNightPreview(night) {
     $("nightPreview").checked = night;
     $("preview").classList.toggle("night", night);
+    grid.material.color.setScalar(night ? 1 : .18);
+    grid.material.opacity = night ? .6 : .9;
     studio.setNight(night); renderDirty = true;
 }
 // Choose a useful starting light when a design opens; manual Night changes survive edits.
-function setDesignNight() {setNightPreview(!!(params.ledEnabled || params.ledTailEnabled));}
+function setDesignNight() {
+    setNightPreview(!!(params.ledEnabled || params.ledTailEnabled || (params.groundKind === "radioTower" && params.lightsEnabled)));
+}
 $("nightPreview").addEventListener("change", () => setNightPreview($("nightPreview").checked));
 $("animateLights").addEventListener("change", () => {animateVehicleLights(model,0,false);renderDirty=true;});
 $("wireframe").addEventListener("change", () => {setWireframe(model.root, $("wireframe").checked); renderDirty = true;});

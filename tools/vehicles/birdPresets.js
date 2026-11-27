@@ -4,15 +4,15 @@
 // plumage. README.md ("Birds") has the sources in full.
 const birds = [];
 const P90 = "Pennycuick 1990", P01 = "Pennycuick 2001", K22 = "Krishnan et al. 2022";
-function bird(id, name, category, {length, wingspan, page, rate, from}, ...changes) {
+function bird(id, name, category, {length, wingspan, page, rate, from, description, quality = "Typical size"}, ...changes) {
     const parameters = Object.assign({vehicleType: "bird", length, wingspan, wingbeatRate: rate}, ...changes);
     birds.push({id: `bird-${id}`, name, category: `Birds · ${category}`, region: "General", role: "Bird", parameters,
-        reference: {quality: "Typical size", length, wingspan, lengthLabel: "bill tip to tail tip", spanLabel: "wingspan",
+        reference: {quality, length, wingspan, lengthLabel: "bill tip to tail tip", spanLabel: "wingspan",
             source: `https://en.wikipedia.org/wiki/${page}`, wingbeatSource: from ?? null,
-            description: "Editable visual example of a bird in flight, at a typical size for the species."
+            description: description ?? ("Editable visual example of a bird in flight, at a typical size for the species."
                 + (parameters.neckPose === "folded" ? " Its neck is drawn back, so its length in flight is an estimate." : "")
                 + ` The wingbeat rate of ${rate} per second is ${from ? `a measured value (${from})` : "an estimate"}.`
-                + " The shape and the plumage are estimates."}});
+                + " The shape and the plumage are estimates.")}});
 }
 
 const WHITE = "#f3f2ec", BLACK = "#1b1c1f", YELLOW = "#e6bd35", PINK = "#d9a39d", DARK_LEG = "#2a2a2c";
@@ -188,5 +188,17 @@ bird("swallow-barn", "Barn swallow", "Owls & small birds", {length: 0.18, wingsp
         wingChord: 12, armFraction: 30, wristSweep: 28, wingTip: "pointed", flightStyle: "bursts", burstBeats: 6, glideSeconds: 0.6, flapAngle: 50,
         wingFold: 55, glideAngle: 0, bodyColor: "#1f2f52", bellyColor: "#e9dccb", headColor: "#1f2f52", neckColor: "#8a3a22", wingColor: "#232a3e",
         underwingColor: "#d9cdbd", tailColor: "#1c2233", billColor: "#1f1c1b", legColor: "#1f1c1b", eyeColor: "#17150f"});
+
+bird("pterodactyl", "Pterodactyl", "Pterosaurs", {
+    length: 2.65, wingspan: 6, page: "Pteranodon", rate: 3, quality: "Illustrative reconstruction",
+    description: "An illustrative pterosaur with pointed membrane wings, a short tail and an adjustable swept-back crest inspired by Pteranodon. The wingbeat rate of 3 per second is an estimate.",
+}, {
+    bodyDepth: 16, headSize: 16, headCrest: 120, neckLength: 24, billLength: 27, billDepth: 19, billShape: "jaws",
+    tailLength: 5, tailSpread: 12, tailShape: "pointed", legs: "trailing", legLength: 10,
+    wingTip: "membrane", armFraction: 40, wristSweep: 14, wingChord: 15, glideAngle: 5,
+    flightStyle: "bursts", burstBeats: 4, glideSeconds: 3, flapAngle: 24, wingFold: 24,
+    ...all("#655148"), neckColor: "#88745d", wingColor: "#ab7966", underwingColor: "#d1a38b",
+    bellyColor: "#d8c3a2", headColor: "#a88765", billColor: "#ad865d", legColor: "#897665", eyeColor: "#201e19",
+});
 
 export const BIRD_PRESETS = birds;

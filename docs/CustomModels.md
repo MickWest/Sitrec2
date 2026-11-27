@@ -56,6 +56,10 @@ For a whole line of mapped towers, import a power grid from a region or drop an 
 
 To place a single object by hand, right-click the ground in a custom sitch and choose **Add → 3D Object**. In its edit window, open **Browse custom objects…**, set **Object type** to **Ground objects**, select a preset and click **Use this object**. To put its base on the terrain, open **Location**, turn on **Above Ground Level** and set **Alt** to zero.
 
+Search for **Walls and fences** to find a brick wall, a chain-link fence, white or brown picket fences, a good-neighbor fence with alternating boards, and two styles of metal railings. Use **Customize…** to set the length and height of a straight run. Its placement point is halfway between the ends at ground level.
+
+Choose **Radio tower with lights** for a 60 m red-and-white lattice tower. The red beacon at the tip flashes every two seconds and three red side markers stay lit. Under **Edit design… → Radio tower**, you can change the height, brightness and flash timing, or switch off the lights.
+
 Search for `transmission` to see all 20 transmission structures. The region filter narrows the results to **US** or **Europe**. The first gallery shows ten regional designs. The presets also include the US stacked-crossarm and horizontal single-circuit towers, a generic British lattice tower and seven UK L-series towers.
 
 ![Top row, US timber H-frame, braced line-post monopole, double-circuit davit, three-pole angle structure and guyed-V tower. Bottom row, German Danube, barrel and single-level towers, British T-pylon and Dutch Wintrack twin poles.](docimages/transmission-structures.jpg)
@@ -69,6 +73,8 @@ Open **Edit design…** to adjust **Height** and **Crossarm span**. On a lattice
 The ground presets also include North American and British timber utility poles, a French concrete pole, an industrial chimney and a cooling tower. For vegetation, choose a spreading oak, conifer or palm. **Crown width** changes the spread, and **Shape seed** gives a different tree of the same type. Boulders also have a shape seed, along with **Width**, **Depth** and **Irregularity**.
 
 #### Birds
+
+Choose **Birds → Pterodactyl** for a flying pterosaur with a 6 m wingspan, a short tail and a long crest that sweeps back over the neck. In **Customize… → Bird**, drag **Head crest** to change its length. Set it to **0** for a smooth head.
 
 The **Birds** type of the Custom Object Designer has 40 birds in flight: gulls, pelicans, cranes, a raven and a crow, pigeons and doves, geese, swans, a duck, eagles, a hawk, a vulture, a heron, an egret, a stork, seabirds, an owl and small birds. Some species have more than one plumage. Each bird has the typical length and wingspan of its species, so its size on the screen is correct for its distance.
 

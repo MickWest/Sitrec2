@@ -3,10 +3,36 @@ import {PRESETS, parameterFile, readParameterFile} from "../tools/vehicles/vehic
 import {createVehicleRecipe, readVehicleRecipe} from "../tools/vehicles/recipe.js";
 import {generateVehicle} from "../tools/vehicles/generator.js";
 import {disposeVehicle} from "../tools/vehicles/vehicle.js";
+import {animateVehicleLights} from "../tools/vehicles/vehicleLights.js";
 import {buildTransmissionTower, towerCapacity, towerClamp} from "../tools/vehicles/transmissionTower.js";
 
 const ground = PRESETS.filter(p => p.vehicleType === "ground");
 const towers = ground.filter(p => p.parameters.groundKind === "pylon");
+const barriers = ground.filter(p => p.category === "Ground objects · Walls and fences");
+
+test.each(barriers.map(p => [p.id, p]))("%s keeps its edited run centered at ground level", (_, preset) => {
+    const recipe = createVehicleRecipe({...preset.parameters, length: 7.3, height: 1.45, overallScale: .5});
+    expect(recipe.generatorRevision).toBe(4);
+    const model = generateVehicle(readVehicleRecipe(JSON.parse(JSON.stringify(recipe))));
+    try {
+        expect(model.bounds.min.z).toBeCloseTo(-7.3 / 4);
+        expect(model.bounds.max.z).toBeCloseTo(7.3 / 4);
+        expect(model.bounds.min.y).toBeCloseTo(0);
+        expect(model.bounds.max.y).toBeCloseTo(1.45 / 2);
+    } finally {disposeVehicle(model.root);}
+});
+
+test("good-neighbor boards sit on both faces of the rails and pickets sit on one", () => {
+    for (const preset of barriers.filter(p => p.parameters.groundKind === "woodFence")) {
+        const model = generateVehicle(createVehicleRecipe(preset.parameters));
+        try {
+            const boards = model.root.getObjectByName("Fence boards").geometry;
+            boards.computeBoundingBox();
+            expect(boards.boundingBox.min.x).toBeLessThan(0);
+            expect(boards.boundingBox.max.x > 0).toBe(preset.parameters.boardStyle === "shadowbox");
+        } finally {disposeVehicle(model.root);}
+    }
+});
 
 test("the revised tower generator opens British pylons saved before the crossarm fix", () => {
     const p = towers.find(p => p.id === "ground-british-pylon");
@@ -110,8 +136,8 @@ test.each(ground.map(p => [p.id,p]))("%s restores its design in metres at ground
         expect(model.bounds.min.y).toBeCloseTo(0, 4);
         expect(Math.abs(model.stats.size.y - recipe.parameters.height)).toBeLessThan(.05);
         expect(model.stats.size.toArray().every(v => Number.isFinite(v) && v > 0)).toBe(true);
-        expect(model.root.children.length).toBeLessThan(10);
-        expect(model.lamps).toHaveLength(0);
+        expect(model.root.children.filter(part => part.isMesh).length).toBeLessThan(10);
+        expect(model.lamps).toHaveLength(recipe.parameters.groundKind === "radioTower" ? 4 : 0);
         if (["pole","pylon"].includes(recipe.parameters.groundKind)) {
             const points = model.root.userData.connectionPoints;
             const incoming = points.filter(p => p.tag === "in"), outgoing = points.filter(p => p.tag === "out");
@@ -120,6 +146,35 @@ test.each(ground.map(p => [p.id,p]))("%s restores its design in metres at ground
             expect(points.every(p => p.position.every(Number.isFinite))).toBe(true);
         }
     } finally {disposeVehicle(model.root);}
+});
+
+test("the radio tower's beacon follows the saved timing and its three side markers stay lit", () => {
+    const preset = ground.find(p => p.id === "ground-radio-tower");
+    const recipe = createVehicleRecipe({...preset.parameters, height: 80, overallScale: .5, flashPeriod: 3, flashDuration: .25});
+    const model = generateVehicle(readVehicleRecipe(JSON.parse(JSON.stringify(recipe))));
+    const unlit = generateVehicle(createVehicleRecipe({...recipe.parameters, lightsEnabled: false}));
+    try {
+        const beacon = model.lamps.find(lamp => lamp.light.name === "Top beacon");
+        const sides = model.lamps.filter(lamp => lamp !== beacon);
+        expect(beacon.light.userData).toMatchObject({vehicleLight: true, strobeEvery: 3, strobeLength: .25, strobeOffset: 0});
+        expect(beacon.light.position.y).toBeCloseTo(39.88);
+        expect(sides).toHaveLength(3);
+        for (const [time, on] of [[0, true], [.3, false], [3, true], [.3, false]]) {
+            animateVehicleLights(model, time);
+            expect(beacon.light.intensity > 0).toBe(on);
+            expect(beacon.glow.material.opacity > 0).toBe(on);
+            for (const marker of sides) {
+                expect(marker.light.intensity).toBeGreaterThan(0);
+                expect(marker.light.userData.strobeEvery).toBeUndefined();
+                expect(marker.light.position.y).toBeCloseTo(18, 0);
+            }
+        }
+        expect(unlit.lamps).toHaveLength(0);
+        expect(unlit.stats.size.toArray()).toEqual(model.stats.size.toArray());
+    } finally {
+        disposeVehicle(model.root);
+        disposeVehicle(unlit.root);
+    }
 });
 
 test.each(ground.filter(p => p.parameters.seed).map(p => [p.id,p]))("%s regenerates the same shape from its saved seed", (_,preset) => {

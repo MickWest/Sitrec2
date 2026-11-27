@@ -105,15 +105,19 @@ export function animateKiteLamp(lamp, time, animate) {
     light.visible = false;
     lens.material.emissive.copy(state.color);
     lens.material.emissiveIntensity = state.level * intensity / 35 * 2.5;
+    updatePreviewGlow(lamp.previewRoot, lamp, lens, state.level, lamp.bulbRadius * 18 * Math.sqrt(intensity / 35));
+}
+
+export function updatePreviewGlow(root, lamp, anchor, opacity, diameter) {
     if (!lamp.glow) {
         // Share the texture between lamps; disposal follows the model's materials.
-        const texture = lamp.previewRoot.userData.kitePreviewTexture ??= glowTexture();
-        lamp.glow = new Sprite(new SpriteMaterial({map: texture, color: state.color,
+        const texture = root.userData.previewGlowTexture ??= glowTexture();
+        lamp.glow = new Sprite(new SpriteMaterial({map: texture, color: lamp.light.color,
             transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false}));
-        lamp.glow.name = "LED preview glow"; lamp.glow.position.copy(lens.position);
-        lens.parent.add(lamp.glow);
+        lamp.glow.name = "LED preview glow"; lamp.glow.position.copy(anchor.position);
+        anchor.parent.add(lamp.glow);
     }
-    lamp.glow.material.color.copy(state.color);
-    lamp.glow.material.opacity = state.level;
-    lamp.glow.scale.setScalar(lamp.bulbRadius * 18 * Math.sqrt(intensity / 35));
+    lamp.glow.material.color.copy(lamp.light.color);
+    lamp.glow.material.opacity = opacity;
+    lamp.glow.scale.setScalar(diameter);
 }

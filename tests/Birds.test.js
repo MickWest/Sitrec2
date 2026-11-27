@@ -39,7 +39,7 @@ describe("Bird designs", () => {
         expect(model.bounds.isEmpty()).toBe(false);
         expect(model.stats.size.toArray().every(n => Number.isFinite(n) && n > 0)).toBe(true);
         expect(model.stats.triangles).toBeGreaterThan(500);
-        expect(model.stats.triangles).toBeLessThan(6000);
+        expect(model.stats.triangles).toBeLessThan(p.wingTip === "membrane" ? 9500 : 6000);
         expect(model.stats.wingArea).toBeGreaterThan(0);
         model.root.traverse(part => {
             if (part.isMesh) for (const attribute of [part.geometry.attributes.position, part.geometry.attributes.normal, part.geometry.attributes.color])
@@ -75,6 +75,89 @@ describe("Bird designs", () => {
         expect(p.thermalPower).toBe(0);
         expect(p.thermalMach).toBe(0);
         expect(resolveVehicleThermal(createVehicleRecipe(p, "Goose")).profile).toBe("unpowered");
+    });
+
+    test("the pterodactyl crest tapers continuously to the smooth skull and saves at zero", () => {
+        const p = preset("bird-pterodactyl");
+        expect(p.wingTip).toBe("membrane");
+        expect(p.headCrest).toBeGreaterThan(0);
+        const recipe = createVehicleRecipe({...p, headCrest: 0}, "Smooth head", "bird-pterodactyl");
+        expect(recipe.generatorRevision).toBe(7);
+        const smooth = generateVehicle(JSON.parse(JSON.stringify(recipe)));
+        const full = buildVehicle(p), small = buildVehicle({...p, headCrest: 1});
+        const {headCrest, ...noCrestField} = p;
+        const original = buildVehicle(noCrestField);
+        const body = model => model.root.getObjectByName("Bird body").getObjectByProperty("isMesh", true).geometry;
+        try {
+            const base = body(smooth), raised = body(full), low = body(small);
+            expect(body(original).attributes.position.array).toEqual(base.attributes.position.array);
+            expect(base.index.array).toEqual(raised.index.array);
+            base.computeBoundingBox(); raised.computeBoundingBox(); low.computeBoundingBox();
+            const heightChange = raised.boundingBox.max.y - base.boundingBox.max.y;
+            expect(heightChange).toBeGreaterThan(0);
+            expect(low.boundingBox.max.y - base.boundingBox.max.y).toBeLessThan(heightChange / 40);
+            const a = base.attributes.position, b = raised.attributes.position, c = low.attributes.position;
+            let tip = 0;
+            for (let i = 1; i < a.count; i++) if (a.getZ(i) - b.getZ(i) > a.getZ(tip) - b.getZ(tip)) tip = i;
+            const sweep = a.getZ(tip) - b.getZ(tip);
+            expect(sweep / (p.length * p.headSize / 100 * headCrest / 100)).toBeCloseTo(1, 2);
+            expect(sweep).toBeGreaterThan(3 * heightChange);
+            expect(a.getZ(tip) - c.getZ(tip)).toBeCloseTo(sweep / headCrest, 7);
+            expect(smooth.recipe.parameters.headCrest).toBe(0);
+            expect(preset("bird-gull-herring").headCrest).toBe(0);
+        } finally {
+            for (const model of [full, small, smooth, original]) disposeVehicle(model.root);
+        }
+    });
+
+    test("the pterodactyl neck narrows below the nape and widens into the shoulder", () => {
+        const p = preset("bird-pterodactyl"), model = buildVehicle({...p, headCrest: 0});
+        try {
+            const skin = model.root.getObjectByName("Bird body").children[0].geometry.attributes.position;
+            const head = p.length * p.headSize / 100, neck = p.length * p.neckLength / 100;
+            const jaw = p.length * p.billLength / 100 * Math.cos(2 * Math.PI / 180) - head * .08;
+            const napeZ = model.bounds.max.z - jaw - head;
+            function section(fraction) {
+                const z = napeZ - neck * fraction, box = new Box3(), point = new Vector3();
+                for (let i = 0; i < skin.count; i++) {
+                    point.fromBufferAttribute(skin, i);
+                    if (Math.abs(point.z - z) < neck * .045) box.expandByPoint(point);
+                }
+                expect(box.isEmpty()).toBe(false);
+                return box;
+            }
+            const nape = section(.08), middle = section(.46), shoulder = section(.92);
+            expect(middle.max.x).toBeLessThan(nape.max.x * .8);
+            expect(middle.max.x).toBeLessThan(shoulder.max.x * .6);
+            expect(middle.getSize(new Vector3()).y).toBeLessThan(shoulder.getSize(new Vector3()).y * .7);
+            expect(nape.min.y).toBeGreaterThan(middle.min.y);
+            expect(middle.min.y).toBeGreaterThan(shoulder.min.y);
+        } finally {disposeVehicle(model.root);}
+    });
+
+    test("the pterodactyl wing membrane stays at the ankle while the wing finger rises and falls", () => {
+        const model = buildVehicle(preset("bird-pterodactyl"));
+        try {
+            for (const side of ["Left", "Right"]) {
+                const skin = model.root.getObjectByName(`${side} flight membrane`);
+                expect(skin.isSkinnedMesh).toBe(true);
+                const {position, skinWeight} = skin.geometry.attributes;
+                let ankle = 0, tip = 0;
+                for (let i = 0; i < position.count; i++) {
+                    if (position.getZ(i) < position.getZ(ankle)) ankle = i;
+                    if (position.getX(i) > position.getX(tip)) tip = i;
+                    expect(skinWeight.getX(i) + skinWeight.getY(i) + skinWeight.getZ(i)).toBeCloseTo(1, 6);
+                }
+                function pose(beats) {
+                    poseVehicleSpinners(model.waves, 0, true, {beats});
+                    model.root.updateMatrixWorld(true);
+                    return [ankle, tip].map(i => skin.getVertexPosition(i, new Vector3()));
+                }
+                const [ankleUp, tipUp] = pose(0), [ankleDown, tipDown] = pose(.5);
+                expect(ankleUp.distanceTo(ankleDown)).toBeLessThan(1e-6);
+                expect(tipUp.y - tipDown.y).toBeGreaterThan(model.stats.size.x * .2);
+            }
+        } finally {disposeVehicle(model.root);}
     });
 
     test("each preset has a species page, and says if its wingbeat rate is a measured value", () => {

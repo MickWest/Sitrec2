@@ -13,7 +13,10 @@ export function visibleVehicleBounds(root) {
     root.updateMatrixWorld(true);
     const bounds = new Box3();
     root.traverseVisible(object => {
-        if (object.isMesh) bounds.union(new Box3().setFromBufferAttribute(object.geometry.attributes.position).applyMatrix4(object.matrixWorld));
+        if (object.isSkinnedMesh) {
+            object.computeBoundingBox();
+            bounds.union(object.boundingBox.clone().applyMatrix4(object.matrixWorld));
+        } else if (object.isMesh) bounds.union(new Box3().setFromBufferAttribute(object.geometry.attributes.position).applyMatrix4(object.matrixWorld));
     });
     return bounds;
 }

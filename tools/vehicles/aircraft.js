@@ -810,6 +810,7 @@ export function buildAircraft(input) {
 export function disposeAircraft(root) {
     const geometries = new Set(), materials = new Set();
     root.traverse(object => {
+        if (object.isSkinnedMesh) object.skeleton.dispose();
         if (object.geometry) geometries.add(object.geometry);
         for (const mat of Array.isArray(object.material) ? object.material : [object.material]) if (mat) materials.add(mat);
     });

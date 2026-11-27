@@ -25,7 +25,7 @@ export async function openVehicleBrowserDialog({initialRecipe,edit=false,isAlive
         <section id="browser">
             <div class="catalog">
                 <div class="filters">
-                    <input id="search" type="search" aria-label="Search objects" placeholder="Search objects, manufacturer or role…">
+                    <input id="search" type="search" autocomplete="off" aria-label="Search objects" placeholder="Search objects, manufacturer or role…">
                     <select id="kind" aria-label="Object type"></select>
                     <select id="collection" aria-label="Collection"><option value="all">All presets</option><option value="favorites">Favorites</option><option value="recent">Recently used</option><option value="mine">My models</option></select>
                     <select id="region" aria-label="Region"></select>
@@ -125,7 +125,7 @@ export async function openVehicleBrowserDialog({initialRecipe,edit=false,isAlive
             if (!alive() || request !== editorRequest) return;
             preview?.dispose(); preview = undefined;
             $("browser").hidden = true; $("editor").hidden = false;
-            editor = mountEmbeddedVehicleEditor($("editor"),{recipe,onApply:apply,onSave:save,onBack:draft => {
+            editor = mountEmbeddedVehicleEditor($("editor"),{recipe,onApply:apply,onSave:save,onCancel:dispose,onBack:draft => {
                 editor.dispose(); editor = undefined; $("editor").hidden = true; $("browser").hidden = false;
                 select({...selected,recipe:draft,name:draft.name}); notice("");
             }});

@@ -110,6 +110,9 @@ in **Objects**. For a generated shape, the size control (such as **Radius (m)**)
 **Geometry**. Shape sizes are in meters. **Mesh Detail** controls the number of segments.
 [Objects and 3D Models](CustomModels.md)
 
+For a tower with a flashing beacon, choose **Browse custom objects… → Ground objects**, select
+**Radio tower with lights**, and click **Use this object**. [Ground object presets](CustomModels.md#ground-objects)
+
 If the sphere is hard to see from a distance, temporarily increase **Objects → Global Scale**.
 This enlarges all objects. Set it back to 1 to see them at their real size.
 

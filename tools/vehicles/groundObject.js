@@ -5,6 +5,7 @@ import {
 import {mergeGeometries} from "three/addons/utils/BufferGeometryUtils.js";
 
 import {buildTransmissionTower, towerCapacity, towerClamp} from "./transmissionTower.js";
+import {brickWall, chainLink, woodFence, railing} from "./wallsAndFences.js";
 
 const tau = Math.PI * 2;
 const point = (x, y, z) => new Vector3(x, y, z);
@@ -119,6 +120,52 @@ function telegraphPole(p, parts) {
             }
         }
     }
+}
+
+function radioTower(p, parts) {
+    const footHeight = Math.min(.6, p.height * .015);
+    const legRadius = Math.min(p.baseWidth * .024, p.height * .003);
+    const mastBase = p.height * .89;
+    const corner = (side, level) => {
+        const angle = side * tau / 3;
+        const radius = p.baseWidth / Math.sqrt(3) * (1 - .91 * level);
+        return point(Math.sin(angle) * radius, footHeight + (mastBase - footHeight) * level, Math.cos(angle) * radius);
+    };
+    for (let side = 0; side < 3; side++) {
+        const foot = corner(side, 0), width = legRadius * 6;
+        parts.box("Concrete feet", "#929089", foot.x, footHeight / 2, foot.z, width, footHeight, width);
+    }
+    for (let bay = 0; bay < p.bays; bay++) {
+        const lower = bay / p.bays, upper = (bay + 1) / p.bays;
+        const band = Math.floor(7 * (lower + upper) / 2) % 2;
+        const steel = (a, b, radius) => parts.beam(band ? "Light bands" : "Tower paint",
+            band ? p.bandColor : p.shaftColor, a, b, radius);
+        for (let side = 0; side < 3; side++) {
+            const bottom = corner(side, lower), top = corner(side, upper);
+            const nextBottom = corner(side + 1, lower), nextTop = corner(side + 1, upper);
+            steel(bottom, top, legRadius);
+            steel(top, nextTop, legRadius * .6);
+            steel(bottom, nextTop, legRadius * .45);
+            steel(nextBottom, top, legRadius * .45);
+        }
+    }
+
+    const fixtures = [];
+    function lens(name, base, radius, height, intensity, flashing = false) {
+        parts.beam(name + " lens", "#c92920", base, base.clone().add(point(0, height, 0)), radius, radius, 12);
+        fixtures.push({name, intensity, flashing});
+    }
+    for (let side = 0; side < 3; side++) {
+        const leg = corner(side, Math.round(p.bays / 2) / p.bays);
+        const bracket = point(leg.x, 0, leg.z).normalize().multiplyScalar(legRadius + .24).add(leg);
+        parts.beam("Antenna and brackets", "#a5aaad", leg, bracket, .065);
+        lens("Side marker " + (side + 1), bracket, .15, .28, 32);
+        parts.beam("Antenna and brackets", "#a5aaad", corner(side, 1), point(0, mastBase, 0), legRadius);
+    }
+    const beaconBase = point(0, p.height - .48, 0);
+    parts.beam("Antenna and brackets", "#a5aaad", point(0, mastBase, 0), beaconBase, legRadius, legRadius * .65);
+    lens("Top beacon", beaconBase, .25, .48, 2000, true);
+    return fixtures;
 }
 
 function chimney(p, parts) {
@@ -271,8 +318,9 @@ function triangles(vertices) {
 
 export function buildGroundObject(p, {simple = false} = {}) {
     const parts = groundParts(simple), random = randomSequence(p.seed);
-    const builders = {pylon: buildTransmissionTower, pole: telegraphPole, chimney, cooling: coolingTower, tree, boulder};
-    builders[p.groundKind](p, parts, random);
+    const builders = {pylon: buildTransmissionTower, pole: telegraphPole, radioTower, chimney, cooling: coolingTower, tree, boulder,
+        brickWall, chainLink, woodFence, railing};
+    const obstructionLamps = builders[p.groundKind](p, parts, random);
     const root = parts.finish();
     if (p.groundKind === "pole" || p.groundKind === "pylon") {
         const count = powerWireCapacity(p);
@@ -290,5 +338,5 @@ export function buildGroundObject(p, {simple = false} = {}) {
             mesh.geometry.scale(stone ? p.width/size.x : lateral, p.height/size.y, stone ? p.depth/size.z : lateral);
         }
     }
-    return {root, propellers: [], lamps: [], stats: {}};
+    return {root, propellers: [], lamps: [], obstructionLamps, stats: {}};
 }

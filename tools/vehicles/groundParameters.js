@@ -4,6 +4,8 @@ const number = (key, label, min, max, step, value) => ({key, label, min, max, st
 const color = (key, label, value) => ({key, label, value, type: "color"});
 const seed = number("seed", "Shape seed", 1, 99999, 1, 47);
 const height = (min, max, value) => number("height", "Height · m", min, max, .1, value);
+const runLength = number("length", "Length · m", .5, 24, .1, 5.4);
+const postSpacing = number("postSpacing", "Max post spacing · m", .6, 3.6, .05, 1.8);
 const style = (key, value, options) => ({key, label: "Regional design", type: "select", value, options});
 
 // These are visual starting dimensions in metres. The style key is also the
@@ -29,6 +31,36 @@ const transmissionPresets = [
 export const tubularTower = style => ["woodH","linePost","davit","threePole","tPylon","wintrack"].includes(style);
 
 const forms = {
+    brickWall: {name: "Brick wall", fields: [
+        runLength, height(.3, 4, 1.6), number("thickness", "Thickness · m", .09, .6, .01, .22),
+        color("brickColor", "Brick", "#ab5541"), color("mortarColor", "Mortar", "#c3b6a3"),
+    ]},
+    chainLink: {name: "Chain-link fence", fields: [
+        runLength, height(.5, 4, 1.8), postSpacing, number("meshOpening", "Diamond width · m", .05, .2, .005, .085),
+        color("wireColor", "Wire", "#919c9f"), color("frameColor", "Posts and rails", "#9ea8aa"),
+    ]},
+    woodFence: {name: "Wood fence", fields: [
+        runLength, height(.4, 3, 1.1), postSpacing,
+        {key: "boardStyle", label: "Board style", type: "select", value: "pointed",
+            options: {pointed: "Pointed pickets", dogEar: "Dog-ear pickets", shadowbox: "Good-neighbor · alternating boards"}},
+        number("boardWidth", "Board width · m", .06, .23, .005, .095),
+        color("boardColor", "Boards", "#f1efe4"), color("frameColor", "Posts and rails", "#e5e1d4"),
+    ]},
+    railing: {name: "Metal railings", fields: [
+        runLength, height(.4, 2.5, 1.05), postSpacing,
+        {key: "railStyle", label: "Rail style", type: "select", value: "balusters",
+            options: {balusters: "Vertical balusters", pipe: "Horizontal pipe rails"}},
+        color("metalColor", "Metal", "#383d40"),
+    ]},
+    radioTower: {name: "Radio tower", fields: [
+        height(12, 200, 60), number("baseWidth", "Foot spacing · m", 2, 20, .1, 8),
+        number("bays", "Braced sections", 6, 28, 1, 14),
+        color("shaftColor", "Tower paint", "#c84a31"), color("bandColor", "Contrasting bands", "#eeeae1"),
+        {key: "lightsEnabled", label: "Obstruction lights", type: "checkbox", value: true},
+        number("lightGain", "Light brightness multiplier", .1, 5, .1, 1),
+        number("flashPeriod", "Beacon flash interval · s", .5, 5, .05, 2),
+        number("flashDuration", "Beacon flash duration · s", .05, 1, .05, .5),
+    ]},
     pylon: {name: "Transmission pole or tower", fields: [
         style("towerStyle", "us", {us: "North American · stacked crossarms", horizontal: "US · horizontal single circuit",
             british: "British · three-tier lattice", ...Object.fromEntries(transmissionPresets.map(([key,,name]) => [key,name]))}),
@@ -94,6 +126,17 @@ export const GROUND_PRESETS = [
         {poleStyle:"british", height:11, armSpan:2.9, armLevels:1}, "Europe"),
     preset("french-pole", "French concrete distribution pole", "pole", "Utilities",
         {poleStyle:"vaulted", height:12, armSpan:4.5, armLevels:1}, "Europe"),
+    preset("radio-tower", "Radio tower with lights", "radioTower", "Communications"),
+    preset("brick-wall", "Brick wall", "brickWall", "Walls and fences"),
+    preset("chain-link-fence", "Chain-link fence", "chainLink", "Walls and fences", {postSpacing: 2.7}),
+    preset("white-picket-fence", "White picket fence", "woodFence", "Walls and fences"),
+    preset("brown-picket-fence", "Brown picket fence", "woodFence", "Walls and fences",
+        {boardStyle: "dogEar", boardColor: "#976741", frameColor: "#795237", height: 1.2}),
+    preset("good-neighbor-fence", "Good-neighbor wood fence", "woodFence", "Walls and fences",
+        {boardStyle: "shadowbox", boardWidth: .145, boardColor: "#ad825a", frameColor: "#8c674a", height: 1.8}),
+    preset("metal-railings", "Black metal railings", "railing", "Walls and fences"),
+    preset("pipe-railings", "Galvanized metal pipe railings", "railing", "Walls and fences",
+        {railStyle: "pipe", metalColor: "#9aa4a7"}),
     preset("chimney", "Industrial chimney", "chimney", "Industry"),
     preset("cooling-tower", "Natural-draft cooling tower", "cooling", "Industry"),
     preset("oak", "Spreading oak tree", "tree", "Trees"),

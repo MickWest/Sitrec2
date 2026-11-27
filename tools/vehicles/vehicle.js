@@ -25,7 +25,7 @@ function buildModel(input) {
     model.root.userData.up = "+Y";
     model.root.userData.forward = "+Z";
     if (!plain) addVehicleLivery(model,p);
-    if (!ground) addVehicleLights(model, p);
+    if (!ground || model.obstructionLamps) addVehicleLights(model, p);
     model.root.traverse(object => {if (object.isMesh) tagThermalMesh(object, p);});
     const scale = p.overallScale;
     if (scale !== 1) {

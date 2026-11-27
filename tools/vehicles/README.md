@@ -50,8 +50,8 @@ and [TenneT's Wintrack brochure](https://netztransparenz.tennet.eu/fileadmin/use
 ## Standalone editor
 
 Open **Sitrec → Extra Tools → Custom Object Designer**, or `tools/vehicles/index.html`
-on a built Sitrec site. It fills the browser window, with collapsible parameter
-folders on the left and a Three.js preview on the right. On narrow screens the
+on a built Sitrec site. Presets are on the left, the preview is in the center
+and editing controls are on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
 
 Choose a preset, then drag sliders or type exact values. The model
@@ -65,6 +65,7 @@ not editing a control. Selecting an entry previews it immediately.
 **Scale → Overall scale** multiplies every dimension of the object, from 0.01 to
 100. A value of 0.1 makes a 1:10 scale model. The other controls keep the
 full-size dimensions, and the read-outs under the preview show the scaled sizes.
+The preview grid stays in place and keeps its spacing as you adjust Overall scale.
 The slider moves by ratio, with 1 in the middle. The lamps move with the model.
 Their intensity changes with the square of the scale, so a scale model looks the
 same as the full-size object from a distance that is in proportion. The lifting
@@ -132,9 +133,17 @@ tails as in a steady 12-knot wind, and the preview of a bird beats its wings.
 For a ground object, right-click its intended location, choose **Add 3D Object**,
 then **Browse custom objects… → Ground objects**. The transmission pylon has
 adjustable height, foot spacing, crossarm span, crossarm levels and lattice sections.
+**Radio tower with lights** has a flashing red top beacon and steady side markers.
+Its editor controls the tower dimensions, paint, brightness and beacon timing.
 Other presets include a wooden telegraph pole, an industrial chimney, a cooling
 tower, oak, pine and palm trees, and a boulder. The tree and boulder shape seeds
 give repeatable variations. The origin of each ground model is at its base.
+
+Search for **Walls and fences** to find a running-bond brick wall, an open diamond-mesh chain-link fence,
+white pointed pickets, brown dog-ear pickets, a good-neighbor fence, black metal railings with vertical balusters,
+and galvanized horizontal pipe railings. Each run has an editable length, height and colors. Fence and railing
+posts divide the length into equal bays within the selected maximum spacing. The good-neighbor fence alternates
+overlapping boards on opposite sides of the rails.
 
 **Customize…** opens the full live designer. **Apply to object** accepts the
 draft, **Back** returns to the picker and keeps the draft, and **Cancel** leaves
@@ -418,6 +427,17 @@ more than one plumage, for example an adult and a young herring gull, and four
 colors of pigeon. A bird model has its bill toward +Z and its left wing toward
 +X. Its origin is on the body axis, between the wing roots.
 
+The **Pterodactyl** preset has a 6 m wingspan and the long, swept-back crest of a large
+*Pteranodon*. Its slender jaws continue into an arched nape. The neck
+narrows below it and widens again at the shoulders. **Bird → Head crest** sets how far the
+crest sweeps back, as a percentage of head length. At **0** the crown is smooth. The neck
+contour, colors and wingbeat are illustrative.
+[Pterodactylus skull and crest specimens](https://doi.org/10.1007/s12542-012-0159-8) · [Pteranodon crest](https://www.amnh.org/explore/ology/ology-cards/358-pteranodon-longiceps) · [Ultraviolet study of *Pterodactylus* specimens](https://doi.org/10.1080/14772019.2024.2421845)
+
+Each wing has a bent elbow, three small free digits at the wrist and an elongated fourth
+digit supporting the outer membrane. The curved trailing edge reaches the ankle and stays
+attached as the wrist moves. [Fossil evidence for the flight membrane](https://www.app.pan.pl/article/item/app20090145.html)
+
 **Bird** sets the body. **Length, bill tip to tail tip** is the length of the
 model in its flight pose. All the other sizes of the body are percentages of it,
 so one value changes the size of the bird. **Neck in flight** is stretched
@@ -437,8 +457,7 @@ the bend at the front edge of the wing:
 - **Outer wing swept back** is the angle of the bend at the wrist. It gives a
   gull its M shape
 - **Outer wing droop** lowers the outer wing in a glide
-- **Wing tip** is pointed, rounded, or separate feathers that fan out, as on an
-  eagle, a crane or a raven
+- **Wing tip** can be pointed, rounded, fanned into separate feathers, or a membrane supported by a long wing finger
 
 **Tail** sets the length of the tail, the angle of its fan and its shape:
 rounded, square, wedge (a raven), long and pointed (a mourning dove) or forked (a

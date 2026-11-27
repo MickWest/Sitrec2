@@ -639,6 +639,7 @@ export function disposeObject(object) {
 
     // if (object.type === 'Mesh' || object.type === 'Line' || object.type === 'Points') {
     // Dispose geometry
+    if (object.isSkinnedMesh) object.skeleton.dispose();
     if (object.geometry) {
         object.geometry.dispose();
     }

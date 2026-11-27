@@ -1,7 +1,7 @@
 // Small, dependency-free envelope shared by Sitrec and the standalone designer.
 // Increment the generator revision when a geometry change alters saved designs.
 export const VEHICLE_GENERATOR = "sitrec-vehicle";
-export const VEHICLE_GENERATOR_REVISION = 2;
+export const VEHICLE_GENERATOR_REVISION = 7;
 export function vehicleFileStem(name, maxLength = 80) {
     return String(name || "vehicle").replace(/[^a-z0-9_-]+/gi,"-").replace(/^-|-$/g,"").slice(0,maxLength) || "vehicle";
 }
