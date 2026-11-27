@@ -446,7 +446,13 @@ function shouldSleepAnimationLoop() {
     });
 }
 
-function wakeAnimationLoop() {
+function wakeAnimationLoop({playbackResumed = false} = {}) {
+    if (playbackResumed) {
+        // The loop can sleep between scrubbing and Play. Count elapsed frames
+        // from the moment playback resumes, even if a redraw is already queued.
+        then = performance.now();
+        thenRender = then;
+    }
     // forceRenderLoop / the MCP bridge bypass the hidden gate so the loop can
     // be (re)started while backgrounded; the keep-awake worker then paces it.
     if (document.hidden && !forceRenderLoop && !mcpKeepAwake()) return;

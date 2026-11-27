@@ -10,14 +10,17 @@ describe("par paused state", () => {
         delete globalThis.__sitrecWakeRenderLoop;
     });
 
-    test("wakes the render loop when transitioning from paused to playing", () => {
+    test("only a paused-to-playing transition restarts the playback clock", () => {
         const wakeRenderLoop = jest.fn();
         globalThis.__sitrecWakeRenderLoop = wakeRenderLoop;
 
         par.paused = true;
+        par.frame = 0;
         par.paused = false;
+        par.paused = false;
+        par.frame = 1;
 
-        expect(wakeRenderLoop).toHaveBeenCalledTimes(1);
+        expect(wakeRenderLoop.mock.calls).toEqual([[], [{playbackResumed: true}], []]);
     });
 
     test("does not wake the render loop when staying paused", () => {

@@ -81,7 +81,7 @@ const parDefaults = {
         this._paused = nextPaused;
 
         if (wasPaused && !nextPaused) {
-            globalThis.__sitrecWakeRenderLoop?.();
+            globalThis.__sitrecWakeRenderLoop?.({playbackResumed: true});
         }
     },
 
