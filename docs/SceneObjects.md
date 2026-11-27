@@ -40,6 +40,8 @@ ways. Crossarms follow the route direction and supports sit on the terrain. Mapp
 take precedence over the preset heights. A tagged North American 765 kV single circuit
 uses the horizontal pylon design.
 
+On a UK tower, a mapped `design:ref` such as `L2`, `L4(m)` or `L6 D` selects the corresponding suspension model. If you know the series from a photograph, right-click the imported tower and use **Browse custom objects…**. Search for the series to apply its standard dimensions, or change only **Regional design** under **Edit design…** to keep the dimensions you have. [Compare the UK tower silhouettes](CustomModels.md#ground-objects)
+
 Right-click a mapped pole or tower to edit it as a regular object. Move, rotate or resize it
 with the usual controls. The wires follow the insulators. Only supports you open get
 individual object editors. All other supports share the batched renderer.

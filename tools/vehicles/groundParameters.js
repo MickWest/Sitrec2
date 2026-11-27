@@ -1,3 +1,5 @@
+import {ukTransmission} from "./ukTransmission.js";
+
 const number = (key, label, min, max, step, value) => ({key, label, min, max, step, value, type: "number"});
 const color = (key, label, value) => ({key, label, value, type: "color"});
 const seed = number("seed", "Shape seed", 1, 99999, 1, 47);
@@ -18,6 +20,11 @@ const transmissionPresets = [
     ["tPylon", "t-pylon", "British T-pylon", "Europe", {height:35, armSpan:29, shaftDiameter:2.2, steelColor:"#cbd1d0"}],
     ["wintrack", "wintrack", "Dutch Wintrack twin poles", "Europe", {height:58, baseWidth:20, armSpan:13,
         shaftDiameter:1.8, steelColor:"#d9ddda"}],
+    ...Object.entries(ukTransmission).map(([key,{series,height,baseWidth,armSpan,description}]) =>
+        [key,"uk-"+key.slice(2).toLowerCase(),`UK ${series} suspension tower`,"Europe",{height,baseWidth,armSpan},
+            {description, quality:"British L-series standard dimensions", length:height, lengthLabel:"high",
+                wingspan:armSpan, spanLabel:"crossarm span", source:key === "ukL2" ? "https://www.pylons.org/members/field/L2.pdf" :
+                    "https://telcontar.net/Power/pylons/"+(key === "ukL4" ? "L4m" : key.slice(2))}]),
 ];
 export const tubularTower = style => ["woodH","linePost","davit","threePole","tPylon","wintrack"].includes(style);
 
@@ -81,8 +88,8 @@ export const GROUND_PRESETS = [
         {towerStyle:"horizontal", height:48, baseWidth:12, armSpan:40}),
     preset("british-pylon", "British double-circuit lattice pylon", "pylon", "Utilities",
         {towerStyle:"british", height:45, baseWidth:9, armSpan:21}, "Europe"),
-    ...transmissionPresets.map(([towerStyle,id,name,region,dimensions]) =>
-        preset(id,name,"pylon","Utilities",{towerStyle,...dimensions},region)),
+    ...transmissionPresets.map(([towerStyle,id,name,region,dimensions,reference]) =>
+        ({...preset(id,name,"pylon","Utilities",{towerStyle,...dimensions},region),reference})),
     preset("british-pole", "British timber distribution pole", "pole", "Utilities",
         {poleStyle:"british", height:11, armSpan:2.9, armLevels:1}, "Europe"),
     preset("french-pole", "French concrete distribution pole", "pole", "Utilities",

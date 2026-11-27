@@ -1,5 +1,6 @@
 import {Vector3} from "three";
 import {tubularTower} from "./groundParameters.js";
+import {ukTransmission} from "./ukTransmission.js";
 
 const point = (x, y, z = 0) => new Vector3(x, y, z);
 
@@ -67,6 +68,7 @@ const fixedClamps = {
 };
 
 function latticeTiers(p) {
+    if (ukTransmission[p.towerStyle]) return ukTransmission[p.towerStyle].tiers;
     if (fixedTiers[p.towerStyle]) return fixedTiers[p.towerStyle];
     return Array.from({length:p.armLevels}, (_,i) => p.towerStyle === "british"
         ? [.80-.19*i, [.36,.50,.45][i]]
@@ -78,7 +80,7 @@ const latticeSpan = p => Math.max(p.armSpan,p.baseWidth*1.3);
 
 export function towerCapacity(p) {
     if (fixedClamps[p.towerStyle]) return fixedClamps[p.towerStyle].length;
-    if (p.towerStyle === "wintrack" || fixedTiers[p.towerStyle]) return 6;
+    if (p.towerStyle === "wintrack" || fixedTiers[p.towerStyle] || ukTransmission[p.towerStyle]) return 6;
     return 2*p.armLevels;
 }
 
@@ -97,7 +99,7 @@ export function towerClamp(p, index) {
     }
     let pair = Math.floor((index % towerCapacity(p))/2);
     for (const [level,...offsets] of latticeTiers(p)) {
-        if (pair < offsets.length) return [sign*offsets[pair]*latticeSpan(p),level-.071];
+        if (pair < offsets.length) return [sign*offsets[pair]*latticeSpan(p),level-(ukTransmission[p.towerStyle]?.drop ?? .071)];
         pair -= offsets.length;
     }
 }
@@ -114,17 +116,20 @@ function insulator(parts, start, end, radius) {
     }
 }
 
-function latticeTower(p, parts, steel, r) {
+function squareRing(w,y) {
+    return [point(-w,y,-w),point(w,y,-w),point(w,y,w),point(-w,y,w)];
+}
+
+function mastFootings(p, parts, r) {
+    const base = squareRing(p.baseWidth/2,r*2);
+    for (const a of base) parts.box("Concrete footings","#a5a399",a.x,r*1.8,a.z,r*8,r*3.6,r*8);
+    return base;
+}
+
+function latticeMast(p, parts, steel, r) {
     const h = p.height, foot = p.baseWidth/2;
-    const ring = level => {
-        const w = foot*(.22+.78*Math.max(0,1-level/.56)), y = h*level;
-        return [point(-w,y,-w),point(w,y,-w),point(w,y,w),point(-w,y,w)];
-    };
-    let lower = ring(0);
-    for (const a of lower) {
-        parts.box("Concrete footings","#a5a399",a.x,r*1.8,a.z,r*8,r*3.6,r*8);
-        a.y = r*2;
-    }
+    const ring = level => squareRing(foot*(.22+.78*Math.max(0,1-level/.56)),h*level);
+    let lower = mastFootings(p,parts,r);
     const corners = [lower[2]], bays = parts.simple ? 2 : p.bays;
     for (let i=1; i<=bays; i++) {
         const upper = ring(.91*i/bays);
@@ -141,6 +146,60 @@ function latticeTower(p, parts, steel, r) {
     const apex = point(0,h);
     for (const a of lower) steel(a,apex);
     corners.push(apex);
+    return corners;
+}
+
+// UK suspension masts have a flat earth-wire seat and open bracing near the
+// feet. Place rings at the arm roots so the head keeps its outline in both LODs.
+function ukSuspensionMast(p, profile, parts, steel, r) {
+    const {tiers,below,above} = profile, foot = p.baseWidth/2;
+    const lowerArm = tiers[2][0], knee = .32;
+    const width = t => foot*(t < knee ? 1-.48*t/knee : t < lowerArm
+        ? .52-.18*(t-knee)/(lowerArm-knee) : .34-.21*(t-lowerArm)/(1-lowerArm));
+    let lower = mastFootings(p,parts,r);
+    const corners = [lower[2]];
+    let previous = 0;
+    function section(end, brace) {
+        const count = parts.simple ? 1 : Math.max(1,Math.round((end-previous)*p.bays));
+        for (let i=1; i<=count; i++) {
+            const t = previous+(end-previous)*i/count;
+            const upper = squareRing(width(t),Math.min(t*p.height,p.height-r));
+            for (let j=0; j<4; j++) {
+                const k = (j+1)%4;
+                steel(lower[j],upper[j],r*1.35);
+                steel(upper[j],upper[k]);
+                if (brace === "X") {
+                    steel(lower[j],upper[k],r*.63);
+                    steel(lower[k],upper[j],r*.63);
+                } else {
+                    const [tips,base] = brace === "V" ? [upper,lower] : [lower,upper];
+                    const middle = base[j].clone().lerp(base[k],.5);
+                    steel(tips[j],middle,r*.70);
+                    steel(tips[k],middle,r*.70);
+                }
+            }
+            lower = upper;
+            corners.push(upper[2]);
+        }
+        previous = end;
+    }
+    section(knee,"inverted V");
+    for (let i=tiers.length-1; i>=0; i--) {
+        const level = tiers[i][0];
+        section(level-below,"X");
+        // The bracing across the top and middle crossarms distinguishes L2 from L3.
+        let brace = "X";
+        if (p.towerStyle === "ukL2") brace = i === 0 ? "inverted V" : "V";
+        if (p.towerStyle === "ukL3" && i === 2) brace = "inverted V";
+        section(level+above,brace);
+    }
+    section(1,"X");
+    return corners;
+}
+
+function latticeTower(p, parts, steel, r) {
+    const h = p.height, uk = ukTransmission[p.towerStyle];
+    const corners = uk ? ukSuspensionMast(p,uk,parts,steel,r) : latticeMast(p,parts,steel,r);
     // The taper bends at the actual ring elevations, which differ by detail
     // level. Intersect each chord with its leg at its own attachment height.
     function legWidth(y) {
@@ -150,14 +209,15 @@ function latticeTower(p, parts, steel, r) {
     }
     let cable = 0;
     for (const [level,...offsets] of latticeTiers(p)) {
-        const y = h*level, top = h*(level+.061), lowW = legWidth(y), highW = legWidth(top);
+        const y = h*level, bottom = h*(level-(uk?.below ?? 0)), top = h*(level+(uk?.above ?? .061));
+        const lowW = legWidth(bottom), highW = legWidth(top);
         const reach = offsets.at(-1)*latticeSpan(p);
         for (const side of [-1,1]) {
             const tip = point(side*reach,y);
             for (const face of [-1,1]) {
-                const low = point(side*lowW,y,face*lowW), high = point(side*highW,top,face*highW);
+                const low = point(side*lowW,bottom,face*lowW), high = point(side*highW,top,face*highW);
                 steel(low,tip); steel(high,tip);
-                for (let i=1; !parts.simple && i<4; i++) {
+                for (let i=1; !parts.simple && p.towerStyle !== "ukL4" && i<4; i++) {
                     const joint = low.clone().lerp(tip,i/4);
                     steel(high.clone().lerp(tip,(i-1)/4),joint,r*.55);
                     steel(joint,high.clone().lerp(tip,i/4),r*.55);

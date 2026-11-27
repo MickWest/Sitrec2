@@ -1,3 +1,5 @@
+import {ukSuspensionStyle} from "../tools/vehicles/ukTransmission.js";
+
 // Coordinates in the interchange formats are longitude first. A way vertex is
 // often just a bend in the mapped line. Only explicit tower/pole nodes get models.
 const many = value => value == null ? [] : Array.isArray(value) ? value : [value];
@@ -7,6 +9,10 @@ const isWay = tag => tag === "line" || tag === "minor_line";
 function supportDesign(tags) {
     if (tags["sitrec:design"]) return tags["sitrec:design"];
     if (tags.power !== "tower") return;
+    if (!tags.line_attachment || tags.line_attachment === "suspension") {
+        const ukStyle = ukSuspensionStyle(tags["design:ref"]);
+        if (ukStyle) return ukStyle;
+    }
     if (tags.design === "donau") return "danube";
     if (tags.design === "barrel") return "barrel";
     if (tags.design === "bipole") return "wintrack";

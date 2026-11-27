@@ -38,19 +38,40 @@ test.each(towers.map(p => [p.id,p.parameters]))("%s has a physical insulator at 
     }
 });
 
-test.each(["ground-british-pylon","ground-pylon"])("%s crossarm chords meet the modelled mast legs", id => {
+const ukTowers = towers.filter(p => p.id.startsWith("ground-uk-"));
+test.each(["ground-british-pylon","ground-pylon",...ukTowers.map(p => p.id)])("%s crossarm chords meet the modelled mast legs", id => {
     const preset = towers.find(p => p.id === id);
     for (const [simple,bays] of [[true,8],[false,4],[false,9],[false,14]]) {
         const p = {...preset.parameters,bays};
-        const steel = towerMembers(p,simple).filter(m => m.name === "Galvanized steel");
+        const members = towerMembers(p,simple);
+        const steel = members.filter(m => m.name === "Galvanized steel");
+        const hangers = members.filter(m => m.name === "Insulator strings").map(m => m.a);
         // Mast corner legs run up within one quadrant, or from it to the apex.
         const legs = steel.filter(({a,b}) => b.y>a.y && Math.abs(a.x)===Math.abs(a.z) &&
             Math.abs(b.x)===Math.abs(b.z) && a.x*b.x>=0 && a.z*b.z>=0).map(({a,b}) => new Line3(a,b));
-        const chords = steel.filter(({a,b}) => a.z!==0 && Math.abs(a.x)===Math.abs(a.z) && b.z===0 && Math.abs(b.x)>0);
+        const chords = steel.filter(({a,b}) => a.z!==0 && Math.abs(a.x)===Math.abs(a.z) &&
+            hangers.some(tip => b.distanceTo(tip)<1e-6));
         expect(chords).toHaveLength(p.armLevels*8);
         const at = new Vector3();
         for (const {a} of chords) {
             expect(legs.some(leg => leg.closestPointToPoint(a,true,at).distanceTo(a)<1e-6)).toBe(true);
+        }
+    }
+});
+
+test("UK suspension towers keep six distinct clamps and the characteristic order of arm widths", () => {
+    expect(ukTowers).toHaveLength(7);
+    for (const {parameters} of ukTowers) {
+        const p = {...parameters, armLevels:1};
+        expect(towerCapacity(p)).toBe(6);
+        const [top,middle,bottom] = [1,3,5].map(index => towerClamp(p,index));
+        expect(top[1]).toBeGreaterThan(middle[1]);
+        expect(middle[1]).toBeGreaterThan(bottom[1]);
+        expect(middle[0]).toBeGreaterThan(top[0]);
+        if (["ukL2","ukL3"].includes(p.towerStyle)) {
+            expect(bottom[0]).toBeGreaterThan(middle[0]);
+        } else {
+            expect(middle[0]).toBeGreaterThan(bottom[0]);
         }
     }
 });

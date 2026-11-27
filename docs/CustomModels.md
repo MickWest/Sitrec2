@@ -49,6 +49,12 @@ In the designer, **Scale → Overall scale** multiplies every dimension of the o
 
 With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add Kite** uses: see [Kites](SceneObjects.md#kites).
 
+#### Ground objects
+
+Search for **UK suspension** or a series designation such as **L4**. Each UK preset represents a standard-height double-circuit suspension tower (type D), used on straight runs. The seven models below are shown at the same scale. L2 and L3 have three nearly equal-width crossarms. L4(m) is a compact tower with shallow, open arms. The much larger L6 has a wide middle arm. The L3 and L6 presets use the Blaw Knox and Balfour Beatty versions respectively. [British tower series](https://telcontar.net/Power/pylons/series) · [L2 field guide (PDF)](https://www.pylons.org/members/field/L2.pdf)
+
+![Seven UK suspension towers at the same scale, from left to right: L2 (41.6 m), L3 (36.8 m), L4(m) (26.1 m), L6 (50 m), L7(c) (26.9 m), L8(c) (46.4 m) and L12 (46.5 m).](docimages/uk-suspension-towers.jpg)
+
 #### Birds
 
 The **Birds** type of the Custom Object Designer has 40 birds in flight: gulls, pelicans, cranes, a raven and a crow, pigeons and doves, geese, swans, a duck, eagles, a hawk, a vulture, a heron, an egret, a stork, seabirds, an owl and small birds. Some species have more than one plumage. Each bird has the typical length and wingspan of its species, so its size on the screen is correct for its distance.

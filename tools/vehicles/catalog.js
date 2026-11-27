@@ -18,7 +18,7 @@ export function createVehicleFilter({query="",kind="",region=""} = {}) {
         if (!words.length) return true;
         const transmission = (preset.parameters ?? preset.recipe?.parameters)?.groundKind === "pylon";
         const terms = transmission ? "transmission power poles towers pylons" : "";
-        const text = normalize(`${preset.name} ${preset.category ?? ""} ${preset.region ?? ""} ${terms}`);
+        const text = normalize(`${preset.name} ${preset.category ?? ""} ${preset.region ?? ""} ${preset.reference?.quality ?? ""} ${terms}`);
         return words.every(word => text.includes(word));
     };
 }

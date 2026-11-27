@@ -35,6 +35,23 @@ test("incomplete Overpass ways split at missing nodes", () => {
     expect(network.ways.map(w => w.path)).toEqual([[0,1],[2,0]]);
 });
 
+test("British suspension design references select the matching shared model", () => {
+    const refs = ["L2", "L3 D", "l4(m)", "L4m D STD", "L6", "L7(c)", "L8c", "L12 D"];
+    const tags = refs.map(ref => ({power:"tower", "design:ref":ref}));
+    tags.push({...tags[0],"sitrec:design":"barrel"}, {...tags[0],line_attachment:"anchor"},
+        {power:"tower","design:ref":"L2 D30"}, {power:"tower","design:ref":"L24"}, {power:"pole","design:ref":"L2"});
+    const network = parsePowerNetwork({elements:tags.map((tags,id) => ({type:"node",id,lon:-1+id*.0001,lat:52,tags}))});
+    const display = createPowerNetworkGeometry(network,() => new Vector3());
+    try {
+        expect(display.points.map(p => p.presetId)).toEqual(["ground-uk-l2","ground-uk-l3","ground-uk-l4",
+            "ground-uk-l4","ground-uk-l6","ground-uk-l7","ground-uk-l8","ground-uk-l12",
+            "ground-barrel-pylon","ground-pylon","ground-pylon","ground-pylon","ground-telegraph-pole"]);
+        const l4 = display.points[2];
+        expect(l4.parameters).toBe(display.points[3].parameters);
+        expect(l4.parameters.height).toBe(26.1);
+    } finally {display.dispose();}
+});
+
 test("mapped designs select shared tower instances and retain explicit Sitrec design overrides", () => {
     const features = [
         feature(tower,"Point",a), feature({...tower,design:"donau"},"Point",a),
