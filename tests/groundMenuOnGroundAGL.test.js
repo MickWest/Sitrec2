@@ -8,9 +8,13 @@
 // stubbed, and the camera and target position nodes are fakes that record setLLA.
 import {menuMethods} from '../src/CustomManagerMenus';
 import {CNodeManager} from '../src/nodes/CNodeManager';
-import {Globals, setNodeMan, setSynth3DManager} from '../src/Globals';
-import {LLAToECEF} from '../src/LLA-ECEF-ENU';
+import {Globals, setNodeMan, setSit, setSynth3DManager, setTrackManager, TrackManager} from '../src/Globals';
+import {ECEFToLLAVD_radii, LLAToECEF} from '../src/LLA-ECEF-ENU';
 
+import {Matrix4, Vector3} from "three";
+import {getVisiblePointBelow} from "../src/threeExt";
+
+jest.mock("../src/nodes/CNode3DObject", () => ({CNode3DObject: jest.fn()}));
 jest.mock("../src/EGM96Geoid", () => ({
     __esModule: true,
     ...jest.requireActual("../src/EGM96Geoid"),
@@ -20,6 +24,7 @@ jest.mock("../src/threeExt", () => ({
     __esModule: true,
     ...jest.requireActual("../src/threeExt"),
     elevationAtLL: jest.fn(() => 0),
+    getVisiblePointBelow: jest.fn(),
 }));
 
 // Geoid height N (HAE = MSL + N): non-zero, so a mix-up of HAE and MSL shows.
@@ -32,9 +37,13 @@ let nodeMan, menu, menuData, camera, target;
 
 function makeMenu() {
     const controller = {name: () => controller, tooltip: () => controller, disable: () => controller};
-    const folder = {add: jest.fn(() => controller), close: jest.fn().mockReturnThis()};
+    const folders = new Map();
     return {
-        folder, addFolder: jest.fn(() => folder),
+        folders, addFolder: jest.fn(label => {
+            const folder = {add: jest.fn(() => controller), close: jest.fn().mockReturnThis()};
+            folders.set(label, folder);
+            return folder;
+        }),
         open: jest.fn(), destroy: jest.fn(), addHTML: jest.fn(), addHeading: jest.fn(),
         add: jest.fn(obj => { menuData = obj; return controller; }),
     };
@@ -42,7 +51,7 @@ function makeMenu() {
 
 // Right-click the ground at LAT, LON, GROUND_HAE.
 function rightClickGround() {
-    const self = {groundContextMenu: null};
+    const self = {groundContextMenu: null, getNextTrackAndObjectNames: () => ({trackName: "Track 1", objectName: "Object 1"})};
     menuMethods.showGroundContextMenu.call(self, 100, 200, LLAToECEF(LAT, LON, GROUND_HAE), "mainView");
     expect(menuData).toBeDefined();
 }
@@ -118,13 +127,40 @@ test("target on ground with AGL off goes to the ground's MSL height", () => {
 });
 
 
-test("all scene creation items are in one initially closed Add folder", () => {
+test("the Add and Add (Legacy) folders are adjacent, closed and have distinct actions", () => {
     rightClickGround();
-    expect(menu.addFolder.mock.calls).toEqual([["Add"]]);
-    expect(menu.folder.close).toHaveBeenCalledTimes(1);
-    const additions = menu.folder.add.mock.calls.map(([, key]) => key);
-    expect(additions).toEqual(["dropPin", "addFixedObject", "createTrackWithObject", "createInOutObjectTrack",
-        "createSyntheticTrack", "addBalloon", "addKite", "addSpotlight", "addBuilding", "addClouds",
-        "addOverlay", "addGrid", "addRegion"]);
-    expect(menu.add.mock.calls.every(([, key]) => !additions.includes(key))).toBe(true);
+    expect([...menu.folders.keys()]).toEqual(["Add", "Add (Legacy)"]);
+    for (const folder of menu.folders.values()) expect(folder.close).toHaveBeenCalledTimes(1);
+    const actions = label => menu.folders.get(label).add.mock.calls.map(([, key]) => key);
+    expect(actions("Add")).toEqual(["dropPin", "addFixedObject", "addFlyingObject", "addGroundedObject",
+        "addBalloon", "addKite", "addSpotlight", "addBuilding", "addOverlay", "addGrid", "addRegion"]);
+    expect(actions("Add (Legacy)")).toEqual(["createTrackWithObject", "createSyntheticTrack", "addClouds"]);
+});
+
+test.each([
+    ["addFlyingObject", 300, 600, 700],
+    ["addFlyingObject", 600, 300, 700],
+    ["addFlyingObject", -300, -250, -150],
+    ["addGroundedObject", 300, 600, 0],
+])("%s over terrain at %im and %im initializes the lock at %im", (action, startHAE, endHAE, height) => {
+    setSit({frames: 100, aFrame: 10, bFrame: 70});
+    setTrackManager({addSyntheticTrack: jest.fn()});
+    nodeMan.add("mainView", {camera: {matrixWorld: new Matrix4()}, pixelsToMeters: () => 50});
+    getVisiblePointBelow.mockReset();
+    for (const hae of [startHAE, endHAE]) getVisiblePointBelow.mockImplementationOnce(p => {
+        const lla = ECEFToLLAVD_radii(p);
+        return LLAToECEF(lla.x, lla.y, hae);
+    });
+    rightClickGround();
+    menuData[action]();
+    const options = TrackManager.addSyntheticTrack.mock.calls[0][0];
+    const grounded = action === "addGroundedObject";
+    expect(options).toMatchObject({altitudeLockAGL: grounded, constantSpeed: true, editMode: true, recordUndo: true});
+    expect(options.altitudeLock).toBeCloseTo(height, 5);
+    expect(options.initialPoints.map(([frame]) => frame)).toEqual([10, 70]);
+    const [start, end] = options.initialPoints.map(p => new Vector3(...p.slice(1)));
+    expect(start.distanceTo(end)).toBeCloseTo(50, 1);
+    if (!grounded) {
+        for (const p of [start, end]) expect(ECEFToLLAVD_radii(p).z).toBeCloseTo(height, 5);
+    }
 });

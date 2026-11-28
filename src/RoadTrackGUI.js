@@ -7,17 +7,27 @@ export function addRoadTrackControls(folder, lock, track) {
     lock.roadTrack ??= false;
     lock.roadWidth ??= 8;
     lock.roadSmoothing ??= 20;
-    for (const field of ["roadTrack", "roadWidth", "roadSmoothing"]) lock.addSimpleSerial(field);
-    const refresh = () => { lock.recalculateCascade(); markSitchDirty(); setRenderOne(true); update(); };
+    const fields = ["roadTrack", "roadWidth", "roadSmoothing"];
+    for (const field of fields) lock.addSimpleSerial(field);
+    const refresh = () => {
+        const cache = trackGroundCache();
+        if (cache) cache.requestRoadUpdate(lock);
+        else {
+            lock.recalculateCascade();
+            setRenderOne(true);
+        }
+        markSitchDirty();
+        update();
+    };
     const enabled = folder.add(lock, "roadTrack").name("Road Track").listen()
         .tooltip("Smooth the 3D road surface and this ground-locked track together. The camera follows the smoothed road grade.")
         .onChange(refresh);
     const width = folder.add(lock, "roadWidth", 2, 30, 0.5).name("Road Width (m)").listen()
         .tooltip("Width of the smoothed road. Blend back into the original terrain across the shoulders.")
-        .onFinishChange(refresh);
+        .onChange(refresh);
     const smoothing = folder.add(lock, "roadSmoothing", 2, 100, 1).name("Road Smoothing (m)").listen()
         .tooltip("Distance along the road used to smooth its height. Larger values remove more bumps while retaining hills and grades.")
-        .onFinishChange(refresh);
+        .onChange(refresh);
     const update = () => {
         // Road Track works on the track ground cache, which only Google 3D tiles have.
         // The camera follows the road slope under the same rule (isRoadTrackActive).
@@ -29,7 +39,15 @@ export function addRoadTrackControls(folder, lock, track) {
     // The lock node's visibleGroundChanged handler calls this when the ground changes.
     lock.updateRoadTrackControls = update;
     const restore = lock.modDeserialize?.bind(lock);
-    if (restore) lock.modDeserialize = data => { restore(data); update(); };
+    if (restore) lock.modDeserialize = data => {
+        const changed = fields.some(key => data[key] !== undefined && data[key] !== lock[key]);
+        restore(data);
+        // Undo can restore a track in an already settled, paused scene. A fresh
+        // load registers its route when the track first samples the tiles.
+        const cache = trackGroundCache();
+        if (changed && cache?.records.has(lock)) cache.requestRoadUpdate(lock);
+        update();
+    };
     update();
     return {update};
 }

@@ -37,6 +37,17 @@ export function trackDirection(source, f, debugN=0) {
     return trackVelocity(source, f, debugN).normalize();
 }
 
+// Coordinated-turn roll comes from horizontal speed and signed heading rate.
+// A pull-up or a descent in the same vertical plane has no lateral acceleration.
+export function horizontalTurnBank(velocityA, velocityB, velocity, up, secondsBetween, secondsPerFrame) {
+    const a = velocityA.clone().projectOnPlane(up);
+    const b = velocityB.clone().projectOnPlane(up);
+    const speed = velocity.clone().projectOnPlane(up).length() / secondsPerFrame;
+    if (!(speed >= 0.01 && a.lengthSq() > 1e-12 && b.lengthSq() > 1e-12 && secondsBetween > 0)) return null;
+    const deltaHeading = Math.atan2(-V3().crossVectors(a, b).dot(up), a.dot(b));
+    return Math.atan(speed * deltaHeading / (9.77468 * secondsBetween));
+}
+
 // per frame acceleration
 // essential the first derivative of the position
 export function trackAcceleration(source, f) {

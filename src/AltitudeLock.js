@@ -8,13 +8,15 @@
 //
 // Schema:
 //   altitudeLock     — number. -1 (or undefined) means the lock is OFF;
-//                      values >= 0 are the lock's altitude in meters.
+//                      values >= 0 are the lock's altitude in meters. A hand-drawn
+//                      track can explicitly enable a signed ellipsoid height.
 //   altitudeLockAGL  — boolean. true → lock is terrain-relative (height above
 //                      ground); false → lock is HAE (absolute altitude).
 
-// True iff the altitude lock is currently active (not the -1 sentinel).
+// Older saves encode the checkbox in the height. A signed HAE has an explicit flag.
 export function isAltitudeLockActive(node) {
-    return node.altitudeLock !== undefined && node.altitudeLock >= 0;
+    return Number.isFinite(node.altitudeLock) && (node.altitudeLock >= 0 ||
+        (node.altitudeLockAGL === false && node.altitudeLockEnabled === true));
 }
 
 // True iff the altitude lock is active AND in ground-relative mode. This is
@@ -30,6 +32,7 @@ export function getTrackAltitudeLock(node) {
     const seen = new Set();
     while (node && !seen.has(node)) {
         seen.add(node);
+        if (node.inheritAltitudeLock === false) return null;
         if (node.altitudeLock !== undefined) return isAltitudeLockActive(node) ? node : null;
         node = node.getObject?.() ?? node.inputs?.dataTrack ?? node.inputs?.misb ?? node.inputs?.source;
     }

@@ -1,8 +1,8 @@
 import {CNodeController} from "./CNodeController";
 import {NodeMan, Sit} from "../Globals";
 import {par} from "../par";
-import {V3} from "../threeUtils";
 import {getLocalUpVector} from "../SphericalMath";
+import {horizontalTurnBank} from "../trackUtils";
 import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
 
 // Drives the PTZ controller's `roll` parameter (in degrees) with a coordinated-
@@ -75,15 +75,8 @@ export function coordinatedTurnBankAngle(smoothedTrack, f) {
     const vB = b1.clone().sub(b0);
     if (!(vA.lengthSq() >= 0.5) || !(vB.lengthSq() >= 0.5)) return 0;
 
-    const speed = v0.length() * Sit.fps;
-    if (!(speed >= 0.01)) return 0;
-
-    let angV = vA.angleTo(vB);
-    const cross = V3().crossVectors(vA, vB);
-    if (cross.dot(getLocalUpVector(c0)) > 0) angV = -angV;
-    const bank = Math.atan(angV * speed / 9.77468);
-    // Final backstop: never hand a NaN to the camera.
-    return Number.isFinite(bank) ? bank : null;
+    const secondsPerFrame = (Sit.simSpeed ?? 1) / (Sit.fps || 30);
+    return horizontalTurnBank(vA, vB, v0, getLocalUpVector(c0), 2 * halfFps * secondsPerFrame, secondsPerFrame) ?? 0;
 }
 
 export class CNodeControllerCameraBankRoll extends CNodeController {

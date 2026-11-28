@@ -26,7 +26,7 @@ The widget stays visible on top of the object, including during a drag. Hovering
 do not change the object's opacity.
 
 To try this with a new object, right-click the ground in a Custom sitch and choose
-**Add → 3D Object**. See [Adding Objects and Tracks](SceneObjects.md) for other kinds of object.
+**Add → Static 3D Object**. See [Adding Objects and Tracks](SceneObjects.md) for other kinds of object.
 
 ## Rotate an object
 
@@ -155,7 +155,7 @@ modes in Main and Look views. See [Hand-Drawn Tracks](Tracks.md#hand-drawn-track
 Surface widget. Turn off **Path → Lock Altitude** in the hand-drawn track's folder to use
 Camera plane, In / out or Screen plane. While the lock is on, dragging the red altitude
 arrows changes **Lock Height** for the whole track; dragging the disk keeps the lock height.
-**Add → Moving Object (In→Out)** creates a track with this lock on.
+**Add → Flying 3D Object** and **Add → Grounded 3D Object** both start with the lock on.
 
 Buildings, clouds, ground overlays and ground grids have their own editing handles. See
 [The editors](SceneObjects.md#c-the-editors) for their controls.

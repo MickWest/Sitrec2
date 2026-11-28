@@ -200,8 +200,9 @@ You can also place things straight onto the map. **Right-click the ground** in t
 
 - **Set Camera Above** / **Set Camera on Ground** — move a fixed camera to that point, at its current altitude or at eye level, 2 m above the ground.
 - **Set Target Above** / **Set Target on Ground** — the same for a fixed target, but on the ground, not at eye level.
-- **Add → 3D Object** — put an object that stays in one place, for example a known landmark or a candidate object.
-- **Add → Moving Object**, **Add → Moving Object (In→Out)** and **Add → Flight Path** — draw a new track by hand, starting at that point.
+- **Add → Static 3D Object** — put an object that stays in one place, for example a known landmark or a candidate object.
+- **Add → Flying 3D Object** and **Add → Grounded 3D Object** create a straight In→Out track at a fixed ellipsoid height or at ground level.
+- **Add (Legacy) → Moving Object** and **Add (Legacy) → Flight Path** start a hand-drawn track at the clicked point.
 
 The same menu also adds pins, balloons, buildings, clouds, ground overlays and grids. See [Adding Objects and Tracks](SceneObjects.md) for all of it.
 

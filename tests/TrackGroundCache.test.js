@@ -67,7 +67,7 @@ test("corridor-only tiles download and parse after the tiles in view, in both sh
     expect(parseQueue.priorityCallback).toBe(byError);
 });
 
-test("an offscreen fine tile is sampled before its first render instead of caching its coarse parent", () => {
+test("an offscreen fine mesh supplies ground even at a seam outside its declared tile bounds", () => {
     setSit({lat: 35, lon: -88});
     const point = LLAToECEF(35, -88, 100);
     const up = getLocalUpVector(point), north = getLocalNorthVector(point), east = north.clone().cross(up);
@@ -80,6 +80,7 @@ test("an offscreen fine tile is sampled before its first render instead of cachi
         return {scene, tile: {geometricError, engineData: {boundingVolume}}};
     };
     const coarse = makeTile(2, 10), fine = makeTile(5, 0);
+    fine.tile.engineData.boundingVolume.intersectsRay = () => false;
     const cache = new TrackGroundCache({});
     cache.region.setPaths([[point]]);
     cache.renderers = [{renderer: {forEachLoadedModel: fn => {fn(coarse.scene, coarse.tile); fn(fine.scene, fine.tile);}}}];

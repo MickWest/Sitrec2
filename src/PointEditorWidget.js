@@ -274,7 +274,7 @@ export class PointEditorWidget extends EventDispatcher {
             return ['horizontal', 'vertical'].includes(this.activeDragMode) ? 'surface' : this.activeDragMode;
         }
         // An explicit track-height lock takes priority over a free plane or ray.
-        if (this.freeMovementAllowed === false || (this.altitudeLocked && this.altitudeLockValue >= 0)) return 'surface';
+        if (this.freeMovementAllowed === false || this.altitudeLocked) return 'surface';
         const mode = getObjectMoveMode();
         if (['lookCameraPlane', 'push'].includes(mode) && !ViewMan.get('lookView', false)?.camera) return 'surface';
         return mode;

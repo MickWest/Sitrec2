@@ -1,6 +1,7 @@
 import {Vector3} from "three";
 import {TrackGroundCache} from "../src/TrackGroundCache";
 import {Globals, setNodeMan, setSit} from "../src/Globals";
+import {par} from "../src/par";
 import {CNodeManager} from "../src/nodes/CNodeManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../src/LLA-ECEF-ENU";
 import {restoreRoadGeometry, smoothRoadGeometry} from "../src/RoadGeometry";
@@ -82,6 +83,30 @@ function settle() {
 }
 
 const smoothedNames = () => smoothRoadGeometry.mock.calls.map(([mesh]) => mesh.name).sort();
+
+test("each road edit wakes a settled tile updater and draws the changed geometry while paused", () => {
+    cache.attach({renderer: makeRenderer([makeTile("leaf", 1)])});
+    const road = makeLock("road", false);
+    manager.add(road.id, road);
+    cache.pointBelow(road.array[0].position, road);
+    settle();
+    for (const [key, value] of [["roadTrack", true], ["roadSmoothing", 35], ["roadWidth", 12], ["roadTrack", false]]) {
+        cache.buildings.updateWhilePaused = false;
+        smoothRoadGeometry.mockClear();
+        road[key] = value;
+        cache.requestRoadUpdate(road);
+        expect(cache.buildings.updateWhilePaused).toBe(true);
+        expect(cache.hasPendingWork()).toBe(true);
+        // Consume the GUI's redraw first. The mesh update must request its own,
+        // even when paused, shadows are off, and the last work item finishes.
+        par.renderOne = false;
+        settle();
+        expect(par.renderOne).toBeTruthy();
+        expect(cache.modified.size).toBe(road.roadTrack ? 2 : 0);
+        if (road.roadTrack) expect(smoothedNames()).toEqual(["leaf0", "leaf1"]);
+        expect(cache.hasPendingWork()).toBe(false);
+    }
+});
 
 test("Road Track smooths the finest tiles of each view once, and again only when the road surface changes", () => {
     // View A has a coarse tile and its loaded child. View B has only the coarse tile.

@@ -12,22 +12,22 @@ track can show a path even if nothing rides on it. Open **Contents** to edit a t
 
 | What you want to add | How to start |
 |---|---|
-| An object that stays in one place | Right-click the ground in **Main** or **Look** view and choose **Add → 3D Object**. A grey sphere appears and its editor opens. |
-| An object that moves | Choose **Add → Moving Object** from the same menu. Sitrec creates both the object and its track. |
-| A path without an object | Choose **Add → Flight Path**. You can draw the path now and put an object on it later. |
+| An object that stays in one place | Right-click the ground in **Main** or **Look** view and choose **Add → Static 3D Object**. A grey sphere appears and its editor opens. |
+| An object that moves | Choose **Add → Flying 3D Object** for a level flight, or **Add → Grounded 3D Object** to follow the terrain. Both use the In and Out frames. |
+| A path without an object | Choose **Add (Legacy) → Flight Path**. You can draw the path now and put an object on it later. |
 | A recorded track | Drag the track file into Sitrec or choose **File → Import File**. [Loading and Filtering Tracks](Tracks.md#importing-tracks) |
 
 ### Make an object move
 
 1. Go to the frame where the motion should start. Right-click the starting spot on the ground,
-   expand **Add**, and choose **Moving Object**. The track opens in edit mode with its first
+   expand **Add (Legacy)**, and choose **Moving Object**. The track opens in edit mode with its first
    control point at that spot.
 2. Move the playhead to a later frame. Right-click a second spot on the ground and choose
    **Add Point Here**. The two points now tell Sitrec where the object should be at those frames.
 3. Press **Escape** to finish editing. Drag the playhead between the two frames to see the object
    move. To change the path later, open the track in **Contents** and turn on **Edit Track**.
 
-To use a track you already have, choose **Add → 3D Object**, then select the track under
+To use a track you already have, choose **Add → Static 3D Object**, then select the track under
 **Location → Position** in the object's editor. [Object location](#location-a-manual-position-or-a-track)
 
 ### On this page
@@ -41,7 +41,7 @@ To use a track you already have, choose **Add → 3D Object**, then select the t
 ## A. The ground menu
 
 Right-click the terrain or globe in **Main** or **Look** view to open **Ground**. Expand **Add**
-to place an object or draw a track. The camera, target and terrain commands are on the ground
+to place an object. The adjacent **Add (Legacy)** menu holds **Moving Object**, **Flight Path** and **Clouds**. The camera, target and terrain commands are on the ground
 menu itself.
 
 Hold **Shift** and right-click to reach the ground behind a pin, track, building or other object.
@@ -64,15 +64,16 @@ You can select and copy this text.
 | **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
 | **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
 | **Add → Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
-| **Add → 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
-| **Add → Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
-| **Add → Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
-| **Add → Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
+| **Add → Static 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
+| **Add (Legacy) → Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
+| **Add → Flying 3D Object** | Creates an In→Out track at one ellipsoid height, 100 m above the higher terrain endpoint. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects** |
+| **Add → Grounded 3D Object** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
+| **Add (Legacy) → Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
 | **Add → Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, with the same name |
 | **Add → Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, with the same name |
 | **Add → Spotlight** | Places a projector on the ground. Its beams light up clouds overhead as the timeline plays. See [Spotlights](#spotlights) | **Objects**, as *Spotlight 1*, *Spotlight 2*, … |
 | **Add → Building** | Opens the editor for a 15 × 15 m building, 4 m high, centered on the clicked point. [Buildings](#buildings) | **Objects**, as *Building: Building 1* |
-| **Add → Clouds** | Opens the editor for a round patch of clouds at 10,000 ft, 500 m in radius, centered above the clicked point. [Clouds](#clouds) | **Objects**, as *Clouds: Clouds 1* |
+| **Add (Legacy) → Clouds** | Opens the editor for a round patch of clouds at 10,000 ft, 500 m in radius, centered above the clicked point. [Clouds](#clouds) | **Objects**, as *Clouds: Clouds 1* |
 | **Add → Ground Overlay** | Opens the editor for a ground overlay 0.02° square, centered on the clicked point. Supply the image in the editor. [Ground overlays](#ground-overlays) | **Objects**, as *Overlay: Overlay 1* |
 | **Add → Ground Grid** | Opens the editor for a square measurement grid, 1000 m or ft on each side in your current units, with major lines every 100 and minor lines every 10. [Ground grids](#ground-grids) | **Objects**, as *Grid: Grid 1* |
 | **Add → Region** | Defines a movable, rotatable area on the ground. [Import a power grid for a region](#import-a-power-grid-for-a-region) | **Objects**, as *Region: Region 1* |
@@ -101,7 +102,7 @@ the main view. You can change this later with **Show in look view** in the track
 
 ### 3D objects
 
-**Add → 3D Object** places a grey sphere and opens its editor. Drag the sphere itself, or use
+**Add → Static 3D Object** places a grey sphere and opens its editor. Drag the sphere itself, or use
 the move widget that appears when the pointer is near it. You can reopen the editor by
 right-clicking the object. [Moving Objects](MovingObjects.md)
 
@@ -119,11 +120,11 @@ This enlarges all objects. Set it back to 1 to see them at their real size.
 #### Location: a manual position, or a track
 
 Open the object's folder in **Objects** and expand **Location**. For objects created with
-**3D Object** or either **Moving Object** command, **Position** offers two choices.
+**Static 3D Object**, **Flying 3D Object**, **Grounded 3D Object** or the legacy **Moving Object** command, **Position** offers two choices.
 
 - Choose **Manual** to set **Lat**, **Lon** and **Alt** or drag the object with the move widget.
   **Above Ground Level** and **Allow Small Altitudes** work as in the camera's **Location**
-  group. An object from **Add → 3D Object** starts here.
+  group. An object from **Add → Static 3D Object** starts here.
 - Choose a **track by name** to make the object follow it. The manual coordinates disappear.
   The list includes hand-drawn and loaded tracks, balloons and kites. A moving object starts
   on the track created with it.
@@ -145,7 +146,7 @@ A fixed object can also serve as the camera position or the target. [Use a fixed
 
 ### Hand-drawn tracks
 
-**Add → Flight Path** and both **Moving Object** commands create a track from control points.
+**Flying 3D Object**, **Grounded 3D Object** and the legacy **Flight Path** and **Moving Object** commands create a track from control points.
 Each point sets a position at a particular frame. The track opens in edit mode so you can
 place or adjust those points. [Edit hand-drawn tracks](Tracks.md#hand-drawn-tracks)
 
@@ -165,16 +166,15 @@ Set the **In** and **Out** frames before making the track. At the frames you wan
 **Time → In Frame [I]** and **Time → Out Frame [O]**, or press **Alt+I** and **Alt+O**.
 [Keys for time and frames](TimeAndSync.md#keys-for-time-and-frames)
 
-Then right-click the ground and choose **Add → Moving Object (In→Out)**. The track starts
+Then right-click the ground and choose **Add → Flying 3D Object** or **Add → Grounded 3D Object**. The track starts
 with two control points.
 
 - The **In** point is at the spot you clicked.
 - The **Out** point is 200 screen pixels to the right of the first in the view you clicked.
 
-Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
-timeline. **Constant Speed** is on, so the object moves at a steady speed along the track.
-**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height above the
-ground and follows the terrain under it. Drag the up/down arrows on the object or either
+**Constant Speed** and **Lock Altitude** are on. A flying object holds a fixed HAE along the
+track. Sitrec samples the terrain at both endpoints and sets the flight altitude 100 m above
+the higher sample. A grounded object follows the surface at 0 m above terrain. Drag the up/down arrows on the object or either
 control point to change the height of the whole track. Dragging the object itself or the green
 disk keeps the lock height. See [Moving Objects](MovingObjects.md#tracks-and-altitude-locks).
 
@@ -299,7 +299,7 @@ These are in **Objects → Building: *name*** and in the editor.
 
 ### Clouds
 
-Right-click the ground and choose **Add → Clouds**, or right-click the ground under an existing
+Right-click the ground and choose **Add (Legacy) → Clouds**, or right-click the ground under an existing
 cloud layer and choose **Edit Clouds: *name***. You can also turn on **Edit Mode** in
 **Objects → Clouds: *name***.
 
@@ -518,7 +518,7 @@ An overlay made with **Image URL** keeps that address. See
 | Track | Where it comes from | What sets its positions |
 |---|---|---|
 | Loaded track | A file that you load. See [Loading and Filtering Tracks](Tracks.md) | The file |
-| Hand-drawn track | **Add → Flight Path** or either **Moving Object** command | The position and frame of each control point |
+| Hand-drawn track | **Flying 3D Object**, **Grounded 3D Object**, **Moving Object** or **Flight Path** | The position and frame of each control point |
 | Balloon, kite | **Add → Balloon**, **Add → Kite** | The launch point or the anchor, and the wind: **Physics → Wind → Wind Source** |
 | **Camera Track** | Every Custom sitch has it | **Camera → Location → Position**: a manual position, the flight simulator, an orbit, a track, or an object. See [Camera and Target](CameraAndTarget.md) |
 | **Traverse Track** | Every Custom sitch has it | The camera's lines of sight, and **Traverse → LOS Traverse Method**. See [Traverse Analysis and the Verdict](TraverseAnalysis.md) |
@@ -535,14 +535,14 @@ track, its folder in **Contents** carries the `Target` tag.
 | **Traverse Object** | The Traverse Track | No |
 | The marker of a loaded track | That track | No |
 | A balloon's sphere, a kite | Its balloon or kite track | No |
-| An object from **Add → 3D Object** or either **Moving Object** command | The track selected in **Location → Position**, or a fixed position with **Manual** | Yes. See [Location](#location-a-manual-position-or-a-track) |
+| An object from **Static 3D Object**, **Flying 3D Object**, **Grounded 3D Object** or **Moving Object** | The track selected in **Location → Position**, or a fixed position with **Manual** | Yes. See [Location](#location-a-manual-position-or-a-track) |
 
 ### How the menus show the links
 
 ![The Contents menu and the Objects menu of one sitch, side by side. In Contents: Camera Track with the tag "follows Kite", Traverse Track, Balloon with the tag "Target", and Kite with the tag "Camera". The Kite folder is open, with the rows Name, Object (a button "Kite"), Used For "Camera position" and Wind Source "Manual". In Objects: Traverse Object, Camera Object, Balloon, Kite, and Object 1 with the tag "on Balloon". The Object 1 folder is open, with the rows Name and On Track (a button "Balloon"), and the Location group](docimages/scene-objects-links.jpg)
 
 The **Contents** menu (left) and the **Objects** menu (right) of one sitch. The camera is on the
-kite's track, and the target is the balloon. *Object 1*, from **Add → 3D Object**, is on the
+kite's track, and the target is the balloon. *Object 1*, from **Add → Static 3D Object**, is on the
 balloon's track.
 
 Each folder says what it is linked to, in rows directly below **Name**:

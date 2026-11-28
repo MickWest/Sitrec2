@@ -201,7 +201,7 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 |---------|-------|-------------|
 | **Alt offset** | -1000 to +1000 ft (scales with your display units) | Manual altitude adjustment, applied in the source's own datum |
 | **Lock Altitude** | on/off | Hold the whole track at one height. When you switch it on, the lock height starts at the track's height at that time (for a hand-drawn track, the height of its first point) |
-| **Lock Height** | 0 to 100,000 ft | The height of the lock. Shown only while **Lock Altitude** is on. Shown in your display units; stored in meters |
+| **Lock Height** | Up to 100,000 ft, shown in your display units | Height held along the track, stored in meters. Shown while **Lock Altitude** is on. A hand-drawn track can hold a negative ellipsoid height. |
 | **Height From** | Ground / Ellipsoid (HAE) | **Ground**: the height above the ground below. **Ellipsoid (HAE)**: the height above the WGS84 ellipsoid (HAE), *not* above mean sea level (MSL); see [Three Kinds of Height](GIS.md#three-kinds-of-height). The default is **Ground**. Shown only while **Lock Altitude** is on |
 
 With **Ground**, the lock is applied after smoothing, including camera smoothing.
@@ -218,7 +218,8 @@ back to the original ground at the shoulders. **Road Smoothing (m)** controls th
 distance along the road used to remove bumps; the default is 20 metres. These
 settings use distance rather than video frames, so changing speed or frame rate
 does not change the road shape. A camera with **Relative** heading follows the
-smoothed uphill/downhill grade. Turning **Road Track** off restores the original
+smoothed uphill/downhill grade. All three road controls update the visible geometry
+while the timeline is paused. Turning **Road Track** off restores the original
 geometry and keeps the track locked to its cached ground surface. The option and
 its settings are saved with the track; tile data is cached for the current session.
 The Road Track controls show only on a ground-locked track while Google 3D tiles
@@ -229,7 +230,7 @@ and the camera's tilt and offsets stay level.
 > lock sets the height of all of its control points. Drag the up/down arrows on a control point
 > or on the object that rides the track, and you change the **Lock Height**: the full track moves up or down
 > as one, and no control point is added. A sideways drag keeps the control point at the lock height. The
-> lock does not go below 0. Right-click the ground → **Add → Moving Object (In→Out)** to make such a
+> ground-relative lock stops at 0. An ellipsoid height can be negative. Right-click the ground → **Add → Grounded 3D Object** to make such a
 > track: an object on a straight track from the clicked point, with control points at the In and
 > Out frames, **Constant Speed** on, and the altitude locked at ground level.
 
@@ -251,7 +252,7 @@ Turn off **Path → Lock Altitude** in the track's folder to use those modes.
 
 ### Hand-Drawn Tracks
 
-To make a hand-drawn track, right-click the ground and choose **Add → Flight Path** or **Add → Moving Object**. See [Adding Objects and Tracks](SceneObjects.md).
+To make a hand-drawn track, right-click the ground and choose **Add (Legacy) → Flight Path** or **Add (Legacy) → Moving Object**. See [Adding Objects and Tracks](SceneObjects.md).
 
 A hand-drawn track's folder puts its controls in groups. At the top are **Name**, an **Object**
 row for each object on the track (its button opens the menu of that object), **Edit Track**,
@@ -478,8 +479,8 @@ file back as a track. Seconds at which the track has no position (a constant-alt
 traverse where the line of sight never reaches that altitude) break the line rather
 than being joined across.
 
-A hand-drawn track — one made from the ground right-click menu (**Add → Moving Object**,
-**Add → Moving Object (In→Out)** or **Add → Flight Path**), dropped in as a
+A hand-drawn track — one made from the ground right-click menu (**Add (Legacy) → Moving Object**,
+**Add → Flying 3D Object**, **Add → Grounded 3D Object** or **Add (Legacy) → Flight Path**), dropped in as a
 `.spline.json`, or built into a sitch — exports its control points (Spline JSON) and its
 per-frame track (CSV, MISB CSV and KML). The per-frame formats export the **smoothed** track, so they
 match the line drawn on screen and reflect the track's Smoothing window, altitude offset
@@ -753,7 +754,7 @@ National Imagery Transmission Format files with embedded metadata.
 
 Sitrec's own interchange format for a **hand-drawn** track — the control points of a
 spline, not a per-frame path. Dropping one in creates a hand-drawn track with no object,
-identical to one made with the ground right-click menu's **Add → Flight Path**, with the
+identical to one made with the ground right-click menu's **Add (Legacy) → Flight Path**, with the
 control points already placed and editable. To edit it, see
 [Hand-Drawn Tracks](#hand-drawn-tracks).
 

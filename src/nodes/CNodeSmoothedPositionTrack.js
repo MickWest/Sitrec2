@@ -20,6 +20,9 @@ export class CNodeSmoothedPositionTrack extends CNodeTrack {
         this.method = v.method || "moving"
         this.addSimpleSerial("method");
         this.smoothingKind = "position";
+        // Orientation helpers estimate motion from the already ground-locked
+        // samples. Projecting their output back onto the terrain erases its grade estimate.
+        this.inheritAltitudeLock = v.inheritAltitudeLock ?? true;
         this.isDynamicSmoothing = v.isDynamicSmoothing ?? false
         this.input("source") // source array node
 

@@ -1,3 +1,4 @@
+import {isAltitudeLockActive} from "./AltitudeLock";
 import {bindControllerUndo} from "./ControllerUndo";
 import {captureNodeMods, restoreNodeMods, captureTrackChoices} from "./SceneEditState";
 import {ownedSubNodeIds} from "./UserObjects";
@@ -33,7 +34,8 @@ import {
     setSitchEstablished,
     setSitchEstablishedByTrackImport,
     Sit,
-    TrackManager
+    TrackManager,
+    Units
 } from "./Globals";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {CManager} from "./CManager";
@@ -2763,8 +2765,9 @@ class CTrackManager extends CManager {
      * @param {number} options.startFrame - Frame number for the initial point (default: 0)
      * @param {boolean} options.showInLook - Whether the track should also render in the look view (default: false)
      * @param {boolean} options.constantSpeed - Start in constant-speed mode (default: false)
-     * @param {number} options.altitudeLock - Start with the altitude locked to this height in meters,
-     *        above the ground (default: unlocked)
+     * @param {number} options.altitudeLock - Initial lock height in meters (default: unlocked)
+     * @param {boolean} options.altitudeLockAGL - Measure the height from the ground (default) or ellipsoid
+     * @param {boolean} options.altitudeLockEnabled - Explicitly enable a negative ellipsoid height
      * @returns {Object} The created track object
      */
     addSyntheticTrack(options) {
@@ -2851,6 +2854,7 @@ class CTrackManager extends CManager {
         const splineEditorNode = new CNodeSplineEditor({
             id: unsmoothedID,
             type: effectiveCurveType,
+            altitudeLockAGL: options.altitudeLockAGL,
             scene: scene,
             camera: "mainCamera",
             view: viewID,
@@ -3136,7 +3140,7 @@ class CTrackManager extends CManager {
             tooltip: "Height at which Lock Altitude holds the whole track, measured as Height From says.\nShown only while Lock Altitude is on.",
             onChange: (v) => {
                 trackOb.altitudeLock = v;
-                splineEditorNode.setAltitudeLock(v);
+                splineEditorNode.setAltitudeLock(v, v >= 0 || splineEditorNode.altitudeLockEnabled === true);
                 altLockControls?.update();
             },
             elastic: true,
@@ -3149,7 +3153,8 @@ class CTrackManager extends CManager {
         trackOb.altitudeLockAGL = splineEditorNode.altitudeLockAGL;
         altLockControls = addAltitudeLockControls(pathFolder, {
             heightNode: altLockNode,
-            isOn: () => trackOb.altitudeLock >= 0,
+            isOn: () => isAltitudeLockActive(splineEditorNode),
+            setEnabled: on => { splineEditorNode.altitudeLockEnabled = on; },
             hasSavedZeroLock: () => trackOb.altitudeLock === 0,
             // The first control point's height, so switching the lock on holds the track there.
             currentHeight: () => {
@@ -3159,16 +3164,25 @@ class CTrackManager extends CManager {
             getAGL: () => trackOb.altitudeLockAGL,
             setAGL: (value) => {
                 trackOb.altitudeLockAGL = value;
+                if (value && isAltitudeLockActive(splineEditorNode) && trackOb.altitudeLock < 0) {
+                    altLockNode.setValue(0);
+                }
                 splineEditorNode.setAltitudeLockAGL(value);
                 altLockControls?.update();
             },
         });
         const roadControls = addRoadTrackControls(pathFolder, splineEditorNode, splineEditorNode);
         const updateLock = altLockControls.update;
-        altLockControls.update = () => { updateLock(); roadControls.update(); };
+        altLockControls.update = () => {
+            // Ellipsoid heights can be below zero. Keep the original range for AGL.
+            const scale = Units.getScaleFactors("metric").small;
+            altLockNode.guiEntry.min(trackOb.altitudeLockAGL ? -1 : Math.min(-500, trackOb.altitudeLock) * scale);
+            updateLock();
+            roadControls.update();
+        };
         trackOb.updateAltitudeLockControls = () => {
             // The track stores metres. The slider stores display units, or -1 for off.
-            if (trackOb.altitudeLock < 0) altLockNode.setValue(-1, true);
+            if (!isAltitudeLockActive(splineEditorNode)) altLockNode.setValue(-1, true);
             else altLockNode.setValueWithUnits(trackOb.altitudeLock, "metric", "small", true);
             altLockControls.update();
         };
@@ -3176,6 +3190,7 @@ class CTrackManager extends CManager {
         // Set through the slider rather than the fields: the slider holds display units,
         // and its onChange is what conforms the control points to the lock.
         if (options.altitudeLock !== undefined) {
+            splineEditorNode.altitudeLockEnabled = options.altitudeLockEnabled ?? (options.altitudeLock >= 0);
             altLockNode.setValueWithUnits(options.altitudeLock, "metric", "small");
         }
 
@@ -4347,6 +4362,7 @@ class CTrackManager extends CManager {
                     extrapolateTrack: trackOb.extrapolateTrack,
                     showInLook: !!trackOb.showInLook,
                     altitudeLock: trackOb.altitudeLock,
+                    altitudeLockEnabled: splineEditorNode?.altitudeLockEnabled,
                     altitudeLockAGL: trackOb.altitudeLockAGL,
                     color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffff00,
                     // CNodeDisplayTrack keeps the width in its "width" input, and the Line
@@ -4480,6 +4496,7 @@ class CTrackManager extends CManager {
                         // Set altitude lock directly without triggering recalculate
                         // The final recalculateAllRootFirst() will handle it
                         splineEditorNode.altitudeLock = trackOb.altitudeLock;
+                        splineEditorNode.altitudeLockEnabled = trackData.altitudeLockEnabled ?? (trackOb.altitudeLock >= 0);
                         splineEditorNode.altitudeLockAGL = trackOb.altitudeLockAGL;
                         splineEditorNode.updateAltitudeLock();
                         // Update curve type

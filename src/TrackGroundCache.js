@@ -129,6 +129,7 @@ export class TrackGroundCache {
         this.surfaceRevision = 0;
         // A road surface change that waits for an edited road's new profile.
         this.roadsChanged = false;
+        this.roadSettingsPending = false;
         this.lastLoad = 0;
         this.raycaster = new Raycaster();
         this.raycaster.layers.enableAll();
@@ -228,6 +229,15 @@ export class TrackGroundCache {
         if (lock.roadTrack && target.profile && target.passes.has(consumer)) return;
         if (target.passes.has(consumer)) target.prune = true;
         target.passes.set(consumer, new Set());
+    }
+
+    requestRoadUpdate(lock) {
+        // An existing route already has the terrain samples for a settings edit.
+        // updateRoutes coalesces edits, and update rebuilds the track with the new profile.
+        if (!this.records.has(lock)) lock.recalculateCascade();
+        this.roadSettingsPending = true;
+        this.buildings.updateWhilePaused = true;
+        setRenderOne(true);
     }
 
     pointBelow(point, lock, consumer) {
@@ -331,7 +341,16 @@ export class TrackGroundCache {
                     // before raycasting, or the finest tile appears to have no
                     // ground and a coarse ancestor gets cached permanently.
                     scene.updateWorldMatrix(true, true, true);
-                    this.tiles.push({scene, tile});
+                    // At tile seams the published volume can exclude a strip of
+                    // the mesh. Cull ground rays against the geometry we sample.
+                    const bounds = new Box3();
+                    scene.traverse(mesh => {
+                        const geometry = originalRoadGeometry(mesh);
+                        if (!geometry?.attributes?.position) return;
+                        if (!geometry.boundingBox) geometry.computeBoundingBox();
+                        bounds.union(_tileBox.copy(geometry.boundingBox).applyMatrix4(mesh.matrixWorld));
+                    });
+                    this.tiles.push({scene, tile, bounds});
                 }
             });
         }
@@ -356,9 +375,9 @@ export class TrackGroundCache {
         // Query retained meshes, independent of visibility. Prefer the finest
         // available tile, never the coarser ancestor closest to the elevation map.
         let error = Infinity, best = null, deviation = Infinity;
-        for (const {scene, tile} of this.tiles) {
+        for (const {scene, tile, bounds} of this.tiles) {
             if (best && tile.geometricError > error) break;
-            if (!tile.engineData.boundingVolume.intersectsRay(this.raycaster.ray)) continue;
+            if (!this.raycaster.ray.intersectsBox(bounds)) continue;
             const swapped = [];
             scene.traverse(mesh => {
                 const original = originalRoadGeometry(mesh);
@@ -413,7 +432,10 @@ export class TrackGroundCache {
             this.modified.delete(mesh);
             restored = true;
         }
-        if (restored) markShadowCastersDirty("road surface restored");
+        if (restored) {
+            markShadowCastersDirty("road surface restored");
+            setRenderOne(true);
+        }
         return true;
     }
 
@@ -429,7 +451,10 @@ export class TrackGroundCache {
     }
 
     restoreRoads() {
-        if (this.modified.size) markShadowCastersDirty("road surface restored");
+        if (this.modified.size) {
+            markShadowCastersDirty("road surface restored");
+            setRenderOne(true);
+        }
         for (const mesh of this.modified) restoreRoadGeometry(mesh);
         this.modified.clear();
         this.geometryQueue = [];
@@ -440,11 +465,12 @@ export class TrackGroundCache {
     }
 
     hasPendingWork() {
-        return this.geometryQueue.length > 0 || [...this.records.values()].some(record =>
+        return this.roadSettingsPending || this.geometryQueue.length > 0 || [...this.records.values()].some(record =>
             record.scheduled || (record.profileDirty && record.route.length > 1) || record.pending.size > 0);
     }
 
     update() {
+        this.roadSettingsPending = false;
         if (NodeMan.get("TerrainModel", false)?.group?.visible !== false) {
             if (this.records.size) {
                 this.records.clear();
@@ -507,15 +533,20 @@ export class TrackGroundCache {
         if (queueRoads) this.queueRoadMeshes();
         // Geometry work is also incremental. Most leaf meshes are small; only
         // corridor meshes are considered and each is processed once per profile.
+        let geometryChanged = false;
         while (this.geometryQueue.length && performance.now() < deadline) {
             const mesh = this.geometryQueue.shift();
             if (smoothRoadGeometry(mesh, this.profiles)) {
                 this.modified.add(mesh);
-                markShadowCastersDirty("road surface smoothed");
+                geometryChanged = true;
             } else if (this.modified.delete(mesh)) {
                 // smoothRoadGeometry() removed the old smoothing: no road touches this mesh now.
-                markShadowCastersDirty("road surface restored");
+                geometryChanged = true;
             }
+        }
+        if (geometryChanged) {
+            markShadowCastersDirty("road surface changed");
+            setRenderOne(true);
         }
         // A tree edit can restore our layer before modifying its own source.
         for (const mesh of this.modified) {

@@ -58,7 +58,7 @@ export function validateSplineJSON(data) {
     if (data.curveType !== undefined && !SPLINE_CURVE_TYPES.includes(data.curveType)) {
         return `curveType "${data.curveType}" is not one of ${SPLINE_CURVE_TYPES.join(", ")}`;
     }
-    for (const key of ["constantSpeed", "extrapolateTrack", "altitudeLockAGL"]) {
+    for (const key of ["constantSpeed", "extrapolateTrack", "altitudeLockAGL", "altitudeLockEnabled"]) {
         if (data[key] !== undefined && typeof data[key] !== "boolean") {
             return `${key} must be true or false`;
         }
@@ -142,6 +142,7 @@ export function makeSplineJSON(v) {
         constantSpeed: v.constantSpeed ?? false,
         extrapolateTrack: v.extrapolateTrack ?? true,
         altitudeLock: v.altitudeLock ?? -1,
+        altitudeLockEnabled: v.altitudeLockEnabled,
         altitudeLockAGL: v.altitudeLockAGL ?? true,
         // Metres, and applied to the output rather than the control points — so a
         // spline adjusted with Alt offset transfers at the altitude you set it to,
@@ -279,6 +280,7 @@ export function importSplineJSON(filename, json) {
         splineEditorNode.constantSpeed = trackOb.constantSpeed;
         splineEditorNode.extrapolateTrack = trackOb.extrapolateTrack;
         splineEditorNode.altitudeLock = trackOb.altitudeLock;
+        splineEditorNode.altitudeLockEnabled = json.altitudeLockEnabled ?? (trackOb.altitudeLock >= 0);
         splineEditorNode.altitudeLockAGL = trackOb.altitudeLockAGL;
         splineEditorNode.altitudeOffset = trackOb.altitudeOffset;
         splineEditorNode.updateAltitudeLock();

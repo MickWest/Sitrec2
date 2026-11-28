@@ -1,6 +1,6 @@
 import {CNodeController} from "./CNodeController";
 import {guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
-import {trackAcceleration, trackDirection, trackVelocity} from "../trackUtils";
+import {horizontalTurnBank, trackAcceleration, trackVelocity} from "../trackUtils";
 import {V3} from "../threeUtils";
 import {assert} from "../assert";
 import {Matrix4, Quaternion} from "three";
@@ -9,6 +9,8 @@ import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../Sphe
 import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
 import {getGlareAngleFromFrame} from "../JetUtils";
 import {t} from "../i18n";
+import {getTrackAltitudeLock, isAGLLockActive} from "../AltitudeLock";
+import {isRoadTrackActive} from "../TrackGround";
 
 
 // Full set of tilt options for sitch-defined objects (Gimbal, etc.)
@@ -57,9 +59,8 @@ export class CNodeControllerObjectTilt extends CNodeController {
 
 
 
-        // with a large smoothing sliding window, the smoothed track will be offset from the original track
-        // when going around a corner.
-        // so we use the original track for the position, and the smoothed track for the heading
+        // The frame's track sets heading. The smoothed track estimates turn rate
+        // and the sustained grade of a terrain-following track.
 
 
         // Debug display
@@ -93,6 +94,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
             id: this.id + "Smoothed",
             source: this.in.track,
             method: "sliding",
+            inheritAltitudeLock: false,
             window: 200}
         )
 
@@ -282,6 +284,27 @@ export class CNodeControllerObjectTilt extends CNodeController {
         object.updateMatrixWorld();
     }
 
+    noseDisplacement(f, pos, next, tiltType) {
+        const forward = next.clone().sub(pos);
+        if (["none", "banking", "frontpointing", "frontpointingwind"].includes(tiltType)) {
+            const lock = getTrackAltitudeLock(this.in.track);
+            if (lock && isAGLLockActive(lock) && !isRoadTrackActive(lock)) {
+                // The position follows each terrain triangle. For pitch use
+                // the sustained grade, keeping the actual frame's heading.
+                const up = getLocalUpVector(pos);
+                const trend = trackVelocity(this.smoothedTrack, f);
+                const rise = trend.dot(up);
+                const run = trend.projectOnPlane(up).length();
+                if (run > 1e-6) {
+                    forward.projectOnPlane(up);
+                    forward.addScaledVector(up, forward.length() * rise / run);
+                }
+            }
+        }
+        if (this.in.wind) forward.sub(this.in.wind.getValueFrame(f, pos));
+        return forward;
+    }
+
     applyBanking(f, objectNode ) {
 
         const object = objectNode._object;
@@ -289,27 +312,23 @@ export class CNodeControllerObjectTilt extends CNodeController {
         if (object !== undefined) {
             if (f >= 0) {
 
-                // p() is a pure read returning a fresh clone; the same two
-                // values were being fetched up to six times per frame here.
-                // currentPos/rawNext are only read below (never mutated), so
-                // the later uses take these or explicit clones where the
-                // original mutated its own fresh copy.
-                var rawNext = this.in.track.p(f + 1)
-                const currentPos = this.in.track.p(f)
+                const pos = this.in.track.p(f);
+                let next = this.in.track.p(f + 1);
+                let tiltType = this.tiltType.toLowerCase();
 
                 // "Fixed Heading" does not read the track direction at all, so it is applied
                 // BEFORE the degenerate-position check below. An object that is genuinely
                 // stationary - hovering, or parked, or simply on the last frame of its track,
                 // where p(f+1) clamps to p(f) - would otherwise take that early return and
                 // keep the default quaternion, never getting its heading at all.
-                if (this.tiltType.toLowerCase() === "fixedheading") {
-                    this.applyFixedHeading(object, objectNode, currentPos)
+                if (tiltType === "fixedheading") {
+                    this.applyFixedHeading(object, objectNode, pos)
                     return;
                 }
 
                 // FIX B/C: distance check on RAW positions (before wind),
                 // store/restore quaternion for degenerate positions
-                if (currentPos.distanceTo(rawNext) < 1e-6) {
+                if (pos.distanceTo(next) < 1e-6) {
                     if (this._savedQuaternion) {
                         object.quaternion.copy(this._savedQuaternion);
                         object.updateMatrix();
@@ -320,23 +339,20 @@ export class CNodeControllerObjectTilt extends CNodeController {
                     return;
                 }
 
-                var next = rawNext;
-                // if we have a wind vector then subtract that to get the nose heading
-                // pass the track position to get wind in the correct local frame
-                if (this.in.wind !== undefined) {
-                    const windVector = this.in.wind.getValueFrame(f, currentPos)
-                    next = rawNext.clone();
-                    next.sub(windVector)
+                if (!this.in.airTrack) {
+                    if (tiltType === "frontpointingair") tiltType = "frontpointing";
+                    if (tiltType === "bottompointingair") tiltType = "bottompointing";
                 }
+                const nose = this.noseDisplacement(f, pos, next, tiltType);
 
                 // we want to use track positions not the object.position as the clampAboveGroung might have moved it
                 // so temporarily set the object position back to where it was before any clampAboveGround call
 
                 const oldPos = object.position.clone();
-                object.position.copy(currentPos)
+                object.position.copy(pos)
 
                 object.up = objectNode.getUpVector(object.position)
-                object.lookAt(next)
+                object.lookAt(pos.clone().add(nose))
 
                 // restore the object position
                 object.position.copy(oldPos);
@@ -349,101 +365,31 @@ export class CNodeControllerObjectTilt extends CNodeController {
                     this._savedQuaternion = object.quaternion.clone();
                 }
 
-                // calculate the heading on the SMOOTHED track
-                var from = currentPos
-                var to = rawNext.clone()
-                var fwdAir = to.sub(from);
-
-                // but we need to use the actual track for the position
-                // i.e. pos and next
-                var pos = currentPos;
-                var next = pos.clone().add(fwdAir)
-
-
-                // var pos = this.smoothedTrack.p(f);
-                // var next = this.smoothedTrack.p(f + 1)
-
-                let tiltType = this.tiltType.toLowerCase()
-
-                // if we don't have an air track, then we can't use the air tilt types
-                // so we just use the non-air versions
-                if (this.in.airTrack === undefined) {
-                    if (tiltType === "frontpointingair")
-                        tiltType = "frontpointing";
-                    if (tiltType === "bottompointingair")
-                        tiltType = "bottompointing";
-                }
-
                 switch (tiltType) {
                     case "banking":
-                        // with banking, we calculate the angular velocity
-                        // from the track, and then use that to rotate the model
-                        // around the track direction
-
-                        // simSpeed: each frame represents simSpeed/fps real seconds
-                        // (e.g., simSpeed=60, fps=30 → 2 real seconds per frame)
-                        const simSpeed = Sit.simSpeed ?? 1;
-                        const sampleDuration = 1;
-                        // first get the angular velocity
-                        const velocityA = trackDirection(this.smoothedTrack, f - sampleDuration * Sit.fps / 2, 2)
-                        const velocityB = trackDirection(this.smoothedTrack, f + sampleDuration * Sit.fps / 2, 3)
-                        const velocity = trackVelocity(this.smoothedTrack, f)
-                        const fwd = velocity.clone().normalize()
-
-                        // The direction samples span sampleDuration * Sit.fps frames,
-                        // which is sampleDuration * simSpeed real seconds.
-                        const actualSampleDuration = sampleDuration * simSpeed;
-                        let angularVelocity = velocityA.angleTo(velocityB) / actualSampleDuration;  // radians per second
-
-                        // is it left or right turn? Use local up vector instead of global Y
-                        const cross = V3().crossVectors(velocityA, velocityB)
-                        const localUp = getLocalUpVector(pos)
-                        const right = cross.dot(localUp) > 0
-                        if (right)
-                            angularVelocity = -angularVelocity
-
-                        // Per-frame displacement → m/s: divide by real seconds per frame
-                        const speed = velocity.length() * Sit.fps / simSpeed; // meters per second
-
-                        // Guard against degenerate cases: Three.js angleTo() returns
-                        // PI/2 for zero-length vectors, producing extreme (~90°) bank
-                        // angles. This occurs when the smoothed track has zero velocity
-                        // (e.g., extrapolated beyond ADS-B data range). Also protects
-                        // against rotateOnWorldAxis with a zero-length fwd axis.
-                        if (speed < 0.01 || velocityA.lengthSq() < 0.5 || velocityB.lengthSq() < 0.5) {
+                        const secondsPerFrame = (Sit.simSpeed ?? 1) / Sit.fps;
+                        const lastStep = Sit.frames - 2;
+                        const start = Math.max(0, f - Sit.fps / 2);
+                        const end = Math.min(lastStep, f + Sit.fps / 2);
+                        const bankAngle = horizontalTurnBank(
+                            trackVelocity(this.smoothedTrack, start), trackVelocity(this.smoothedTrack, end),
+                            trackVelocity(this.smoothedTrack, f), getLocalUpVector(pos),
+                            (end - start) * secondsPerFrame, secondsPerFrame);
+                        if (bankAngle === null || nose.lengthSq() < 1e-12) {
                             object.updateMatrix()
                             object.updateMatrixWorld()
                             break;
                         }
 
-                        // convert angular velocity to bank angle
-                        // function turnRate(bankDegrees, speedMPS) {
-                        //     var g = 9.77468   // local gravity at 36°latitude, 25000 feet https://www.sensorsone.com/local-gravity-calculator/
-                        //     var rate = (g * tan(radians(bankDegrees))) / speedMPS
-                        //     return degrees(rate);
-                        // }
-                        // rate = g * tan(bank) / speed
-                        // so bank = atan(rate * speed / g)
-
-                        const bankAngle = Math.atan(angularVelocity * speed / 9.77468)
-
-                        // Use the *raw* track direction (which the earlier
-                        // `lookAt(next)` aligned the model with) for the bank
-                        // rotation axis. The smoothed direction we used to
-                        // compute angularVelocity above can lag the raw track
-                        // by 10–20° during racetrack ramps because we double-
-                        // smooth (the controller's internal 200-frame sliding
-                        // window stacks on top of cameraTrackSwitchSmooth).
-                        // Banking around the same axis the model is already
-                        // aligned with is a pure roll AND keeps body-on-track.
-                        const rawFwd = next.clone().sub(currentPos).normalize()
-                        object.rotateOnWorldAxis(rawFwd, bankAngle);
+                        // Roll around the nose set by lookAt, including any wind correction.
+                        const rollAxis = nose.normalize();
+                        object.rotateOnWorldAxis(rollAxis, bankAngle);
 
                         if (this.in.angleOfAttack !== undefined) {
                             const aoa = this.in.angleOfAttack.v(f)
                             const aoaRad = radians(aoa)
                             const up = getLocalUpVector(object.position)
-                            const left = up.cross(rawFwd)
+                            const left = up.cross(rollAxis)
                             object.rotateOnWorldAxis(left, -aoaRad)
                         }
 

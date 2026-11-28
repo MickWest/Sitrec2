@@ -54,7 +54,7 @@ With **Animate moving parts** on, propellers, rotors and wheels turn as the sitc
 
 For a whole line of mapped towers, import a power grid from a region or drop an Overpass Turbo KML. Right-click the support you want to change. [Import a power network and edit its poles](SceneObjects.md#importing-power-lines-and-supports)
 
-To place a single object by hand, right-click the ground in a custom sitch and choose **Add → 3D Object**. In its edit window, open **Browse custom objects…**, set **Object type** to **Ground objects**, select a preset and click **Use this object**. To put its base on the terrain, open **Location**, turn on **Above Ground Level** and set **Alt** to zero.
+To place a single object by hand, right-click the ground in a custom sitch and choose **Add → Static 3D Object**. In its edit window, open **Browse custom objects…**, set **Object type** to **Ground objects**, select a preset and click **Use this object**. To put its base on the terrain, open **Location**, turn on **Above Ground Level** and set **Alt** to zero.
 
 Search for **Walls and fences** to find a brick wall, a chain-link fence, white or brown picket fences, a good-neighbor fence with alternating boards, and two styles of metal railings. Use **Customize…** to set the length and height of a straight run. Its placement point is halfway between the ends at ground level.
 

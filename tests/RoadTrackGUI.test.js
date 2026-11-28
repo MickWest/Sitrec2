@@ -11,7 +11,7 @@ const mockGround = {cache: {}};
 jest.mock("../src/TrackGround", () => ({trackGroundCache: () => mockGround.cache}));
 
 beforeEach(() => {
-    mockGround.cache = {};
+    mockGround.cache = {records: new Map(), requestRoadUpdate: jest.fn()};
     window.matchMedia ??= () => ({matches: false, addListener() {}, removeListener() {}});
     global.ResizeObserver ??= class {observe() {} disconnect() {}};
     setNodeMan(new CNodeManager());
@@ -23,16 +23,19 @@ test("road settings survive a node save and restore, and controls follow ground 
     const node = new CNodeArray({id: "road", array: []});
     node.altitudeLock = 0; node.altitudeLockAGL = true;
     const controls = addRoadTrackControls(folder, node, node);
+    mockGround.cache.records.set(node, {});
     const toggle = folder.controllers.find(c => c.property === "roadTrack");
     const width = folder.controllers.find(c => c.property === "roadWidth");
     expect(width._hidden).toBe(true);
     toggle.setValue(true);
     expect(width._hidden).toBe(false);
-    node.roadWidth = 10;
-    node.roadSmoothing = 35;
+    width.setValue(10);
+    folder.controllers.find(c => c.property === "roadSmoothing").setValue(35);
+    expect(mockGround.cache.requestRoadUpdate.mock.calls).toEqual([[node], [node], [node]]);
     const saved = JSON.parse(JSON.stringify(node.modSerialize()));
     node.roadTrack = false; node.roadWidth = 8; node.roadSmoothing = 20;
     node.modDeserialize(saved);
+    expect(mockGround.cache.requestRoadUpdate).toHaveBeenCalledTimes(4);
     expect([node.roadTrack, node.roadWidth, node.roadSmoothing]).toEqual([true, 10, 35]);
     expect(width._hidden).toBe(false);
     node.altitudeLockAGL = false;

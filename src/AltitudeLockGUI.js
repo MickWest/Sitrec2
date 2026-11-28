@@ -36,21 +36,25 @@ export function lockHeightAt(position, agl) {
  *        dropping it to the ground.
  * @param {function(): boolean} opts.getAGL
  * @param {function(boolean)} opts.setAGL
+ * @param {function(boolean)} [opts.setEnabled] - keep the checkbox state separately on tracks
+ *        that support signed ellipsoid heights, including the legacy off value
  * @param {function(): boolean} [opts.hasSavedZeroLock] - a spline's track record can explicitly
  *        lock it at zero even when an older import left its height control hidden
  * @param {boolean} [opts.legacyZeroIsOff] - before 2.177.0 this control defaulted to 0, which did
  *        not lock, so a saved 0 from then means off
  * @returns {{update: function()}} shows the height and Height From only while the lock is on
  */
-export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL, hasSavedZeroLock, legacyZeroIsOff = false}) {
+export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL, setEnabled, hasSavedZeroLock, legacyZeroIsOff = false}) {
     const state = {
         get lockAltitude() { return isOn(); },
         set lockAltitude(on) {
             if (on === isOn()) return;
+            setEnabled?.(on);
             if (on) {
                 // In whole display units, so the field does not show 14611.710239279928.
                 const scale = Units.getScaleFactors("metric").small;
-                heightNode.setValue(Math.round(Math.max(0, currentHeight()) * scale));
+                const height = currentHeight();
+                heightNode.setValue(Math.round((setEnabled && !getAGL() ? height : Math.max(0, height)) * scale));
             } else {
                 heightNode.setValue(-1);
             }

@@ -36,7 +36,7 @@ export class CNodeSplineEditor extends CNodeTrack {
         // on imported data tracks.
         this.altitudeOffset = 0;
         // Smoothers also read the spline's lock mode when placing the displayed track.
-        this.altitudeLockAGL = true;
+        this.altitudeLockAGL = v.altitudeLockAGL ?? true;
         
         // Store the curve type
         this.curveType = v.type ? v.type.toLowerCase() : 'chordal';
@@ -171,6 +171,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             constantSpeed: this.constantSpeed,
             extrapolateTrack: this.extrapolateTrack,
             altitudeLock: this.altitudeLock,
+            altitudeLockEnabled: this.altitudeLockEnabled,
             altitudeLockAGL: this.altitudeLockAGL,
             altitudeOffset: this.altitudeOffset,
             curveType: this.curveType,
@@ -214,6 +215,7 @@ export class CNodeSplineEditor extends CNodeTrack {
         }
         if (v.altitudeLock !== undefined) {
             this.altitudeLock = v.altitudeLock
+            this.altitudeLockEnabled = v.altitudeLockEnabled ?? (v.altitudeLock >= 0);
             this.altitudeLockAGL = v.altitudeLockAGL ?? true
             this.updateAltitudeLock()
         }
@@ -274,9 +276,10 @@ export class CNodeSplineEditor extends CNodeTrack {
         this._earthModelSignature = signature;
     }
     
-    setAltitudeLock(value) {
+    setAltitudeLock(value, enabled = value >= 0) {
         this.altitudeLock = value;
-        if (value < 0) this.elevationCache = null;
+        this.altitudeLockEnabled = enabled;
+        if (!isAGLLockActive(this)) this.elevationCache = null;
         this.updateAltitudeLock();
         this.recalculateCascade();
     }
@@ -289,7 +292,7 @@ export class CNodeSplineEditor extends CNodeTrack {
     
     updateAltitudeLock() {
         if (this.splineEditor && this.splineEditor.transformControl) {
-            this.splineEditor.transformControl.setAltitudeLocked(this.altitudeLock >= 0, this.altitudeLock);
+            this.splineEditor.transformControl.setAltitudeLocked(isAltitudeLockActive(this), this.altitudeLock);
         }
         this.syncControlPointsToAltitudeLock();
     }
@@ -298,11 +301,12 @@ export class CNodeSplineEditor extends CNodeTrack {
     // up/down drag on a control point, or on an object riding this track. Every control
     // point moves to the new height, so the whole track rises and falls as one.
     //
-    // Never below zero, because -1 is what switches the lock off. The slider is updated
+    // A ground-relative lock stops at zero. An ellipsoid height can be negative. The slider is updated
     // quietly, in the display units it holds, because the caller is mid-drag and does
     // the one recalculation itself.
     setAltitudeLockFromDrag(meters) {
-        this.altitudeLock = Math.max(0, meters);
+        this.altitudeLock = this.altitudeLockAGL ? Math.max(0, meters) : meters;
+        this.altitudeLockEnabled = true;
         const trackID = this.id.replace(/_unsmoothed$/, "");
         const trackOb = TrackManager.get(trackID, false);
         if (trackOb) trackOb.altitudeLock = this.altitudeLock;
@@ -485,6 +489,7 @@ export class CNodeSplineEditor extends CNodeTrack {
             constantSpeed: this.constantSpeed,
             extrapolateTrack: this.extrapolateTrack,
             altitudeLock: this.altitudeLock,
+            altitudeLockEnabled: this.altitudeLockEnabled,
             altitudeLockAGL: this.altitudeLockAGL,
             altitudeOffset: this.altitudeOffset,
             color: this.splineColorHex(),
@@ -586,7 +591,9 @@ export class CNodeSplineEditor extends CNodeTrack {
         // update snapping, if needed
         this.splineEditor.updateSnapping();
 
-        if (this.constantSpeed) {
+        // A single straight segment already travels at constant speed between its
+        // keyframes. Use their In/Out times and the track's extrapolation setting.
+        if (this.constantSpeed && this.splineEditor.frameNumbers.length > 2) {
             // CONSTANT SPEED MODE: Traverse the path at constant speed, ignoring frame times
             // Calculate total path length by sampling the curve
             const SAMPLES = 1000; // Number of samples for length calculation

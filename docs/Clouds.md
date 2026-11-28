@@ -15,7 +15,7 @@ check what a cloud layer would hide.
 
 *The **Scattered Cumulus** preset at the default quality, seen from the ground.*
 
-This is a different feature from **Add → Clouds** on the ground menu. **Add → Clouds** places one round
+This is a different feature from **Add (Legacy) → Clouds** on the ground menu. **Add (Legacy) → Clouds** places one round
 patch of flat cloud images, which you can move and resize with handles. See
 [Adding Objects and Tracks](SceneObjects.md#clouds).
 
@@ -248,4 +248,4 @@ clouds by default.
 - [The Lighting Menu](Lighting.md)
 - [Atmospheric Aerial Perspective](AtmosphericAerialPerspective.md): the haze that distant clouds fade into
 - [Wind in Sitrec](Wind.md): Local Wind, Target Wind and soundings
-- [Adding Objects and Tracks](SceneObjects.md#clouds): the flat cloud patches of **Add → Clouds**
+- [Adding Objects and Tracks](SceneObjects.md#clouds): the flat cloud patches of **Add (Legacy) → Clouds**

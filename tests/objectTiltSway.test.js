@@ -3,8 +3,21 @@ import {CNodeControllerObjectTilt} from "../src/nodes/CNodeControllerObjectTilt"
 import {LLAToECEF} from "../src/LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalUpVector} from "../src/SphericalMath";
 import {setSit} from "../src/Globals";
+import {horizontalTurnBank} from "../src/trackUtils";
 
 beforeAll(() => setSit({fps: 30, simSpeed: 1}));
+
+test("cresting a straight hill gives zero bank, and turns on the hill retain their sign and magnitude", () => {
+    const pos = LLAToECEF(34, -118, 100), up = getLocalUpVector(pos);
+    const east = getLocalEastVector(pos), north = up.clone().cross(east);
+    const dt = 1 / 30;
+    const velocity = (heading, climb) => north.clone().multiplyScalar(15 * Math.cos(heading))
+        .addScaledVector(east, 15 * Math.sin(heading)).addScaledVector(up, climb).multiplyScalar(dt);
+    for (const turn of [0, 0.2, -0.2]) {
+        const bank = horizontalTurnBank(velocity(0, 4), velocity(turn, -4), velocity(turn / 2, 0), up, 1, dt);
+        expect(bank).toBeCloseTo(Math.atan(15 * turn / 9.77468), 10);
+    }
+});
 
 function controller(values) {
     // Only the tilt-and-sway step is under test; the banking modes leave the orientation alone here.

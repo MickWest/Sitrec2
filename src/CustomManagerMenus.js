@@ -44,7 +44,7 @@ import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
 import {isAdmin, isSecureBuild, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
-import {DebugArrowAB, elevationAtLL} from "./threeExt";
+import {DebugArrowAB, elevationAtLL, getVisiblePointBelow} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
@@ -91,7 +91,7 @@ import {
     gimbalStepTraverse,
 } from "./GimbalCustomSetup";
 import {Color, Vector3} from "three";
-import {getLocalUpVector} from "./SphericalMath";
+import {altitudeHAE, getLocalUpVector, setAltitudeHAE} from "./SphericalMath";
 import {abFrameRange} from "./TraverseAnalysisData";
 
 
@@ -510,7 +510,7 @@ export const menuMethods = {
         // createObjectFromInput for why).
         // The object for Add Moving Object and its In→Out form, named objectName: "Object N"
         // with the number of its track's "Track N" (getNextTrackAndObjectNames).
-        const createTrackObject = (objectName) => {
+        const createTrackObject = (objectName, position = groundPoint) => {
             const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
             new CNode3DObject({
                 id: objectID,
@@ -519,9 +519,38 @@ export const menuMethods = {
                 radius: 5, // 5 meters
                 color: 0x808080, // grey
                 material: "phong",
-                position: groundPoint,
+                position,
             });
             return objectID;
+        };
+
+        const createInOutTrack = (grounded) => {
+            const {frame0, frame1} = abFrameRange(Sit.frames, 2);
+            const view = NodeMan.get(sourceViewID ?? "mainView");
+            const up = getLocalUpVector(groundPoint);
+            const right = new Vector3().setFromMatrixColumn(view.camera.matrixWorld, 0).projectOnPlane(up).normalize();
+            const outPoint = groundPoint.clone().addScaledVector(right, view.pixelsToMeters(groundPoint, 200));
+
+            // The screen offset locates the far endpoint horizontally. Sample
+            // both terrain columns before choosing a single flight altitude.
+            const lockHeight = grounded ? 0 : 100 + Math.max(
+                altitudeHAE(getVisiblePointBelow(groundPoint)), altitudeHAE(getVisiblePointBelow(outPoint)));
+            const start = grounded ? groundPoint : setAltitudeHAE(groundPoint, lockHeight);
+            const end = grounded ? outPoint : setAltitudeHAE(outPoint, lockHeight);
+            const {trackName, objectName} = this.getNextTrackAndObjectNames();
+            TrackManager.addSyntheticTrack({
+                recordUndo: true,
+                initialPoints: [[frame0, ...start.toArray()], [frame1, ...end.toArray()]],
+                name: trackName,
+                objectID: createTrackObject(objectName, start),
+                editMode: true,
+                constantSpeed: true,
+                altitudeLock: lockHeight,
+                altitudeLockEnabled: true,
+                altitudeLockAGL: grounded,
+                showInLook: sourceViewID === "lookView",
+            });
+            closeMenu();
         };
 
         const movePosition = (node, altitude) => {
@@ -725,45 +754,8 @@ export const menuMethods = {
                 console.log(`Created object ${objectID} with track at ${lat}, ${lon}, ${alt}m`);
                 closeMenu();
             },
-            // A straight track across the In/Out range at a steady speed and height, with an
-            // object riding it: two keyframes, constant speed on, and the altitude locked
-            // at ground level, so dragging the object or a keyframe up raises all of it.
-            //
-            // The In keyframe is where the ground was clicked. The Out keyframe is level
-            // with it, 200 screen pixels to its right in the view that was clicked, so both
-            // ends are on screen and grabbable at any zoom — and left to right matches In to
-            // Out on the frame slider. The two cannot share a place: a constant-speed track
-            // of zero length divides by zero.
-            createInOutObjectTrack: () => {
-                const {trackName, objectName} = this.getNextTrackAndObjectNames();
-                const objectID = createTrackObject(objectName);
-
-                // minCount 2: two keyframes at the same frame would make one replace the other
-                const {frame0, frame1} = abFrameRange(Sit.frames, 2);
-
-                const view = NodeMan.get(sourceViewID ?? "mainView");
-                const up = getLocalUpVector(groundPoint);
-                const right = new Vector3().setFromMatrixColumn(view.camera.matrixWorld, 0);
-                right.addScaledVector(up, -right.dot(up)).normalize();
-                const outPoint = groundPoint.clone().addScaledVector(right, view.pixelsToMeters(groundPoint, 200));
-
-                TrackManager.addSyntheticTrack({
-                    recordUndo: true,
-                    initialPoints: [
-                        [frame0, groundPoint.x, groundPoint.y, groundPoint.z],
-                        [frame1, outPoint.x, outPoint.y, outPoint.z],
-                    ],
-                    name: trackName,
-                    objectID: objectID,
-                    editMode: true,
-                    constantSpeed: true,
-                    altitudeLock: 0,
-                    showInLook: sourceViewID === "lookView",
-                });
-
-                console.log(`Created object ${objectID} with In->Out track from ${lat}, ${lon}, frames ${frame0}-${frame1}`);
-                closeMenu();
-            },
+            addFlyingObject: () => createInOutTrack(false),
+            addGroundedObject: () => createInOutTrack(true),
             dropPin: () => {
                 // Close the menu first
                 closeMenu();
@@ -987,17 +979,21 @@ export const menuMethods = {
                 .tooltip(t("custom.contextMenu.tooltips.editOverlay"));
         }
 
-        const add = menu.addFolder(t("custom.contextMenu.groupAdd")).close();
-        const additions = [
-            ["dropPin","dropPin"], ["addFixedObject","addFixedObject"],
-            ["createTrackWithObject","createTrackWithObject"], ["createInOutObjectTrack","createInOutObjectTrack"],
-            ["createSyntheticTrack","createTrackNoObject"], ["addBalloon","addBalloon"], ["addKite","addKite"],
-            ["addSpotlight","addSpotlight"], ["addBuilding","addBuilding"], ["addClouds","addClouds"],
-            ["addOverlay","addGroundOverlay"], ["addGrid","addGroundGrid"], ["addRegion","addRegion"],
-        ];
-        for (const [action,key] of additions) {
-            add.add(menuData,action).name(t("custom.contextMenu."+key)).tooltip(t("custom.contextMenu.tooltips."+key));
-        }
+        const addGroup = (label, entries) => {
+            const folder = menu.addFolder(t("custom.contextMenu." + label)).close();
+            for (const [action, key = action] of entries) {
+                folder.add(menuData, action).name(t("custom.contextMenu." + key))
+                    .tooltip(t("custom.contextMenu.tooltips." + key));
+            }
+        };
+        addGroup("groupAdd", [
+            ["dropPin"], ["addFixedObject"], ["addFlyingObject"], ["addGroundedObject"],
+            ["addBalloon"], ["addKite"], ["addSpotlight"], ["addBuilding"],
+            ["addOverlay", "addGroundOverlay"], ["addGrid", "addGroundGrid"], ["addRegion"],
+        ]);
+        addGroup("groupAddLegacy", [
+            ["createTrackWithObject"], ["createSyntheticTrack", "createTrackNoObject"], ["addClouds"],
+        ]);
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");

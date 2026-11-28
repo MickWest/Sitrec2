@@ -2,8 +2,12 @@ import {CNodeManager} from "../src/nodes/CNodeManager";
 import {CNodeArray} from "../src/nodes/CNodeArray";
 import {CNodeSwitch} from "../src/nodes/CNodeSwitch";
 import {CNodeSmoothedPositionTrack} from "../src/nodes/CNodeSmoothedPositionTrack";
+import {CNodeControllerObjectTilt} from "../src/nodes/CNodeControllerObjectTilt";
+import {Object3D} from "three";
+import {getLocalUpVector} from "../src/SphericalMath";
 import {CNodeSplineEditor} from "../src/nodes/CNodeSplineEdit";
 import {SplineEditor} from "../src/SplineEditor";
+import {PointEditor} from "../src/PointEditor";
 import {CNodeMISBDataTrack} from "../src/nodes/CNodeMISBData";
 import {CNodeTrackFromMISB} from "../src/nodes/CNodeTrackFromMISB";
 import {Globals, setGlobalDateTimeNode, setNodeMan, setSit} from "../src/Globals";
@@ -72,6 +76,34 @@ test("a new spline displays its saved height above ground before the first reloa
     }
 });
 
+test("a two-point flight holds its HAE and reaches the endpoints at the marked frames", () => {
+    manager.add("mainView", {});
+    manager.add("mainCamera", {camera: {}});
+    SplineEditor.mockImplementationOnce(() => ({
+        frameNumbers: [20, 60], positions: [LLAToECEF(35, -88, 12), LLAToECEF(35, -87.999, 54)],
+        numPoints: 2, getPoint: PointEditor.prototype.getPoint, getPointFrame: PointEditor.prototype.getPointFrame,
+        updateSnapping() {}, updatePointEditorGraphics() {},
+    }));
+    const spline = new CNodeSplineEditor({id: "flight", type: "linear", view: "mainView",
+        camera: "mainCamera", frames: -1, altitudeLockAGL: false, skipGUI: true});
+    spline.constantSpeed = true;
+    for (const height of [154, -40, -1]) {
+        spline.setAltitudeLock(height, true);
+        for (const [frame, lon] of [[20, -88], [40, -87.9995], [60, -87.999]]) {
+            const lla = ECEFToLLAVD_radii(spline.p(frame));
+            expect(lla.y).toBeCloseTo(lon, 8);
+            expect(lla.z).toBeCloseTo(height, 5);
+        }
+        const {altitudeLock, altitudeLockEnabled, altitudeLockAGL} = spline.modSerialize();
+        spline.setAltitudeLock(-1);
+        expect(getTrackAltitudeLock(spline)).toBeNull();
+        spline.modDeserialize({altitudeLock, altitudeLockEnabled, altitudeLockAGL});
+        expect(getTrackAltitudeLock(spline)).toBe(spline);
+    }
+    spline.modDeserialize({altitudeLock: -1, altitudeLockAGL: false});
+    expect(getTrackAltitudeLock(spline)).toBeNull();
+});
+
 test.each(["none", "moving", "savgol", "sliding", "spline", "catmull"])(
     "%s smoothing locks the final path to the visible surface, including another camera smoother", method => {
         const raw = source();
@@ -127,6 +159,30 @@ test("ground locking preserves the smoothed horizontal motion", () => {
         expect(after.x).toBeCloseTo(before[f].x, 9);
         expect(after.y).toBeCloseTo(before[f].y, 9);
     }
+});
+
+test("a ground-locked object follows the grade across a single raised mesh sample", () => {
+    const raw = source();
+    const pos = raw.p(50);
+    const up = getLocalUpVector(pos);
+    const east = pos.clone().set(-up.y, up.x, 0).normalize();
+    const forward = east.clone().addScaledVector(up, 0.1).normalize();
+    raw.array = raw.array.map((_, f) => ({
+        position: pos.clone().addScaledVector(east, (f - 50) * 0.12)
+            .addScaledVector(up, (f - 50) * 0.012 + (f === 50 ? 0.45 : 0)),
+    }));
+    const controller = new CNodeControllerObjectTilt({id: "pose", track: raw, tiltType: "banking", noMenu: true});
+    const object = new Object3D();
+    for (const f of [49, 50, 51]) {
+        object.position.copy(raw.p(f));
+        controller.apply(f, {_object: object, getUpVector: getLocalUpVector});
+        expect(object.position.distanceTo(raw.p(f))).toBe(0);
+        expect(object.getWorldDirection(east.clone()).angleTo(forward)).toBeLessThan(1e-5);
+    }
+    // On a freely authored path the same rise is an explicit maneuver.
+    raw.altitudeLock = -1;
+    controller.apply(49, {_object: object, getUpVector: getLocalUpVector});
+    expect(object.getWorldDirection(east.clone()).dot(up)).toBeGreaterThan(0.95);
 });
 
 test("a ground-relative source uses the selected height reference in both raw and smoothed frames", () => {
