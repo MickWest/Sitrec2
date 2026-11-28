@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.211.2 (2026-11-27)
+
+### New Features
+- **Pterodactyl** (Birds → Pterodactyl): a flying pterosaur with a 6 m wingspan and an adjustable head crest. Set the crest to zero for a smooth head.
+- **Ground objects** (Browse custom objects… → Ground objects): new radio tower with obstruction lights, brick wall, chain-link and wood fences, and metal railings.
+
+### Improvements
+- The Custom Object Designer now has its editing controls in a compact right sidebar, which gives more room to the preview. The grid stays visible in daylight, and its spacing stays fixed when the object scale changes.
+
+### Bug Fixes
+- Fixed playback skipping the first frames after you moved to a new frame while paused and then pressed play.
+- Fixed new In-to-Out tracks not showing at their selected height above ground until the sitch was reloaded.
+- Fixed an imported spline losing its ground lock when a saved sitch reopened, also in older saves that hid the lock height control.
+- Fixed a ground-relative KML track locked to a height above the ellipsoid using different heights for the raw and smoothed tracks. Turning the lock off restores the heights from the file.
+
 ## Version 2.211.1 (2026-11-27)
 
 ### Improvements

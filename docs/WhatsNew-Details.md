@@ -9,6 +9,25 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.211.2 (2026-11-27)
+
+### New Features
+- New pterodactyl bird preset with a 6 m wingspan and an adjustable head crest (zero gives a smooth head). Its wing membrane keeps its shape when the model is placed in a scene or frozen as a GLB; `src/rendering/ModelSkinning.js` is new. (fcaa3422; tools/vehicles/pterosaur.js, tools/vehicles/bird.js, tools/vehicles/birdPresets.js, src/rendering/ModelSkinning.js)
+- New ground object presets: a radio tower with obstruction lights (a beacon on the saved timing and three steady side markers), a brick wall, chain-link and wood fences, and metal railings. (fcaa3422; tools/vehicles/wallsAndFences.js, tools/vehicles/groundObject.js, tools/vehicles/groundParameters.js)
+
+### Improvements
+- The release workflow now holds publication until a reviewer approves it. The job that publishes the version tag of the image, attests the multi-architecture index and makes the GitHub Release runs in the `release-publish` environment, which has a required reviewer; the Pages demo deploy waits the same way. A rejected or cancelled run publishes nothing, and two workflow tests check that only the publishing jobs wait. (b9ef7baf; .github/workflows/docker.yml, .github/workflows/pages.yml, docs/dev/Container-Security-Review.md)
+- The designer's editing controls move into a compact right sidebar. Search suggestions are suppressed when the browser opens, the grid stays visible in daylight, and grid spacing no longer changes with object scale. (fcaa3422; tools/vehicles/designer.js, tools/vehicles/style.css, tools/vehicles/preview.js, src/procedural/VehicleBrowser.js)
+
+### Bug Fixes
+- The playback clock now restarts when playback changes from paused to playing. Before, the time spent paused could make the playhead skip the first frames after a seek. A test checks that only a paused-to-playing transition restarts the clock. (aec3c94e; src/index.js, src/par.js)
+- New In-to-Out tracks now display at their selected height above ground from the first frame, not only after a reload. (4d9e299a; src/nodes/CNodeSplineEdit.js, src/TrackManager.js)
+- An imported spline's explicit zero-height ground lock now survives save and reload, including older saves where the lock height control was hidden. (4d9e299a; src/SplineInterchange.js, src/AltitudeLockGUI.js)
+- When a ground-relative KML track is locked to a height above the ellipsoid, both the raw and smoothed tracks now use that height; unlocking restores the file heights. (4d9e299a; src/TrackManager.js, src/nodes/CNodeMISBData.js)
+
+### Documentation
+- `docs/CustomModels.md` and `docs/SceneObjects.md` describe the pterodactyl and the new ground objects. (fcaa3422; docs/CustomModels.md, docs/SceneObjects.md)
+
 ## Version 2.211.1 (2026-11-27)
 
 ### Improvements
