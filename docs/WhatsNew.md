@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.211.4 (2026-11-27)
+
+### Bug Fixes
+- Fixed bird wings in flocks: each bird now moves its full wing through its own flap and glide cycle, and clicking a wing selects the bird at the visible wing position.
+
 ## Version 2.211.3 (2026-11-27)
 
 ### New Features

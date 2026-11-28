@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.211.4 (2026-11-27)
+
+### Bug Fixes
+- Birds in a flock now animate their full wing, each through its own flap and glide cycle. The flock renderer applies the bone pose for each wingbeat phase, so the wing membrane follows the moving wing tip. Clicking a wing now selects the bird at the visible wing position. A new test checks that flock batches keep independent membrane poses in the same local coordinates as a single bird. (85f1e693; src/ObjectFlock.js, src/rendering/InstancedSkinnedMesh.js, tests/ModelSkinning.test.js)
+
 ## Version 2.211.3 (2026-11-27)
 
 ### New Features
