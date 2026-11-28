@@ -1993,10 +1993,9 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         return isAGLLockActive(this);
     }
 
-    // True iff this track's positions depend on terrain elevation. Either the
-    // raw altitudes are AGL (column-driven), or the AGL lock is active.
+    // An active lock determines the height reference, including for an AGL source.
     isTerrainDependent() {
-        return this.useAGL || this.isAGLLockActive();
+        return isAltitudeLockActive(this) ? this.isAGLLockActive() : this.useAGL;
     }
 
     adjustAlt(a, lat, lon) {

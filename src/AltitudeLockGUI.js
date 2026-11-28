@@ -36,11 +36,13 @@ export function lockHeightAt(position, agl) {
  *        dropping it to the ground.
  * @param {function(): boolean} opts.getAGL
  * @param {function(boolean)} opts.setAGL
+ * @param {function(): boolean} [opts.hasSavedZeroLock] - a spline's track record can explicitly
+ *        lock it at zero even when an older import left its height control hidden
  * @param {boolean} [opts.legacyZeroIsOff] - before 2.177.0 this control defaulted to 0, which did
  *        not lock, so a saved 0 from then means off
  * @returns {{update: function()}} shows the height and Height From only while the lock is on
  */
-export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL, legacyZeroIsOff = false}) {
+export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight, getAGL, setAGL, hasSavedZeroLock, legacyZeroIsOff = false}) {
     const state = {
         get lockAltitude() { return isOn(); },
         set lockAltitude(on) {
@@ -82,11 +84,11 @@ export function addAltitudeLockControls(folder, {heightNode, isOn, currentHeight
     const restore = heightNode.modDeserialize?.bind(heightNode);
     if (restore) {
         heightNode.modDeserialize = (v) => {
-            // Older imported tracks could save an OFF lock as a hidden zero
-            // control. An actual zero-height lock saved the control as visible.
+            // Older imported tracks could save an OFF lock as a hidden zero.
+            // A spline also saves its lock on the track itself, before the controls load.
             // Before 2.177.0 there was no Lock Altitude checkbox, and an untouched
             // control saved its default 0 as visible, so with legacyZeroIsOff that is off too.
-            if (v.value === 0 && (v.visible === false
+            if (v.value === 0 && ((v.visible === false && !hasSavedZeroLock?.())
                 || (legacyZeroIsOff && (Globals.exportTagNumber ?? 0) < 2177000))) v = {...v, value: -1};
             const unchanged = heightNode.value === v.value;
             restore(v);

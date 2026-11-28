@@ -3146,10 +3146,11 @@ class CTrackManager extends CManager {
             // other track silently deleted this spline's Alt Lock control.
         }, pathFolder);
 
-        trackOb.altitudeLockAGL = true;
+        trackOb.altitudeLockAGL = splineEditorNode.altitudeLockAGL;
         altLockControls = addAltitudeLockControls(pathFolder, {
             heightNode: altLockNode,
             isOn: () => trackOb.altitudeLock >= 0,
+            hasSavedZeroLock: () => trackOb.altitudeLock === 0,
             // The first control point's height, so switching the lock on holds the track there.
             currentHeight: () => {
                 const first = splineEditor.positions[0];
@@ -3165,7 +3166,12 @@ class CTrackManager extends CManager {
         const roadControls = addRoadTrackControls(pathFolder, splineEditorNode, splineEditorNode);
         const updateLock = altLockControls.update;
         altLockControls.update = () => { updateLock(); roadControls.update(); };
-        trackOb.updateAltitudeLockControls = () => altLockControls.update();
+        trackOb.updateAltitudeLockControls = () => {
+            // The track stores metres. The slider stores display units, or -1 for off.
+            if (trackOb.altitudeLock < 0) altLockNode.setValue(-1, true);
+            else altLockNode.setValueWithUnits(trackOb.altitudeLock, "metric", "small", true);
+            altLockControls.update();
+        };
 
         // Set through the slider rather than the fields: the slider holds display units,
         // and its onChange is what conforms the control points to the lock.
@@ -4481,13 +4487,7 @@ class CTrackManager extends CManager {
                             splineEditorNode.setCurveType(trackOb.curveType);
                         }
                         
-                        // Update the GUI slider value if it exists
-                        const altLockNode = NodeMan.get(trackOb.trackID + "_altitudeLock", false);
-                        if (altLockNode) {
-                            altLockNode.value = trackOb.altitudeLock;
-                        }
-                        // Show or hide the lock height and Height From for the restored lock.
-                        trackOb.updateAltitudeLockControls?.();
+                        trackOb.updateAltitudeLockControls();
                         
                         // Ensure edit mode is disabled after deserialization
                         // Transform controls should not be visible when loading a saved situation

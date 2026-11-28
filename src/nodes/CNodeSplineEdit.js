@@ -35,6 +35,8 @@ export class CNodeSplineEditor extends CNodeTrack {
         // Raise/lower the whole output track. Non-destructive, like the "Alt offset"
         // on imported data tracks.
         this.altitudeOffset = 0;
+        // Smoothers also read the spline's lock mode when placing the displayed track.
+        this.altitudeLockAGL = true;
         
         // Store the curve type
         this.curveType = v.type ? v.type.toLowerCase() : 'chordal';

@@ -2,6 +2,8 @@ import {CNodeManager} from "../src/nodes/CNodeManager";
 import {CNodeArray} from "../src/nodes/CNodeArray";
 import {CNodeSwitch} from "../src/nodes/CNodeSwitch";
 import {CNodeSmoothedPositionTrack} from "../src/nodes/CNodeSmoothedPositionTrack";
+import {CNodeSplineEditor} from "../src/nodes/CNodeSplineEdit";
+import {SplineEditor} from "../src/SplineEditor";
 import {CNodeMISBDataTrack} from "../src/nodes/CNodeMISBData";
 import {CNodeTrackFromMISB} from "../src/nodes/CNodeTrackFromMISB";
 import {Globals, setGlobalDateTimeNode, setNodeMan, setSit} from "../src/Globals";
@@ -12,8 +14,10 @@ import {MISB, MISBFields} from "../src/MISBFields";
 
 jest.mock("json-stringify-pretty-compact", () => ({__esModule: true, default: JSON.stringify}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: () => 0}));
+jest.mock("../src/SplineEditor", () => ({SplineEditor: jest.fn()}));
 
 let manager, terrain, tiles, surfaceHeight;
+const start = 1_000_000;
 const roadHeight = lon => 140 + 8 * Math.sin((lon + 88) * 20000);
 function atHeight(point, height) {
     const lla = ECEFToLLAVD_radii(point);
@@ -24,6 +28,9 @@ beforeEach(() => {
     manager = new CNodeManager();
     setNodeMan(manager);
     setSit({frames: 101, fps: 10, simSpeed: 1, lat: 35, lon: -88});
+    const clock = new CNodeArray({id: "clock", array: [start]});
+    clock.getStartTimeValue = () => start;
+    setGlobalDateTimeNode(clock);
     EventManager.removeAll();
     Globals.pendingActions = 0;
     surfaceHeight = roadHeight;
@@ -43,6 +50,27 @@ function source() {
     node.altitudeLockAGL = true;
     return node;
 }
+
+test("a new spline displays its saved height above ground before the first reload", () => {
+    terrain.group.visible = true;
+    manager.add("mainView", {});
+    manager.add("mainCamera", {camera: {}});
+    const pointAt = f => LLAToECEF(35, -88 + f * 0.00001, 145);
+    // Stand in for the interactive handles. The spline node and its display track are real.
+    SplineEditor.mockImplementationOnce(() => ({
+        frameNumbers: [0, 100], positions: [pointAt(0), pointAt(100)],
+        getPointFrame: pointAt, updateSnapping() {}, updatePointEditorGraphics() {},
+    }));
+    const raw = new CNodeSplineEditor({id: "spline", type: "linear", view: "mainView",
+        camera: "mainCamera", frames: -1, skipGUI: true});
+    const display = new CNodeSmoothedPositionTrack({id: "track", source: raw, method: "moving", window: 0});
+    for (const height of [0, 20]) {
+        raw.setAltitudeLock(height);
+        display.recalculate();
+        expect(ECEFToLLAVD_radii(display.p(50)).z).toBeCloseTo(145 + height, 5);
+        expect(raw.modSerialize()).toMatchObject({altitudeLock: height, altitudeLockAGL: true});
+    }
+});
 
 test.each(["none", "moving", "savgol", "sliding", "spline", "catmull"])(
     "%s smoothing locks the final path to the visible surface, including another camera smoother", method => {
@@ -101,11 +129,33 @@ test("ground locking preserves the smoothed horizontal motion", () => {
     }
 });
 
+test("a ground-relative source uses the selected height reference in both raw and smoothed frames", () => {
+    terrain.group.visible = true;
+    const rows = [0, 100].map(f => {
+        const row = new Array(MISBFields).fill(null);
+        row[MISB.UnixTimeStamp] = start + f * 100;
+        row[MISB.SensorLatitude] = 35;
+        row[MISB.SensorLongitude] = -88 + f * 0.00001;
+        row[MISB.AltitudeAGL] = 10;
+        return row;
+    });
+    const data = new CNodeMISBDataTrack({id: "relative", misb: rows});
+    const raw = new CNodeTrackFromMISB({id: "raw", misb: data});
+    const smooth = new CNodeSmoothedPositionTrack({id: "smooth", source: raw, method: "moving", window: 0});
+    expect(data.useAGL).toBe(true);
+
+    // The terrain here is at 145 m HAE. Turning the lock off restores the original 10 m AGL.
+    for (const [lock, agl, expectedHAE] of [[100, false, 100], [0, false, 0], [20, true, 165], [-1, false, 155]]) {
+        data.altitudeLock = lock;
+        data.altitudeLockAGL = agl;
+        raw.recalculate();
+        smooth.recalculate();
+        expect(raw.v(50).lla[2]).toBeCloseTo(expectedHAE, 5);
+        expect(ECEFToLLAVD_radii(smooth.p(50)).z).toBeCloseTo(expectedHAE, 5);
+    }
+});
+
 test("3D surface changes refresh an imported locked track and coalesce with elevation changes", () => {
-    const start = 1000000;
-    const clock = new CNodeArray({id: "clock", array: [start]});
-    clock.getStartTimeValue = () => start;
-    setGlobalDateTimeNode(clock);
     const rows = [0, 100].map(f => {
         const row = new Array(MISBFields).fill(null);
         row[MISB.UnixTimeStamp] = start + f * 100;

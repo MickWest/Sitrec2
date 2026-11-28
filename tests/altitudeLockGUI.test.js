@@ -40,7 +40,7 @@ function heightNodeIn(folder, target, controls) {
     return node;
 }
 
-function setup(altitudeLock = -1, {legacyZeroIsOff = false} = {}) {
+function setup(altitudeLock = -1, options = {}) {
     const folder = new GUI({container: document.body, autoPlace: false, title: "Path"});
     const target = {altitudeLock, agl: true};
     const controls = {current: null};
@@ -51,7 +51,7 @@ function setup(altitudeLock = -1, {legacyZeroIsOff = false} = {}) {
         currentHeight: () => 123.4,
         getAGL: () => target.agl,
         setAGL: (value) => { target.agl = value; },
-        legacyZeroIsOff,
+        ...options,
     });
     const control = (property) => folder.controllers.find(c => c.property === property);
     return {folder, target, heightNode, lock: control("lockAltitude"), heightFrom: control("heightFrom")};
@@ -120,6 +120,15 @@ test.each([-1, 0])("an old hidden zero control restores an unlocked imported tra
     expect(heightNode.value).toBe(-1);
     expect(heightNode.visible).toBe(false);
     expect(lock.getValue()).toBe(false);
+});
+
+test("an imported spline's explicit zero lock survives a save with a hidden height control", () => {
+    const {heightNode, target, lock, heightFrom} = setup(0, {hasSavedZeroLock: () => true});
+    heightNode.modDeserialize({value: 0, visible: false});
+    expect(target.altitudeLock).toBe(0);
+    expect(lock.getValue()).toBe(true);
+    expect(heightNode.visible).toBe(true);
+    expect(heightFrom._hidden).toBe(false);
 });
 
 // Before 2.177.0 a display track's lock height defaulted to 0, which did not lock, and the

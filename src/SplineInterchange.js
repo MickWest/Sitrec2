@@ -284,15 +284,7 @@ export function importSplineJSON(filename, json) {
         splineEditorNode.updateAltitudeLock();
 
         // Keep the folder's sliders in step with the values we just applied.
-        const altLockNode = NodeMan.get(trackOb.trackID + "_altitudeLock", false);
-        if (altLockNode) {
-            // -1 is the "off" sentinel, not a length, so it must not be converted.
-            if (trackOb.altitudeLock < 0) {
-                altLockNode.setValue(-1, true);
-            } else {
-                altLockNode.setValueWithUnits(trackOb.altitudeLock, "metric", "small", true);
-            }
-        }
+        trackOb.updateAltitudeLockControls();
         // The file stores metres, but the slider holds DISPLAY units (feet, by
         // default) — assigning .value directly would make it read "76.2 ft" for a
         // 76.2 m offset. setValueWithUnits does the conversion; ignoreOnChange
