@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.211.3 (2026-11-27)
+
+### New Features
+- New ground-menu commands `addFlyingObject` ("Flying 3D Object") and `addGroundedObject` ("Grounded 3D Object") create a straight, constant-speed track from the In frame to the Out frame, ending 200 screen pixels to the right. The flying object holds a fixed HAE 100 m above the higher terrain endpoint; the grounded object starts at 0 m above terrain and follows the ground. (ad125264; src/CustomManagerMenus.js, src/TrackManager.js, src/trackUtils.js, src/TrackGroundCache.js, src/i18n/en.js)
+
+### Improvements
+- The ground menu now has an "Add" folder with Static/Flying/Grounded 3D Object and an adjacent, closed "Add (Legacy)" folder (`groupAddLegacy`) that keeps the earlier creation commands. `addFixedObject` is relabelled "Static 3D Object"; docs updated to the new menu paths. (ad125264; src/CustomManagerMenus.js, src/i18n/en.js, docs/SceneObjects.md)
+- Road Track, Road Width and Road Smoothing edits now wake a settled tile updater, so the road geometry redraws while paused. (ad125264; src/RoadTrackGUI.js)
+
+### Bug Fixes
+- Physical Banking now computes bank from changes in heading about local up, so cresting a straight hill gives zero bank while turns keep their sign and magnitude. (ad125264; src/nodes/CNodeControllerObjectTilt.js, src/nodes/CNodeControllerCameraBankRoll.js)
+- Ground-locked objects now follow the road grade instead of pitching at each terrain triangle. (ad125264; src/nodes/CNodeControllerObjectTilt.js, src/nodes/CNodeSmoothedPositionTrack.js)
+- Ground sampling now keeps the fine terrain mesh at tile edges, including at a seam outside its declared tile bounds. (ad125264; src/TrackGroundCache.js)
+
 ## Version 2.211.2 (2026-11-27)
 
 ### New Features

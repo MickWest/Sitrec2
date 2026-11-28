@@ -92,13 +92,56 @@ jobs:
       if: github.event_name != 'push'
     - name: build prod
       run: npm run deploy
-    # Runs before the tests because it takes about a tenth of a second against 675
-    # files, so a genuine undeclared-variable error is reported in seconds rather
-    # than after the suite. Verified passing on the tree at the time it was added.
+    # Takes about a tenth of a second against 675 files, so a genuine
+    # undeclared-variable error is reported in seconds. Verified passing on the
+    # tree at the time it was added.
     - name: lint
       run: npm run lint
-    - name: run tests
-      run: npm test
+
+  test:
+    # The unit tests, in 4 shards that run in parallel. On one runner the suite took
+    # about 21 minutes (852 suites, 2.211.2); each shard runs a quarter of the suite
+    # files, chosen by Jest. The SitrecBridge suite runs in shard 1 only
+    # (scripts/runTests.mjs). No test reads the build output, so the shards do not
+    # wait for build_web.
+    if: true  # the job can be disabled from here
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # The same operating systems as build_web: Ubuntu by default, all three on a
+        # manual run. See the comment there.
+        os: ${{ fromJSON(github.event_name != 'workflow_dispatch' && '["ubuntu-latest"]' ||
+          '["ubuntu-latest","windows-latest","macos-latest"]') }}
+        shard: [1, 2, 3, 4]
+      fail-fast: false   # a failure in one shard must not hide the result of the others
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # No job here pushes with the checkout token.
+        persist-credentials: false
+        # A full clone, as in build_web, so tests see the same tags.
+        fetch-depth: 0
+    - name: use node.js (.nvmrc)
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version-file: .nvmrc
+    - name: config script setup
+      run: |
+        cp config/config.js.example config/config.js
+        cp config/config-install.js.example config/config-install.js
+        cp config/shared.env.example config/shared.env
+        cp config/config.php.example config/config.php
+        mkdir ../dev ../prod
+        # webpack's schema requires absolute paths for the output paths
+        # macOS uses BSD sed instead of GNU sed on linux/windows. this works for both:
+        sed -i'.bak' -e "s#dev_path:.*#dev_path: '$(realpath ../dev)',#" config/config-install.js
+        sed -i'.bak' -e "s#prod_path:.*#prod_path: '$(realpath ../prod)',#" config/config-install.js
+    - name: install deps
+      run: npm install
+    - name: run tests (shard ${{ matrix.shard }} of 4)
+      run: npm test -- --shard=${{ matrix.shard }}/4
 
   partition_lint:
     # Static partition-neutrality checks for the hardened AWS deployment

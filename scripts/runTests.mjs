@@ -16,6 +16,10 @@
 //
 // Both phases now always run. The exit status is non-zero if EITHER failed, so this is strictly
 // more sensitive than the `&&` it replaces: nothing that used to fail the command now passes it.
+//
+// Sharding: `npm test -- --shard=K/N` passes the shard to Jest, so each of N jobs runs one part
+// of the Jest suites (CI runs 4 shards in parallel). The bridge suite runs only in shard 1, so
+// the N jobs together run each suite once. Shards 2 to N print it as SKIP in the summary.
 
 import {spawnSync} from "child_process";
 import {fileURLToPath} from "url";
@@ -41,13 +45,30 @@ if (mode === "--fits") {
     process.exit(2);
 }
 
-const phases = [
-    {name: "SitrecBridge — node:test", cmd: "npm", args: ["--prefix", "tools/SitrecBridge", "test"]},
-    jestPhase,
-];
+// Jest accepts both `--shard=K/N` and `--shard K/N`. An argument that does not parse leaves the
+// bridge phase in, and Jest reports the bad value itself.
+function shardOf(args) {
+    const index = args.findIndex((arg) => arg === "--shard" || arg.startsWith("--shard="));
+    if (index < 0) return null;
+    const value = args[index] === "--shard" ? args[index + 1] : args[index].slice("--shard=".length);
+    const match = /^(\d+)\/(\d+)$/.exec(value ?? "");
+    return match ? {index: Number(match[1]), count: Number(match[2])} : null;
+}
+
+const shard = shardOf(passThrough);
+const bridgePhase = {name: "SitrecBridge — node:test", cmd: "npm", args: ["--prefix", "tools/SitrecBridge", "test"]};
+if (shard && shard.index !== 1) {
+    bridgePhase.skip = `runs in shard 1 of ${shard.count}`;
+}
+const phases = [bridgePhase, jestPhase];
 
 const results = [];
 for (const phase of phases) {
+    if (phase.skip) {
+        console.log(`\n=== ${phase.name}: skipped, ${phase.skip} ===\n`);
+        results.push({name: phase.name, status: 0, skip: phase.skip});
+        continue;
+    }
     console.log(`\n=== ${phase.name} ===\n`);
     const run = spawnSync(phase.cmd, phase.args, {
         stdio: "inherit",
@@ -59,7 +80,8 @@ for (const phase of phases) {
 
 console.log("\n=== Test summary ===");
 for (const result of results) {
-    console.log(`  ${result.status === 0 ? "PASS" : "FAIL"}  ${result.name}`);
+    const label = result.skip ? "SKIP" : result.status === 0 ? "PASS" : "FAIL";
+    console.log(`  ${label}  ${result.name}${result.skip ? ` (${result.skip})` : ""}`);
 }
 
 const failures = results.filter((result) => result.status !== 0);

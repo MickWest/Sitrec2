@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.211.3 (2026-11-27)
+
+### New Features
+- **Flying 3D Object** (right-click the ground → Add → Flying 3D Object): adds an object on a straight, constant-speed track that holds a fixed height above the ellipsoid, 100 m above the higher endpoint, and reaches its endpoints at the In and Out frames.
+- **Grounded 3D Object** (right-click the ground → Add → Grounded 3D Object): adds an object on a straight, constant-speed track from In to Out that follows the terrain.
+
+### Improvements
+- The ground menu's "3D Object" is now **Static 3D Object**, and the earlier creation commands (Moving Object, Flight Path, Clouds) are now under **Add (Legacy)**.
+- Road Track, Road Width and Road Smoothing now update the road while playback is paused.
+
+### Bug Fixes
+- Fixed Physical Banking giving wrong bank angles on tracks over hills; it now uses only changes in heading.
+- Fixed objects on the ground pitching at each terrain triangle; they now follow the road grade.
+- Fixed ground sampling losing the fine terrain mesh at tile edges.
+
 ## Version 2.211.2 (2026-11-27)
 
 ### New Features
