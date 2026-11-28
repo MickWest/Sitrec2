@@ -1,5 +1,6 @@
-import {Group, Matrix4, Vector4} from "three";
+import {Group, Matrix4, Raycaster, Vector4} from "three";
 import {prepareModelSkinning} from "../src/rendering/ModelSkinning";
+import {InstancedSkinnedMesh} from "../src/rendering/InstancedSkinnedMesh";
 import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {buildVehicle, disposeVehicle} from "../tools/vehicles/vehicle.js";
 import {poseVehicleSpinners} from "../tools/vehicles/motion.js";
@@ -48,5 +49,53 @@ test.each([[6, 2.65], [1.04, .46]])("a placed %s m wingspan reproduces the previ
     } finally {
         disposeVehicle(preview.root);
         disposeVehicle(placed.root);
+    }
+});
+
+test("flock batches keep independent membrane poses in the same local coordinates as a single bird", () => {
+    const model = buildVehicle(preset), parent = new Group();
+    parent.add(model.root);
+    parent.position.set(-2565332, -4738849, 3409989);
+    parent.rotation.set(.65, -.78, 1.13);
+    const update = prepareModelSkinning(model.root);
+    const source = model.root.getObjectByName("Left flight membrane");
+    const batches = [new InstancedSkinnedMesh(source, 3), new InstancedSkinnedMesh(source, 2)];
+    try {
+        const snapshots = batches.map((batch, i) => {
+            poseVehicleSpinners(model.waves, 0, true, {beats: i * .5});
+            parent.updateMatrixWorld(true);
+            update();
+            batch.capturePose(source);
+            batch.skeleton.update();
+            return Array.from({length: source.geometry.attributes.position.count}, (_, v) =>
+                source.getVertexPosition(v, source.position.clone()));
+        });
+        const movement = snapshots[0].map((v, i) => v.distanceTo(snapshots[1][i]));
+        expect(Math.max(...movement)).toBeGreaterThan(preset.wingspan * .2);
+        for (const [i, batch] of batches.entries()) {
+            expect(batch.geometry).toBe(source.geometry);
+            for (let v = 0; v < snapshots[i].length; v += 9) {
+                const expected = snapshots[i][v], actual = shaderVertex(batch, v);
+                expect(Math.hypot(actual.x - expected.x, actual.y - expected.y, actual.z - expected.z)).toBeLessThan(1e-5);
+                expect(batch.pose.getVertexPosition(v, source.position.clone()).distanceTo(expected)).toBeLessThan(1e-7);
+            }
+        }
+        // Pick a triangle on the downstroke of the second instance. The
+        // visible membrane extends beyond the unposed geometry's bounds.
+        const batch = batches[1], points = snapshots[1], indices = source.geometry.index;
+        const triangle = Math.floor(indices.count / 3 * .45) * 3;
+        const [a, b, c] = [0, 1, 2].map(j => points[indices.getX(triangle + j)]);
+        const normal = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+        const center = a.clone().add(b).add(c).multiplyScalar(1 / 3);
+        center.x += 50;
+        batch.setMatrixAt(1, new Matrix4().makeTranslation(50, 0, 0));
+        const hits = new Raycaster(center.clone().addScaledVector(normal, .001), normal.negate(), 0, .002)
+            .intersectObject(batch);
+        expect(hits[0]?.object).toBe(batch);
+        expect(hits[0]?.instanceId).toBe(1);
+        expect(hits[0].point.distanceTo(center)).toBeLessThan(1e-6);
+    } finally {
+        for (const batch of batches) batch.dispose();
+        disposeVehicle(model.root);
     }
 });

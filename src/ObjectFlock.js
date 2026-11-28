@@ -24,6 +24,7 @@ import {Globals, markShadowCastersDirty, setRenderOne, Sit} from "./Globals";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {patchMaterialForLinearOutput} from "./threeExt";
 import {FLOCK_FORMATIONS, FLOCK_SPECIES, flockDefaults, FlockModel} from "./FlockModel";
+import {InstancedSkinnedMesh} from "./rendering/InstancedSkinnedMesh";
 import {runMurmurationHere} from "./MurmurationSim";
 import {t} from "./i18n";
 
@@ -131,8 +132,10 @@ export class ObjectFlock {
         this.group.matrixAutoUpdate = false;        // set by syncTransform(), not from position
         owner.group.add(this.group);
 
-        this.parts = [];            // {mesh, relative, ownsMaterial, source, moments}, one per mesh of the bird
-        this.partsMoving = false;
+        this.parts = [];
+        this.partsByMoment = [];
+        this.momentCounts = new Uint32Array(MOTION_MOMENTS);
+        this.partsMoving = null;
         this.capacity = 0;
         this.poseCount = 0;
         this.positions = new Float64Array(0);       // meters from this.group, world axes
@@ -276,17 +279,28 @@ export class ObjectFlock {
         const count = this.model.count;
         this.capacity = 1;
         while (this.capacity < count) this.capacity *= 2;
+        this.momentCounts.fill(0);
+        for (let i = 0; i < this.capacity; i++) this.momentCounts[momentOf(i)]++;
 
         if (owner.modelOrGeometry === "model") {
             if (owner.model) {
                 // Each mesh of the model becomes one instanced mesh, placed where it sits
                 // within the model. `relative` takes it from the object's group to there.
                 owner.group.updateMatrixWorld(true);
+                owner.updateModelSkinning?.();
                 const groupInverse = new Matrix4().copy(owner.group.matrixWorld).invert();
                 owner.model.traverse(child => {
                     if (!child.isMesh || child.userData?.sitrecGaussianSplat) return;
                     const relative = new Matrix4().multiplyMatrices(groupInverse, child.matrixWorld);
-                    this.addPart(child.geometry, child.material, relative, false, child);
+                    if (child.isSkinnedMesh) {
+                        // A draw shares its skeleton. Group birds with the same wingbeat
+                        // phase so their membranes match their independently moving parts.
+                        for (let m = 0; m < MOTION_MOMENTS; m++) {
+                            if (this.momentCounts[m]) this.addPart(child.geometry, child.material, relative.clone(), false, child, m);
+                        }
+                    } else {
+                        this.addPart(child.geometry, child.material, relative, false, child);
+                    }
                 });
                 if (this.parts.length) {
                     for (const lamp of owner.lights ?? []) {
@@ -320,6 +334,8 @@ export class ObjectFlock {
         // of, and a model may still be loading: the object must not just vanish.
         this.showSingleObject(this.parts.length === 0);
 
+        this.partsByMoment = Array.from({length: MOTION_MOMENTS}, (_, m) =>
+            this.parts.filter(part => part.skinMoment === null || part.skinMoment === m));
         this.syncLayers(true);
         this.refreshShadowFlags();
         this.writtenScale = undefined;
@@ -331,8 +347,9 @@ export class ObjectFlock {
         if (this.owner.model) this.owner.model.visible = visible;
     }
 
-    addPart(geometry, material, relative, ownsMaterial, source = null) {
-        const mesh = new InstancedMesh(geometry, material, this.capacity);
+    addPart(geometry, material, relative, ownsMaterial, source = null, skinMoment = null) {
+        const mesh = skinMoment === null ? new InstancedMesh(geometry, material, this.capacity)
+            : new InstancedSkinnedMesh(source, this.momentCounts[skinMoment]);
         mesh.instanceMatrix.setUsage(DynamicDrawUsage);
         mesh.count = 0;
         // A part that is MIRRORED within its model (a wing made as the other wing with a
@@ -358,7 +375,7 @@ export class ObjectFlock {
         // sphere to cull against would cost more to keep up than it could save.
         mesh.frustumCulled = false;
         this.group.add(mesh);
-        const part = {mesh, relative, ownsMaterial, mirrored, source, moments: null};
+        const part = {mesh, relative, ownsMaterial, mirrored, source, skinMoment, moments: null};
         this.parts.push(part);
         return part;
     }
@@ -369,7 +386,9 @@ export class ObjectFlock {
         const owner = this.owner;
         const moving = owner.modelOrGeometry === "model" && !!owner.model && !!owner.vehicleAnimation
             && owner._vehicleSpinParts?.length > 0;
-        if (!moving && !this.partsMoving) return;
+        // On the first update also capture the glide pose of a model loaded with
+        // animation off. Its geometry was installed before that pose was applied.
+        if (!owner.model || (!moving && this.partsMoving === false)) return;
         // The place of a mesh within the object's group: the same thing `relative` holds.
         const within = (part, out) => {
             out.copy(part.source.matrix);
@@ -380,21 +399,29 @@ export class ObjectFlock {
             for (let moment = 0; moment < MOTION_MOMENTS; moment++) {
                 owner.updateVehicleAnimation(f, moment * MOTION_STEP_SECONDS);
                 owner.model.updateMatrixWorld(true);
-                for (const part of this.parts) {
+                owner.updateModelSkinning?.();
+                for (const part of this.partsByMoment[moment]) {
                     if (!part.source) continue;
-                    part.moments ??= Array.from({length: MOTION_MOMENTS}, () => new Matrix4());
-                    within(part, part.moments[moment]);
+                    if (part.skinMoment !== null) {
+                        within(part, part.relative);
+                        part.mesh.capturePose(part.source);
+                    } else {
+                        part.moments ??= Array.from({length: MOTION_MOMENTS}, () => new Matrix4());
+                        within(part, part.moments[moment]);
+                    }
                 }
             }
         }
         // The object itself goes back to its own pose for this frame.
         owner.updateVehicleAnimation(f);
         owner.model?.updateMatrixWorld(true);
+        owner.updateModelSkinning?.();
         if (!moving) {
             for (const part of this.parts) {
                 if (!part.source) continue;
                 part.moments = null;
                 within(part, part.relative);
+                if (part.skinMoment !== null) part.mesh.capturePose(part.source);
             }
         }
         this.partsMoving = moving;
@@ -408,6 +435,8 @@ export class ObjectFlock {
             if (part.ownsMaterial) part.mesh.material.dispose();
         }
         this.parts = [];
+        this.partsByMoment = [];
+        this.partsMoving = null;
     }
 
     syncLayers(force = false) {
@@ -664,22 +693,25 @@ export class ObjectFlock {
 
         // (poses can be left over from a bigger flock until the next update())
         const count = this.model.ready ? Math.min(this.poseCount, this.capacity) : 0;
+        this.momentCounts.fill(0);
         for (let i = 0; i < count; i++) {
+            const moment = momentOf(i);
+            const slot = this.momentCounts[moment]++;
             s.position.fromArray(this.positions, 3 * i);
             s.quaternion.fromArray(this.quaternions, 4 * i).multiply(s.userRotation);
             s.bird.compose(s.position, s.quaternion, s.scale);
-            for (const part of this.parts) {
+            for (const part of this.partsByMoment[moment]) {
                 if (!part.relative) {
                     part.mesh.setMatrixAt(i, s.bird);
                     continue;
                 }
-                s.instance.multiplyMatrices(s.bird, part.moments ? part.moments[momentOf(i)] : part.relative);
+                s.instance.multiplyMatrices(s.bird, part.moments ? part.moments[moment] : part.relative);
                 if (part.mirrored) s.instance.premultiply(MIRROR_X);
-                part.mesh.setMatrixAt(i, s.instance);
+                part.mesh.setMatrixAt(part.skinMoment === null ? i : slot, s.instance);
             }
         }
         for (const part of this.parts) {
-            part.mesh.count = count;
+            part.mesh.count = part.skinMoment === null ? count : this.momentCounts[part.skinMoment];
             part.mesh.instanceMatrix.needsUpdate = true;
             // Out of date now. three.js makes them again when a click or a bounds query
             // asks, which is far less often than every frame.
